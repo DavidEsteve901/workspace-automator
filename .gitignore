@@ -1,0 +1,11 @@
+# Archivos de configuración personal (para no subir tus rutas privadas)
+*.json
+
+# Basura de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales (si usaras uno)
+venv/
+env/
