@@ -105,6 +105,56 @@ class CommandEditorDialog(ctk.CTkToplevel):
         self.result = None
         self.destroy()
 
+class AddIDEDialog(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Añadir Proyecto")
+        self.geometry("450x200")
+        self.result = None
+        self.transient(parent)
+        self.grab_set()
+
+        # Seleccionar ruta
+        self.path_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.path_frame.pack(fill="x", padx=20, pady=(20, 10))
+        
+        ctk.CTkLabel(self.path_frame, text="Ruta:", width=50).pack(side="left", padx=(0, 10))
+        self.path_label = ctk.CTkLabel(self.path_frame, text="No seleccionada", fg_color="#333", corner_radius=5)
+        self.path_label.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        ctk.CTkButton(self.path_frame, text="📂", width=40, command=self.browse).pack(side="left")
+
+        # Seleccionar IDE
+        self.ide_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.ide_frame.pack(fill="x", padx=20, pady=10)
+        
+        ctk.CTkLabel(self.ide_frame, text="IDE:", width=50).pack(side="left", padx=(0, 10))
+        self.ide_combo = ctk.CTkComboBox(self.ide_frame, values=["code", "antigravity", "cursor", "idea64", "pycharm", "webstorm"])
+        self.ide_combo.pack(side="left", fill="x", expand=True)
+
+        # Botones
+        self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.btn_frame.pack(fill="x", padx=20, pady=(10, 20))
+        ctk.CTkButton(self.btn_frame, text="Cancelar", fg_color="#555", command=self.cancel, width=100).pack(side="right", padx=(10, 0))
+        ctk.CTkButton(self.btn_frame, text="Guardar", fg_color="#2CC985", hover_color="#24A36B", command=self.save, width=100).pack(side="right")
+
+        self.selected_path = None
+
+    def browse(self):
+        if p := filedialog.askdirectory(title="Carpeta del Proyecto"):
+            self.selected_path = os.path.normpath(p)
+            self.path_label.configure(text=os.path.basename(self.selected_path))
+
+    def save(self):
+        ide = self.ide_combo.get().strip()
+        if self.selected_path and ide:
+            self.result = {"path": self.selected_path, "ide_cmd": ide}
+            self.destroy()
+        else:
+            messagebox.showwarning("Atención", "Selecciona una ruta y escribe el comando del IDE.")
+
+    def cancel(self):
+        self.destroy()
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  APP PRINCIPAL
 # ─────────────────────────────────────────────────────────────────────────────
@@ -147,7 +197,7 @@ class DevLauncherApp(ctk.CTk):
         
         ctk.CTkButton(self.footer_frame, text="Añadir .EXE", width=90, command=self.add_exe).pack(side="left", padx=5, expand=True, fill="x")
         ctk.CTkButton(self.footer_frame, text="Web", width=70, fg_color="#E5A00D", hover_color="#B57B02", command=self.add_url).pack(side="left", padx=5, expand=True, fill="x")
-        ctk.CTkButton(self.footer_frame, text="VS Code", width=90, fg_color="#007ACC", hover_color="#005A9E", command=self.add_vscode_project).pack(side="left", padx=5, expand=True, fill="x")
+        ctk.CTkButton(self.footer_frame, text="IDE", width=90, fg_color="#007ACC", hover_color="#005A9E", command=self.add_ide_project).pack(side="left", padx=5, expand=True, fill="x")
         ctk.CTkButton(self.footer_frame, text="Obsidian", width=90, fg_color="#7A3EE8", hover_color="#5D24B8", command=self.add_obsidian_vault).pack(side="left", padx=5, expand=True, fill="x")
         ctk.CTkButton(self.footer_frame, text="Terminal (Tabs)", width=110, fg_color="#5A5A5A", hover_color="#333", command=self.add_powershell).pack(side="left", padx=5, expand=True, fill="x")
 
@@ -241,6 +291,9 @@ class DevLauncherApp(ctk.CTk):
 
             if t == 'url': tag, col, txt = "[WEB]", "#E5A00D", p
             elif t == 'vscode': tag, col, txt = "[CODE]", "#007ACC", f"Proyecto: {os.path.basename(p)}"
+            elif t == 'ide': 
+                ide_cmd = str(item.get('ide_cmd', 'IDE')).upper()[:6]
+                tag, col, txt = f"[{ide_cmd}]", "#007ACC", f"Proyecto: {os.path.basename(p)} ({item.get('ide_cmd')})"
             elif t == 'obsidian': tag, col, txt = "[OBS]", "#7A3EE8", f"Vault: {os.path.basename(p)}"
             elif t == 'powershell':
                 # Contar pestañas
@@ -264,6 +317,18 @@ class DevLauncherApp(ctk.CTk):
             self.add_item("url", "https://" + u if not u.startswith("http") else u)
     def add_vscode_project(self):
         if p := filedialog.askdirectory(title="Proyecto VS Code"): self.add_item("vscode", os.path.normpath(p))
+
+    def add_ide_project(self):
+        dlg = AddIDEDialog(self)
+        self.wait_window(dlg)
+        if dlg.result:
+            self.apps_data[self.current_category].append({
+                "type": "ide", 
+                "path": dlg.result["path"], 
+                "ide_cmd": dlg.result["ide_cmd"]
+            })
+            self.save_data()
+            self.refresh_apps_list()
     def add_obsidian_vault(self):
         if p := filedialog.askdirectory(title="Vault Obsidian"): self.add_item("obsidian", os.path.normpath(p))
 
@@ -303,6 +368,9 @@ class DevLauncherApp(ctk.CTk):
                 
                 if t == 'url': webbrowser.open_new_tab(p)
                 elif t == 'vscode': subprocess.Popen(f'code "{p}"', shell=True)
+                elif t == 'ide': 
+                    ide_cmd = item.get('ide_cmd', 'code')
+                    subprocess.Popen(f'{ide_cmd} "{p}"', shell=True)
                 elif t == 'exe': subprocess.Popen(p)
                 elif t == 'obsidian':
                     encoded = urllib.parse.quote(p)
