@@ -612,6 +612,251 @@ class AdvancedItemDialog(ctk.CTkToplevel):
     def cancel(self):
         self.destroy()
 
+class CleanWorkspaceDialog(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Limpiar Entorno - Cerrar Ventanas")
+        self.geometry("750x650")
+        self.transient(parent)
+        self.grab_set()
+        self.parent_app = parent
+
+        # Top Frame para Quick Actions
+        self.top_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.top_frame.pack(fill="x", padx=20, pady=(15, 5))
+
+        ctk.CTkLabel(self.top_frame, text="Selección rápida:", font=("Roboto", 14, "bold")).pack(side="left", padx=(0, 10))
+        
+        ctk.CTkButton(self.top_frame, text="Config. Actual", width=110, command=self.select_config_only).pack(side="left", padx=5)
+        
+        # Opciones dinámicas de escritorio
+        self.desk_var = ctk.StringVar(value="Escritorio Actual")
+        self.desk_combo = ctk.CTkComboBox(self.top_frame, variable=self.desk_var, values=["Escritorio Actual"], width=140)
+        self.desk_combo.pack(side="left", padx=5)
+        
+        ctk.CTkButton(self.top_frame, text="Sel. Escritorio", width=100, command=self.select_chosen_desktop).pack(side="left", padx=5)
+        
+        ctk.CTkButton(self.top_frame, text="Todos", width=80, command=self.select_all).pack(side="left", padx=5)
+        ctk.CTkButton(self.top_frame, text="Ninguno", width=80, command=self.select_none).pack(side="left", padx=5)
+
+        # Scrollable Frame para la lista de ventanas
+        self.scroll_frame = ctk.CTkScrollableFrame(self)
+        self.scroll_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+        # Bottom Frame
+        self.bottom_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.bottom_frame.pack(fill="x", padx=20, pady=(5, 15))
+        
+        ctk.CTkButton(self.bottom_frame, text="Cancelar", width=100, fg_color="#555", command=self.destroy).pack(side="right", padx=(10, 0))
+        ctk.CTkButton(self.bottom_frame, text="🧹 Cerrar Seleccionadas", width=180, fg_color="#AA0000", hover_color="#770000", command=self.close_selected).pack(side="right")
+
+        self.windows_data = [] # stores dicts {"hwnd": hwnd, "title": title, "var": ctk.BooleanVar, "desktop_id": desktop_id, "kw_match": bool}
+        self.current_desktop_id = None
+        self.desktops_map = {} # Nombre Amigable -> GUID
+        
+        self.load_windows()
+        self.populate_desktops_combo()
+        self.populate_list()
+        self.select_config_only()
+
+    def populate_desktops_combo(self):
+        opts = []
+        if self.current_desktop_id and "Tu Escritorio Actual" not in opts:
+            self.desktops_map["Tu Escritorio Actual"] = self.current_desktop_id
+            opts.append("Tu Escritorio Actual")
+            
+        for name, guid in self.desktops_map.items():
+            if name != "Tu Escritorio Actual" and name not in opts:
+                opts.append(name)
+                
+        if opts:
+            self.desk_combo.configure(values=opts)
+            self.desk_var.set(opts[0])
+
+    def get_config_keywords_and_paths(self):
+        kws = []
+        paths = []
+        items = self.parent_app.apps_data.get(self.parent_app.current_category, [])
+        for item in items:
+            t = item.get('type')
+            p = item.get('path', '')
+            if not p: continue
+            
+            paths.append(os.path.normpath(p).lower())
+            
+            base = os.path.basename(p)
+            if t == 'vscode':
+                kws.append(base.lower())
+                kws.append("visual studio code")
+            elif t == 'ide':
+                kws.append(base.lower())
+            elif t == 'obsidian':
+                kws.append(base.lower())
+                kws.append("obsidian")
+            elif t == 'powershell':
+                kws.append(base.lower())
+                kws.append("terminal")
+                kws.append("powershell")
+            elif t == 'url':
+                try:
+                    domain = p.replace("https://", "").replace("http://", "").split("/")[0]
+                    kws.append(domain.lower())
+                except: pass
+            elif t == 'exe' or t == 'app' or not t:
+                kws.append(base.replace(".exe", "").lower())
+                
+        # Filtrar kws muy cortas para no hacer falsos positivos, excepto si es algo específico
+        return [k for k in kws if len(k) > 2], paths
+
+    def get_process_path(self, hwnd):
+        try:
+            import win32process
+            import ctypes
+            from ctypes import wintypes
+            
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            
+            kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            hProcess = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not hProcess: return ""
+            
+            exe_path = ctypes.create_unicode_buffer(260)
+            size = wintypes.DWORD(260)
+            success = kernel32.QueryFullProcessImageNameW(hProcess, 0, exe_path, ctypes.byref(size))
+            kernel32.CloseHandle(hProcess)
+            
+            if success:
+                return os.path.normpath(exe_path.value).lower()
+        except: pass
+        return ""
+
+    def load_windows(self):
+        if not WINDOWS_LIBS_AVAILABLE:
+            messagebox.showwarning("Aviso", "Librerías de Windows no disponibles para leer ventanas.")
+            return
+
+        import win32gui
+        import win32con
+        from pyvda import AppView, get_virtual_desktops, VirtualDesktop
+        
+        try:
+            current_desk = VirtualDesktop.current()
+            self.current_desktop_id = str(current_desk.id).upper()
+            if not self.current_desktop_id.startswith("{"): self.current_desktop_id = "{" + self.current_desktop_id + "}"
+        except:
+            self.current_desktop_id = None
+
+        desk_names_map = {}
+        try:
+            for i, d in enumerate(get_virtual_desktops()):
+                g = str(d.id).upper()
+                if not g.startswith("{"): g = "{" + g + "}"
+                name = d.name if d.name else f"Escritorio {i+1}"
+                desk_names_map[g] = name
+                self.desktops_map[name] = g
+        except: pass
+
+        kws, conf_paths = self.get_config_keywords_and_paths()
+        
+        def enum_windows_proc(hwnd, lParam):
+            if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd):
+                title = win32gui.GetWindowText(hwnd)
+                if not title: return
+                if title == "Program Manager": return
+                
+                # Excluir esta app y algunas cosas de sistema
+                if "Dev Workspace Automator V9" in title or "Limpiar Entorno" in title: return
+                if title == "Settings" or title == "Configuración": return
+                
+                try:
+                    view = AppView(hwnd)
+                    desk_id = str(view.desktop_id).upper()
+                    if not desk_id.startswith("{"): desk_id = "{" + desk_id + "}"
+                except:
+                    desk_id = "Unk"
+                
+                desk_name = desk_names_map.get(desk_id, desk_id)
+                t_lower = title.lower()
+                
+                # Obtener path exacto del proceso para que las APPs/EXEs casen 100% de forma segura
+                p_path = self.get_process_path(hwnd)
+                
+                matched = False
+                if p_path and p_path in conf_paths:
+                    matched = True
+                if not matched and any(kw in t_lower for kw in kws):
+                    matched = True
+                
+                self.windows_data.append({
+                    "hwnd": hwnd,
+                    "title": title,
+                    "desktop_id": desk_id,
+                    "desktop_name": desk_name,
+                    "kw_match": matched,
+                    "var": ctk.BooleanVar(value=False)
+                })
+
+        win32gui.EnumWindows(enum_windows_proc, 0)
+        self.windows_data.sort(key=lambda x: (not x["kw_match"], x["desktop_name"], x["title"]))
+
+    def populate_list(self):
+        for w in self.scroll_frame.winfo_children(): w.destroy()
+            
+        for wdata in self.windows_data:
+            row = ctk.CTkFrame(self.scroll_frame, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+            
+            chk = ctk.CTkCheckBox(row, text="", variable=wdata["var"], width=30)
+            chk.pack(side="left", padx=5)
+            
+            lbl_title = ctk.CTkLabel(row, text=wdata["title"], anchor="w")
+            lbl_title.pack(side="left", padx=5, fill="x", expand=True)
+            
+            lbl_desk = ctk.CTkLabel(row, text=f"[{wdata['desktop_name']}]", width=120, text_color="gray")
+            lbl_desk.pack(side="right", padx=5)
+
+            if wdata["kw_match"]:
+                lbl_title.configure(text_color="#2CC985") # Resaltar las que coinciden con la config
+                chk.select()
+
+    def select_config_only(self):
+        for w in self.windows_data:
+            if w["kw_match"]: w["var"].set(True)
+            else: w["var"].set(False)
+
+    def select_chosen_desktop(self):
+        sel_name = self.desk_var.get()
+        target_id = self.desktops_map.get(sel_name)
+        if not target_id: return
+        
+        for w in self.windows_data:
+            if w["desktop_id"] == target_id: w["var"].set(True)
+            else: w["var"].set(False)
+
+    def select_all(self):
+        for w in self.windows_data:
+            w["var"].set(True)
+
+    def select_none(self):
+        for w in self.windows_data:
+            w["var"].set(False)
+
+    def close_selected(self):
+        import win32gui
+        import win32con
+        count = 0
+        for w in self.windows_data:
+            if w["var"].get():
+                try:
+                    win32gui.PostMessage(w["hwnd"], win32con.WM_CLOSE, 0, 0)
+                    count += 1
+                except Exception as e:
+                    print(f"Error cerrando {w['title']}: {e}")
+        
+        messagebox.showinfo("Limpieza Completada", f"Se ha solicitado el cierre de {count} ventanas.", parent=self)
+        self.destroy()
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  APP PRINCIPAL
 # ─────────────────────────────────────────────────────────────────────────────
@@ -668,10 +913,17 @@ class DevLauncherApp(ctk.CTk):
         ctk.CTkButton(bot_pt_bar, text="🖥️ Asignar Distribuciones por Pantalla/Escritorio", 
                       fg_color="#4B4B4B", hover_color="#333", command=self.open_assign_layouts_dialog).pack(side="right", padx=10)
 
-        # --- LANZAR ---
-        self.btn_launch = ctk.CTkButton(self, text="🚀 LANZAR ENTORNO", height=50, font=("Roboto", 18, "bold"), 
+        # --- LANZAR Y LIMPIAR ---
+        self.action_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.action_frame.pack(fill="x", padx=20, pady=10)
+        
+        self.btn_launch = ctk.CTkButton(self.action_frame, text="🚀 LANZAR ENTORNO", height=50, font=("Roboto", 18, "bold"), 
                                         fg_color="#2CC985", hover_color="#24A36B", command=self.launch_workspace)
-        self.btn_launch.pack(fill="x", padx=20, pady=10)
+        self.btn_launch.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        
+        self.btn_clean = ctk.CTkButton(self.action_frame, text="🧹 LIMPIAR ENTORNO", height=50, width=200, font=("Roboto", 16, "bold"), 
+                                       fg_color="#AA0000", hover_color="#770000", command=self.open_clean_dialog)
+        self.btn_clean.pack(side="right", fill="x", padx=(5, 0))
 
         # --- LISTA ---
         self.apps_frame = ctk.CTkScrollableFrame(self, label_text="Elementos configurados")
@@ -979,120 +1231,186 @@ class DevLauncherApp(ctk.CTk):
         self.save_data()
         self.refresh_apps_list()
 
-    # --- LANZAMIENTO AVANZADO (WT.EXE / POSICIONAMIENTO) ---
+    # --- LANZAMIENTO AVANZADO Y LIMPIEZA ---
+    def open_clean_dialog(self):
+        if not WINDOWS_LIBS_AVAILABLE:
+            messagebox.showwarning("Error", "No se detectaron las librerías necesarias de Windows (win32gui, etc).")
+            return
+        dlg = CleanWorkspaceDialog(self)
+        self.wait_window(dlg)
+
     def launch_workspace(self):
-        for item in self.apps_data.get(self.current_category, []):
-            try:
-                t = item.get('type')
-                p = item.get('path')
-                desktop = item.get('desktop', 'Por defecto')
-                monitor = item.get('monitor', 'Por defecto')
-                zone = item.get('fancyzone', 'Ninguna')
-                delay_str = item.get('delay', '0')
-                
-                try: delay_s = float(delay_str)
-                except: delay_s = 0.0
-                
-                desk_num = None
-                if desktop.startswith("Escritorio "):
-                    try: desk_num = int(desktop.split(" ")[1])
-                    except: pass
+        items_to_launch = self.apps_data.get(self.current_category, [])
+        if not items_to_launch: return
+
+        # Cambiar el botón visualmente
+        self.btn_launch.configure(state="disabled", text="⏳ LANZANDO ENTORNO...")
+
+        def _launch_task():
+            for item in items_to_launch:
+                try:
+                    t = item.get('type')
+                    p = item.get('path')
+                    desktop = item.get('desktop', 'Por defecto')
+                    monitor = item.get('monitor', 'Por defecto')
+                    zone = item.get('fancyzone', 'Ninguna')
+                    delay_str = item.get('delay', '0')
                     
-                target_mon_idx = None
-                if monitor.startswith("Pantalla "):
-                    try: target_mon_idx = int(monitor.split(" ")[1]) - 1
-                    except: pass
-                elif monitor.startswith("Monitor "):
-                    try: target_mon_idx = int(monitor.replace("Monitor ", "")) - 1
-                    except: pass
-                
-                if delay_s > 0:
-                    time.sleep(delay_s)
+                    try: delay_s = float(delay_str)
+                    except: delay_s = 0.0
                     
-                # [CRÍTICO] Forzar el salto de escritorio ANTES de lanzar el proceso
-                if desk_num is not None and WINDOWS_LIBS_AVAILABLE:
-                    try:
-                        desktops = get_virtual_desktops()
-                        if 1 <= desk_num <= len(desktops):
-                            target_desktop = desktops[desk_num - 1]
-                            target_desktop.go() # Te transporta fisicamente a ese escritorio
-                            time.sleep(0.3) # Darle respiro de animacion a Windows
-                    except Exception as e:
-                        print(f"Error cambiando escritorio antes de lanzar: {e}")
-                
-                # Para pygetwindow necesitamos capturar títulos antes y después, o buscar el PID si subprocess lo da.
-                # Como webbrowser no da PID, y VSCode a veces lanza subprocessos, 
-                # usaremos un sistema de monitoreo de ventanas basadas en el ejecutable o el título aproximado.
-                
-                def _launch_and_position():
-                    process = None
-                    if t == 'url': 
-                        if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("msedge.exe", desk_num, target_mon_idx, zone)
-                        # Soporte multi-pestaña para URL
-                        cmds_raw = item.get('cmd', '')
-                        if cmds_raw:
-                            urls = cmds_raw.split(TAB_SEPARATOR)
-                            for u in urls:
-                                clean_u = u.strip()
-                                if clean_u: webbrowser.open_new_tab(clean_u)
-                        else:
-                            webbrowser.open_new_tab(p)
-                    elif t == 'vscode': 
-                        if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("code.exe", desk_num, target_mon_idx, zone)
-                        process = subprocess.Popen(f'code "{p}"', shell=True)
-                    elif t == 'ide': 
-                        ide_cmd = item.get('ide_cmd', 'code')
-                        exe_hint = f"{ide_cmd}.exe" if not ide_cmd.endswith(".exe") else ide_cmd
-                        if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history(exe_hint, desk_num, target_mon_idx, zone)
-                        process = subprocess.Popen(f'{ide_cmd} "{p}"', shell=True)
-                    elif t == 'exe': 
-                        exe_hint = os.path.basename(p)
-                        if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history(exe_hint, desk_num, target_mon_idx, zone)
-                        process = subprocess.Popen(p)
-                    elif t == 'obsidian':
-                        if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("obsidian.exe", desk_num, target_mon_idx, zone)
-                        encoded = urllib.parse.quote(p)
-                        webbrowser.open(f"obsidian://open?path={encoded}")
-                    elif t == 'powershell':
-                        cmds_raw = item.get('cmd', '')
-                        tabs_content = cmds_raw.split(TAB_SEPARATOR)
+                    desk_num = None
+                    if desktop.startswith("Escritorio "):
+                        try: desk_num = int(desktop.split(" ")[1])
+                        except: pass
                         
-                        if shutil.which("wt") is None:
-                            messagebox.showwarning("Falta Windows Terminal", "Para usar pestañas necesitas instalar 'Windows Terminal'.")
-                            simple_cmd = tabs_content[0].replace(";", " & ")
-                            if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("powershell.exe", desk_num, target_mon_idx, zone)
-                            process = subprocess.Popen(f'start powershell -NoExit -Command "Set-Location \'{p}\'; {simple_cmd}"', shell=True)
-                        else:
-                            # Lanzar cada comando como una VENTANA INDEPENDIENTE de wt para que PowerToys las apile individualmente
-                            for i, content in enumerate(tabs_content):
-                                clean_cmds = content.strip()
-                                # 'wt -w -1' fuerza a abrir en una NUEVA ventana completamente separada
-                                wt_args = ["wt", "-w", "-1", "-d", p, "powershell", "-NoExit"]
-                                if clean_cmds:
-                                    wt_args.extend(["-Command", clean_cmds])
-                                
+                    target_mon_idx = None
+                    if monitor.startswith("Pantalla "):
+                        try: target_mon_idx = int(monitor.split(" ")[1]) - 1
+                        except: pass
+                    elif monitor.startswith("Monitor "):
+                        try: target_mon_idx = int(monitor.replace("Monitor ", "")) - 1
+                        except: pass
+                    
+                    if delay_s > 0:
+                        time.sleep(delay_s)
+                        
+                    # [CRÍTICO] Forzar el salto de escritorio ANTES de lanzar el proceso
+                    if desk_num is not None and WINDOWS_LIBS_AVAILABLE:
+                        try:
+                            desktops = get_virtual_desktops()
+                            if 1 <= desk_num <= len(desktops):
+                                target_desktop = desktops[desk_num - 1]
+                                target_desktop.go() # Te transporta fisicamente a ese escritorio
+                                time.sleep(0.8) # Darle respiro seguro de animacion a Windows al cambiar de escritorio
+                        except Exception as e:
+                            print(f"Error cambiando escritorio antes de lanzar: {e}")
+                    
+                    def _launch_and_position():
+                        process = None
+                        if t == 'url': 
+                            if WINDOWS_LIBS_AVAILABLE:
+                                # Inyectar para navegadores más comunes
+                                self._inject_fancyzones_history(["msedge.exe", "chrome.exe", "firefox.exe", "brave.exe"], desk_num, target_mon_idx, zone)
+                            
+                            # Soporte multi-pestaña para URL
+                            cmds_raw = item.get('cmd', '')
+                            if cmds_raw:
+                                urls = cmds_raw.split(TAB_SEPARATOR)
+                                first = True
+                                for u in urls:
+                                    clean_u = u.strip()
+                                    if clean_u:
+                                        if first:
+                                            webbrowser.open_new(clean_u)
+                                            time.sleep(1.0) # Dar margen para que la nueva ventana se abra y tome foco
+                                            first = False
+                                        else:
+                                            webbrowser.open_new_tab(clean_u)
+                                            time.sleep(0.2)
+                            else:
+                                webbrowser.open_new(p)
+                        elif t == 'vscode': 
+                            if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("code.exe", desk_num, target_mon_idx, zone)
+                            process = subprocess.Popen(f'code "{p}"', shell=True)
+                        elif t == 'ide': 
+                            ide_cmd = item.get('ide_cmd', 'code')
+                            exe_hint = f"{ide_cmd}.exe" if not ide_cmd.endswith(".exe") else ide_cmd
+                            if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history(exe_hint, desk_num, target_mon_idx, zone)
+                            process = subprocess.Popen(f'{ide_cmd} "{p}"', shell=True)
+                        elif t == 'exe': 
+                            exe_hint = os.path.normpath(p)
+                            if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history(exe_hint, desk_num, target_mon_idx, zone)
+                            process = subprocess.Popen(p)
+                        elif t == 'obsidian':
+                            if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("obsidian.exe", desk_num, target_mon_idx, zone)
+                            encoded = urllib.parse.quote(p)
+                            webbrowser.open(f"obsidian://open?path={encoded}")
+                        elif t == 'powershell':
+                            cmds_raw = item.get('cmd', '')
+                            tabs_content = cmds_raw.split(TAB_SEPARATOR)
+                            
+                            if shutil.which("wt") is None:
+                                simple_cmd = tabs_content[0].replace(";", " & ")
+                                if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("powershell.exe", desk_num, target_mon_idx, zone)
+                                process = subprocess.Popen(f'start powershell -NoExit -Command "Set-Location \'{p}\'; {simple_cmd}"', shell=True)
+                            else:
                                 if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("WindowsTerminal.exe", desk_num, target_mon_idx, zone)
-                                subprocess.Popen(wt_args, shell=True)
                                 
-                                if WINDOWS_LIBS_AVAILABLE and zone != 'Ninguna':
-                                    # Esperar un poco entre invocaciones sucesivas para que FZ intercepte cada una seguidamente en orden
-                                    time.sleep(0.3) 
+                                # Lanzar todas las pestañas dentro de una MISMA ventana de Windows Terminal 
+                                wt_args = ["wt", "-w", "-1", "-d", p, "powershell", "-NoExit"]
+                                
+                                first_cmd = tabs_content[0].strip()
+                                if first_cmd:
+                                    wt_args.extend(["-Command", first_cmd])
+                                    
+                                for content in tabs_content[1:]:
+                                    wt_args.append(";")
+                                    wt_args.extend(["new-tab", "-d", p, "powershell", "-NoExit"])
+                                    clean_cmds = content.strip()
+                                    if clean_cmds:
+                                        wt_args.extend(["-Command", clean_cmds])
+                                
+                                subprocess.Popen(wt_args)
+    
+                    _launch_and_position()
+                    
+                    # Pausa general post-lanzamiento para que Windows y PowerToys asimilen el cambio
+                    time.sleep(3.0)
+    
+                except Exception as e:
+                    print(f"Error lanzando {item.get('type')}: {e}")
+            
+            # Restaurar el botón desde otro hilo
+            self.after(0, lambda: self.btn_launch.configure(state="normal", text="🚀 LANZAR ENTORNO"))
 
-                _launch_and_position()
+        threading.Thread(target=_launch_task, daemon=True).start()
 
-            except Exception as e:
-                print(f"Error {t}: {e}")
+    def _get_process_path(self, hwnd):
+        try:
+            import win32process
+            import ctypes
+            from ctypes import wintypes
+            
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            
+            kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            hProcess = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not hProcess: return ""
+            
+            exe_path = ctypes.create_unicode_buffer(260)
+            size = wintypes.DWORD(260)
+            success = kernel32.QueryFullProcessImageNameW(hProcess, 0, exe_path, ctypes.byref(size))
+            kernel32.CloseHandle(hProcess)
+            
+            if success:
+                return os.path.normpath(exe_path.value).lower()
+        except: pass
+        return ""
 
-    def _inject_fancyzones_history(self, app_exe, desk_num, target_mon_idx, zone_name):
+    def _inject_fancyzones_history(self, app_exes, desk_num, target_mon_idx, zone_name):
+        if isinstance(app_exes, str):
+            app_exes = [app_exes]
+            
         if not WINDOWS_LIBS_AVAILABLE or not self.fancyzones_path or zone_name == 'Ninguna': return
         
         parts = zone_name.rsplit(" - Zona ", 1)
         if len(parts) != 2: return
+        layout_name = parts[0]
         try: zone_idx = int(parts[1].split()[0]) - 1
         except: return
         if zone_idx < 0: return
 
-        # 1. Hallar GUID del escritorio real
+        # 1. Hallar UUID real del layout configurado en el Launcher
+        target_uuid = None
+        for lname, info in self.available_layouts.items():
+            if lname == layout_name:
+                target_uuid = info.get("uuid")
+                break
+        if not target_uuid: return
+
+        # 2. Hallar GUID del escritorio real
         target_guid = None
         if desk_num is not None:
             try:
@@ -1102,14 +1420,14 @@ class DevLauncherApp(ctk.CTk):
                     if not target_guid.startswith("{"): target_guid = "{" + target_guid + "}"
             except: pass
             
-        # 2. Hallar Monitor Number nativo de FZ (1-indexed based on EnumDisplayMonitors logic FZ uses)
+        # 3. Hallar Monitor Number nativo de FZ (1-indexed based on EnumDisplayMonitors logic FZ uses)
         monito_number = 1
         if target_mon_idx is not None: monito_number = target_mon_idx + 1
 
-        # 3. Emparejar layoutUUID exacto y Device config en applied-layouts.json
+        # 4. Emparejar ALL dispositivos asociados a ese escritorio y monitor
+        # FancyZones guarda fantasmas de monitores viejos, extraemos todos para inyectarlos en tromba
         applied_json_path = os.path.join(self.fancyzones_path, "applied-layouts.json")
-        target_device = None
-        target_uuid = None
+        target_devices = []
         
         if os.path.exists(applied_json_path):
             try:
@@ -1120,81 +1438,113 @@ class DevLauncherApp(ctk.CTk):
                     dev = al.get("device", {})
                     vd_match = True
                     if target_guid:
-                        vd_match = (dev.get("virtual-desktop", "").upper() == target_guid)
+                        vd_match = (dev.get("virtual-desktop", "").upper() == target_guid.upper())
                     
                     mon_match = (dev.get("monitor-number", 1) == monito_number)
                     
                     if vd_match and mon_match:
-                        target_device = dev
-                        target_uuid = al.get("applied-layout", {}).get("uuid", "")
-                        break
+                        target_devices.append(dev)
             except Exception as e:
                 print("Error applied-layouts:", e)
 
-        if not target_device or not target_uuid:
-            print(f"Aviso: Layout exacto no matcheado en FZ para monitor {monito_number} / escritorio {target_guid}. Setup parcial.")
-            return
+        if not target_devices:
+            # Fallback manual de device si FZ lo ha borrado
+            target_devices.append({
+                "monitor": "FallbackMonitor",
+                "monitor-number": monito_number,
+                "virtual-desktop": target_guid if target_guid else ""
+            })
 
-        # 4. Inyectar o crear en app-zone-history.json
+        # 5. Inyectar o crear en app-zone-history.json
         history_path = os.path.join(self.fancyzones_path, "app-zone-history.json")
         hdata = {"app-zone-history": []}
         
-        for retry in range(5):
+        for retry in range(10):
             try:
                 if os.path.exists(history_path):
                     with open(history_path, 'r', encoding='utf-8') as f:
                         hdata = json.load(f)
                 break
-            except Exception: time.sleep(0.1)
+            except Exception: 
+                time.sleep(0.2)
 
         app_list = hdata.get("app-zone-history", [])
         
-        # Fuzzy match para encontrar si la app ya existe o crear una nueva entrada
-        target_app_entry = None
-        exact_exe = app_exe
+        def resolve_app_path(name):
+            if os.path.isabs(name): return os.path.normpath(name)
+            if name.lower() in ("windowsterminal.exe", "wt.exe"):
+                try:
+                    out = subprocess.check_output(['powershell', '-NoProfile', '-Command', '(Get-AppxPackage Microsoft.WindowsTerminal).InstallLocation'], timeout=3, text=True, creationflags=0x08000000).strip()
+                    if out: return os.path.join(out, "WindowsTerminal.exe")
+                except: pass
+            import winreg
+            try:
+                for root in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
+                    try:
+                        with winreg.OpenKey(root, rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}", 0, winreg.KEY_READ) as key:
+                            val, _ = winreg.QueryValueEx(key, "")
+                            if val: return os.path.normpath(val)
+                    except WindowsError: pass
+                    if not name.lower().endswith(".exe"):
+                        try:
+                            with winreg.OpenKey(root, rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}.exe", 0, winreg.KEY_READ) as key:
+                                val, _ = winreg.QueryValueEx(key, "")
+                                if val: return os.path.normpath(val)
+                        except WindowsError: pass
+            except: pass
+            w = shutil.which(name)
+            if w: return os.path.normpath(w)
+            return name
         
-        for entry in app_list:
-            if exact_exe.lower() in entry.get("app-path", "").lower():
-                exact_exe = entry["app-path"]
-                target_app_entry = entry
-                break
-                
-        if not target_app_entry:
-            if "wt.exe" in exact_exe.lower() or "windowsterminal" in exact_exe.lower():
-                exact_exe = r"C:\Program Files\WindowsApps\Microsoft.WindowsTerminal_1.23.20211.0_x64__8wekyb3d8bbwe\WindowsTerminal.exe"
-            elif not os.path.isabs(exact_exe):
-                w = shutil.which(exact_exe)
-                if w: exact_exe = w
-                
-            target_app_entry = {"app-path": exact_exe, "history": []}
-            app_list.append(target_app_entry)
+        for app_exe in app_exes:
+            # Encontrar el ABSOLUTE PATH del app, FZ requiere la ruta real o no hace match
+            exact_exe = resolve_app_path(app_exe)
+            target_app_entry = None
             
-        history_arr = target_app_entry.get("history", [])
-        
-        # Buscar si ya tiene un historial para este zoneset-uuid / device virtual desktop
-        updated_history = False
-        for h in history_arr:
-            dev = h.get("device", {})
-            if h.get("zoneset-uuid") == target_uuid and dev.get("virtual-desktop", "").upper() == target_guid:
-                h["zone-index-set"] = [zone_idx]
-                updated_history = True
-                break
+            for entry in app_list:
+                if exact_exe.lower() == entry.get("app-path", "").lower():
+                    exact_exe = entry["app-path"]
+                    target_app_entry = entry
+                    break
+                    
+            if not target_app_entry:
+                target_app_entry = {"app-path": exact_exe, "history": []}
+                app_list.append(target_app_entry)
                 
-        if not updated_history:
-            history_arr.append({
-                "zone-index-set": [zone_idx],
-                "device": target_device,
-                "zoneset-uuid": target_uuid
-            })
+            history_arr = target_app_entry.get("history", [])
+            
+            # Buscar si ya tiene un historial para este zoneset-uuid / device virtual desktop
+            for t_dev in target_devices:
+                updated_history = False
+                for h in history_arr:
+                    h_dev = h.get("device", {})
+                    # Matchear si el FZ history record aplica a nuestro layout UUID, y coincide con Virtual Desktop y num monitor
+                    if (h.get("zoneset-uuid") == target_uuid and 
+                        h_dev.get("virtual-desktop", "").upper() == target_guid and 
+                        h_dev.get("monitor-number", 1) == monito_number and
+                        h_dev.get("monitor", "") == t_dev.get("monitor", "")):
+                        
+                        h["zone-index-set"] = [zone_idx]
+                        h["device"] = t_dev
+                        updated_history = True
+                        break
+                        
+                if not updated_history:
+                    history_arr.append({
+                        "zone-index-set": [zone_idx],
+                        "device": t_dev,
+                        "zoneset-uuid": target_uuid
+                    })
             
         hdata["app-zone-history"] = app_list
         
-        for retry in range(5):
+        for retry in range(10):
             try:
                 with open(history_path, 'w', encoding='utf-8') as f:
                     json.dump(hdata, f)
                 break
-            except Exception: time.sleep(0.1)
+            except Exception: 
+                time.sleep(0.2)
 
 if __name__ == "__main__":
     app = DevLauncherApp()
