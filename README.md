@@ -29,14 +29,16 @@ Una herramienta GUI profesional en Python para automatizar la apertura de tus en
 
    *(Incluye `customtkinter`, `pyvda`, `pywin32`, `pygetwindow`, `pyautogui` para la magia Win11)*
 
-3. **Configuración CRÍTICA de PowerToys:**
+3. **⚠️ Configuración CRÍTICA de PowerToys ⚠️**
 
-   Para que el posicionamiento automático funcione perfectamente, debes configurar PowerToys así:
+   > [!IMPORTANT]
+   > Para que el Launcher pueda comunicarse con PowerToys y posicionar las ventanas correctamente en sus zonas (sin usar falsos movimientos de ratón), tienes que activar **obligatoriamente** esta opción en tu Windows:
 
-   * Abre **PowerToys Settings** > **FancyZones**.
-   * En **Comportamiento de la ventana**, activa: 
-     * `Mover las ventanas recién creadas a su última zona conocida`.
-   * (Recomendado) En **Cambiar entre ventanas de la zona**, elige tus atajos (ej: `Win + PgUp/PgDn`).
+   * Abre los ajustes de tu PC: **PowerToys Settings** > **FancyZones**.
+   * Baja a la sección **Comportamiento de la ventana** (Window behavior).
+   * Activa la palanca que dice: **`Mover las ventanas recién creadas a su última zona conocida`** (Move newly created windows to their last known zone).
+   * Asegúrate de que, justo debajo, el rastreo de ventana esté basado en "Ruta de aplicación o Título".
+   * *(Opcional pero Recomendado)*: En la sección **Cambiar entre ventanas de la zona**, elige tus atajos (ej: `Win + RePág/AvPág`). Esto te permitirá saltar instantáneamente entre todas las pestañas de terminales o webs que caigan apiladas en el mismo recuadro de zona.
 
 4. **Windows Terminal:**
 

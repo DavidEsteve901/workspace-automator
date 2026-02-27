@@ -58,6 +58,104 @@ class AddIDEDialog(ctk.CTkToplevel):
         self.path_label.pack(side="left", fill="x", expand=True, padx=(0, 10))
         ctk.CTkButton(self.path_frame, text="📂", width=40, command=self.browse).pack(side="left")
 
+        # Seleccionar Comando
+        self.cmd_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.cmd_frame.pack(fill="x", padx=20, pady=10)
+        ctk.CTkLabel(self.cmd_frame, text="IDE Cmd:", width=60).pack(side="left", padx=(0, 10))
+        self.ide_var = ctk.StringVar(value="code")
+        self.ide_entry = ctk.CTkEntry(self.cmd_frame, textvariable=self.ide_var)
+        self.ide_entry.pack(side="left", fill="x", expand=True)
+
+        # Botones
+        self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.btn_frame.pack(fill="x", padx=20, pady=(20, 10))
+        ctk.CTkButton(self.btn_frame, text="Cancelar", fg_color="#555", command=self.destroy, width=100).pack(side="right", padx=(10, 0))
+        ctk.CTkButton(self.btn_frame, text="Siguiente >", fg_color="#2CC985", hover_color="#24A36B", command=self.save, width=100).pack(side="right")
+
+        self.path_value = ""
+
+    def browse(self):
+        p = filedialog.askdirectory(title="Seleccionar proyecto")
+        if p:
+            self.path_label.configure(text=p)
+            self.path_value = p
+
+    def save(self):
+        if not self.path_value:
+            messagebox.showwarning("Aviso", "Selecciona una ruta primero")
+            return
+        cmd = self.ide_var.get().strip()
+        if not cmd:
+            messagebox.showwarning("Aviso", "Introduce un comando IDE")
+            return
+            
+        self.result = {"path": os.path.normpath(self.path_value), "ide_cmd": cmd}
+        self.destroy()
+
+class AddMultiWebDialog(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Añadir Multi-Web")
+        self.geometry("500x400")
+        self.result = None
+        self.transient(parent)
+        self.grab_set()
+        
+        ctk.CTkLabel(self, text="URLs para este grupo (Multi-pestaña):", font=("Roboto", 14, "bold")).pack(anchor="w", padx=20, pady=(20, 10))
+        
+        self.tabs_scroll = ctk.CTkScrollableFrame(self, height=200)
+        self.tabs_scroll.pack(fill="both", expand=True, padx=20, pady=5)
+        
+        ctk.CTkButton(self, text="➕ Añadir URL", command=self.add_tab_entry, fg_color="#4B4B4B", hover_color="#333").pack(pady=10)
+        
+        self.tab_entries = []
+        self.add_tab_entry("https://google.com")
+        
+        self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.btn_frame.pack(fill="x", padx=20, pady=(10, 15))
+        ctk.CTkButton(self.btn_frame, text="Cancelar", fg_color="#555", command=self.destroy, width=100).pack(side="right", padx=(10, 0))
+        ctk.CTkButton(self.btn_frame, text="Guardar Listado", fg_color="#2CC985", hover_color="#24A36B", command=self.save, width=140).pack(side="right")
+
+    def add_tab_entry(self, text=""):
+        idx = len(self.tab_entries) + 1
+        frame = ctk.CTkFrame(self.tabs_scroll)
+        frame.pack(fill="x", pady=5, padx=5)
+        
+        lbl = ctk.CTkLabel(frame, text=f"URL {idx}:", width=50)
+        lbl.pack(side="left", padx=5)
+        
+        entry = ctk.CTkEntry(frame)
+        entry.pack(side="left", fill="x", expand=True, padx=5)
+        entry.insert(0, text)
+        
+        btn = ctk.CTkButton(frame, text="✖", width=30, fg_color="#AA0000", hover_color="#770000", 
+                            command=lambda f=frame, e=entry: self.remove_tab_entry(f, e))
+        btn.pack(side="right", padx=5)
+        
+        self.tab_entries.append(entry)
+
+    def remove_tab_entry(self, frame, entry):
+        if entry in self.tab_entries:
+            self.tab_entries.remove(entry)
+        frame.destroy()
+
+    def save(self):
+        urls = []
+        for e in self.tab_entries:
+            u = e.get().strip()
+            if u:
+                if not u.startswith("http"):
+                    u = "https://" + u
+                urls.append(u)
+        
+        if not urls:
+            messagebox.showwarning("Aviso", "Introduce al menos una URL.")
+            return
+            
+        self.result = {
+            "path": urls[0],
+            "cmd": f" {TAB_SEPARATOR} ".join(urls)
+        }
         self.destroy()
 
 class AssignLayoutsDialog(ctk.CTkToplevel):
@@ -185,7 +283,7 @@ class AdvancedItemDialog(ctk.CTkToplevel):
         self.item_type = item_type
         self.item_data = item_data or {}
         
-        if self.item_type == "powershell":
+        if self.item_type in ["powershell", "url"]:
             self.geometry("850x550")
         else:
             self.geometry("450x550")
@@ -291,18 +389,20 @@ class AdvancedItemDialog(ctk.CTkToplevel):
         # Dibujar preview inicial
         self.after(100, self.update_preview)
 
-        # ======= TABS FASE (POWERSHELL SOLO) ============
-        if self.item_type == "powershell":
+        # ======= TABS FASE (POWERSHELL / URL) ============
+        if self.item_type in ["powershell", "url"]:
             self.grid_columnconfigure(1, weight=1)
             self.right_frame = ctk.CTkFrame(self, fg_color="transparent")
             self.right_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=15)
             
-            ctk.CTkLabel(self.right_frame, text="Pestañas de la Terminal:", font=("Roboto", 14, "bold")).pack(anchor="w", pady=(0, 10))
+            title_text = "Pestañas de la Terminal:" if self.item_type == "powershell" else "URLs a abrir (Multi-pestaña):"
+            ctk.CTkLabel(self.right_frame, text=title_text, font=("Roboto", 14, "bold")).pack(anchor="w", pady=(0, 10))
             
             self.tabs_scroll = ctk.CTkScrollableFrame(self.right_frame, height=400)
             self.tabs_scroll.pack(fill="both", expand=True, pady=5)
             
-            ctk.CTkButton(self.right_frame, text="➕ Añadir Pestaña", command=self.add_tab_entry, fg_color="#4B4B4B", hover_color="#333").pack(pady=10)
+            btn_text = "➕ Añadir Pestaña" if self.item_type == "powershell" else "➕ Añadir URL"
+            ctk.CTkButton(self.right_frame, text=btn_text, command=self.add_tab_entry, fg_color="#4B4B4B", hover_color="#333").pack(pady=10)
             
             self.tab_entries = []
             
@@ -312,6 +412,8 @@ class AdvancedItemDialog(ctk.CTkToplevel):
                 for t in tabs:
                     clean_t = t.strip()
                     self.add_tab_entry(clean_t)
+            elif path_or_url and self.item_type == "url":
+                self.add_tab_entry(path_or_url)
             else:
                 self.add_tab_entry()
 
@@ -354,7 +456,8 @@ class AdvancedItemDialog(ctk.CTkToplevel):
         frame = ctk.CTkFrame(self.tabs_scroll)
         frame.pack(fill="x", pady=5, padx=5)
         
-        lbl = ctk.CTkLabel(frame, text=f"Tab {idx}:", width=50)
+        lbl_text = f"Tab {idx}:" if self.item_type == "powershell" else f"URL {idx}:"
+        lbl = ctk.CTkLabel(frame, text=lbl_text, width=50)
         lbl.pack(side="left", padx=5)
         
         entry = ctk.CTkEntry(frame)
@@ -451,15 +554,19 @@ class AdvancedItemDialog(ctk.CTkToplevel):
             "fancyzone": self.selected_zone_str,
             "delay": self.delay_var.get()
         }
-        if self.item_type == "powershell":
+        if self.item_type in ["powershell", "url"]:
             tabs_texts = []
             for e in self.tab_entries:
                 txt = e.get().strip()
                 if txt:
+                    if self.item_type == "url" and not txt.startswith("http"):
+                        txt = "https://" + txt
                     tabs_texts.append(txt)
             if not tabs_texts:
                 tabs_texts.append("")
             self.result["cmd"] = f" {TAB_SEPARATOR} ".join(tabs_texts)
+            if self.item_type == "url":
+                self.result["path"] = tabs_texts[0] if tabs_texts else ""
             
         self.destroy()
 
@@ -729,7 +836,9 @@ class DevLauncherApp(ctk.CTk):
             p = item.get('path', '')
             cmd = item.get('cmd', '')
 
-            if t == 'url': tag, col, txt = "[WEB]", "#E5A00D", p
+            if t == 'url': 
+                num_tabs = cmd.count(TAB_SEPARATOR) + 1 if cmd else 1
+                tag, col, txt = "[WEB]", "#E5A00D", f"Web ({num_tabs} pestañas): {p}"
             elif t == 'vscode': tag, col, txt = "[CODE]", "#007ACC", f"Proyecto: {os.path.basename(p)}"
             elif t == 'ide': 
                 ide_cmd = str(item.get('ide_cmd', 'IDE')).upper()[:6]
@@ -766,12 +875,10 @@ class DevLauncherApp(ctk.CTk):
                 self.add_item("exe", os.path.normpath(p), extras=dlg.result)
     
     def add_url(self):
-        if u := ctk.CTkInputDialog(text="URL:", title="Web").get_input():
-            full_u = "https://" + u if not u.startswith("http") else u
-            dlg = AdvancedItemDialog(self, title="Configurar URL", path_or_url=full_u, item_type="url")
-            self.wait_window(dlg)
-            if dlg.result:
-                self.add_item("url", full_u, extras=dlg.result)
+        dlg = AddMultiWebDialog(self)
+        self.wait_window(dlg)
+        if dlg.result:
+            self.add_item("url", dlg.result["path"], extras=dlg.result)
 
     def add_vscode_project(self):
         if p := filedialog.askdirectory(title="Proyecto VS Code"): 
@@ -882,7 +989,15 @@ class DevLauncherApp(ctk.CTk):
                     process = None
                     if t == 'url': 
                         if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("msedge.exe", desk_num, target_mon_idx, zone)
-                        webbrowser.open_new_tab(p)
+                        # Soporte multi-pestaña para URL
+                        cmds_raw = item.get('cmd', '')
+                        if cmds_raw:
+                            urls = cmds_raw.split(TAB_SEPARATOR)
+                            for u in urls:
+                                clean_u = u.strip()
+                                if clean_u: webbrowser.open_new_tab(clean_u)
+                        else:
+                            webbrowser.open_new_tab(p)
                     elif t == 'vscode': 
                         if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("code.exe", desk_num, target_mon_idx, zone)
                         process = subprocess.Popen(f'code "{p}"', shell=True)
