@@ -300,8 +300,24 @@ class AdvancedItemDialog(ctk.CTkToplevel):
 
         # Ruta
         ctk.CTkLabel(self.left_frame, text="Ruta / URL:").pack(pady=(15, 0), padx=20, anchor="w")
-        self.path_lbl = ctk.CTkLabel(self.left_frame, text=path_or_url, fg_color="#333", corner_radius=5)
-        self.path_lbl.pack(fill="x", padx=20, pady=5)
+        
+        self.path_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
+        self.path_frame.pack(fill="x", padx=20, pady=5)
+        
+        self.path_var = ctk.StringVar(value=path_or_url)
+        self.path_entry = ctk.CTkEntry(self.path_frame, textvariable=self.path_var)
+        self.path_entry.pack(side="left", fill="x", expand=True)
+        
+        if self.item_type in ["exe", "vscode", "ide", "obsidian", "powershell"]:
+            ctk.CTkButton(self.path_frame, text="📂", width=30, command=self.browse_path).pack(side="left", padx=(5, 0))
+
+        if self.item_type == "ide":
+            self.ide_cmd_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
+            self.ide_cmd_frame.pack(fill="x", padx=20, pady=5)
+            ctk.CTkLabel(self.ide_cmd_frame, text="IDE Cmd:", width=60).pack(side="left")
+            self.ide_cmd_var = ctk.StringVar(value=self.item_data.get("ide_cmd", "code"))
+            self.ide_cmd_entry = ctk.CTkEntry(self.ide_cmd_frame, textvariable=self.ide_cmd_var)
+            self.ide_cmd_entry.pack(side="left", fill="x", expand=True, padx=5)
 
         # Monitor
         monitors = parent.available_monitors if hasattr(parent, 'available_monitors') and parent.available_monitors else ["Por defecto"]
@@ -416,6 +432,14 @@ class AdvancedItemDialog(ctk.CTkToplevel):
                 self.add_tab_entry(path_or_url)
             else:
                 self.add_tab_entry()
+
+    def browse_path(self):
+        if self.item_type == "exe":
+            if p := filedialog.askopenfilename(filetypes=[("Exe", "*.exe")]):
+                self.path_var.set(os.path.normpath(p))
+        else:
+            if p := filedialog.askdirectory():
+                self.path_var.set(os.path.normpath(p))
 
     def on_desktop_change(self, choice):
         if not WINDOWS_LIBS_AVAILABLE: return
@@ -548,12 +572,27 @@ class AdvancedItemDialog(ctk.CTkToplevel):
         self.preview_lbl.configure(text=f"Actual: {self.selected_zone_str}", text_color="#2CC985")
 
     def save(self):
+        p = self.path_var.get().strip()
+        if self.item_type == "url":
+            pass # Para web el path lo saca de la primera pestaña luego
+        elif not p:
+            messagebox.showwarning("Aviso", "La ruta no puede estar vacía.")
+            return
+
         self.result = {
+            "path": p,
             "monitor": self.monitor_var.get(),
             "desktop": self.desktop_var.get(),
             "fancyzone": self.selected_zone_str,
             "delay": self.delay_var.get()
         }
+        
+        if self.item_type == "ide":
+            cmd = self.ide_cmd_var.get().strip()
+            if cmd: self.result["ide_cmd"] = cmd
+            else:
+                messagebox.showwarning("Aviso", "Introduce un comando IDE")
+                return
         if self.item_type in ["powershell", "url"]:
             tabs_texts = []
             for e in self.tab_entries:
