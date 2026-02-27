@@ -1286,14 +1286,16 @@ class DevLauncherApp(ctk.CTk):
                         except Exception as e:
                             print(f"Error cambiando escritorio antes de lanzar: {e}")
                     
+                    hwnds_before = set()
+                    if WINDOWS_LIBS_AVAILABLE:
+                        import win32gui
+                        def enum_before(hwnd, _):
+                            if win32gui.IsWindowVisible(hwnd): hwnds_before.add(hwnd)
+                        win32gui.EnumWindows(enum_before, 0)
+                        
                     def _launch_and_position():
                         process = None
-                        if t == 'url': 
-                            if WINDOWS_LIBS_AVAILABLE:
-                                # Inyectar para navegadores más comunes
-                                self._inject_fancyzones_history(["msedge.exe", "chrome.exe", "firefox.exe", "brave.exe"], desk_num, target_mon_idx, zone)
-                            
-                            # Soporte multi-pestaña para URL
+                        if t == 'url':
                             cmds_raw = item.get('cmd', '')
                             if cmds_raw:
                                 urls = cmds_raw.split(TAB_SEPARATOR)
@@ -1311,19 +1313,13 @@ class DevLauncherApp(ctk.CTk):
                             else:
                                 webbrowser.open_new(p)
                         elif t == 'vscode': 
-                            if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("code.exe", desk_num, target_mon_idx, zone)
                             process = subprocess.Popen(f'code "{p}"', shell=True)
                         elif t == 'ide': 
                             ide_cmd = item.get('ide_cmd', 'code')
-                            exe_hint = f"{ide_cmd}.exe" if not ide_cmd.endswith(".exe") else ide_cmd
-                            if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history(exe_hint, desk_num, target_mon_idx, zone)
                             process = subprocess.Popen(f'{ide_cmd} "{p}"', shell=True)
                         elif t == 'exe': 
-                            exe_hint = os.path.normpath(p)
-                            if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history(exe_hint, desk_num, target_mon_idx, zone)
                             process = subprocess.Popen(p)
                         elif t == 'obsidian':
-                            if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("obsidian.exe", desk_num, target_mon_idx, zone)
                             encoded = urllib.parse.quote(p)
                             webbrowser.open(f"obsidian://open?path={encoded}")
                         elif t == 'powershell':
@@ -1332,11 +1328,8 @@ class DevLauncherApp(ctk.CTk):
                             
                             if shutil.which("wt") is None:
                                 simple_cmd = tabs_content[0].replace(";", " & ")
-                                if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("powershell.exe", desk_num, target_mon_idx, zone)
                                 process = subprocess.Popen(f'start powershell -NoExit -Command "Set-Location \'{p}\'; {simple_cmd}"', shell=True)
                             else:
-                                if WINDOWS_LIBS_AVAILABLE: self._inject_fancyzones_history("WindowsTerminal.exe", desk_num, target_mon_idx, zone)
-                                
                                 # Lanzar todas las pestañas dentro de una MISMA ventana de Windows Terminal 
                                 wt_args = ["wt", "-w", "-1", "-d", p, "powershell", "-NoExit"]
                                 
@@ -1355,8 +1348,14 @@ class DevLauncherApp(ctk.CTk):
     
                     _launch_and_position()
                     
-                    # Pausa general post-lanzamiento para que Windows y PowerToys asimilen el cambio
-                    time.sleep(3.0)
+                    # Pausa para dar tiempo a Windows de pintar la ventana antes de pescarla y moverla
+                    time.sleep(1.8)
+                    
+                    if WINDOWS_LIBS_AVAILABLE and zone != 'Ninguna':
+                        self._apply_manual_zone_position(zone, target_mon_idx, hwnds_before, t, p, item.get('ide_cmd', ''))
+                        
+                    # Pausa post-movimiento para no atascar el OS
+                    time.sleep(0.5)
     
                 except Exception as e:
                     print(f"Error lanzando {item.get('type')}: {e}")
@@ -1389,11 +1388,77 @@ class DevLauncherApp(ctk.CTk):
         except: pass
         return ""
 
-    def _inject_fancyzones_history(self, app_exes, desk_num, target_mon_idx, zone_name):
-        if isinstance(app_exes, str):
-            app_exes = [app_exes]
+    def _calculate_zone_rect(self, layout_info, zone_idx, work_area):
+        ltype = layout_info.get("type", "grid")
+        left_bound, top_bound, right_bound, bottom_bound = work_area
+        width = right_bound - left_bound
+        height = bottom_bound - top_bound
+        
+        spacing = layout_info.get("spacing", 0) if layout_info.get("show-spacing", True) else 0
+        
+        if ltype == "grid":
+            rows_perc = layout_info.get("rows-percentage", [10000])
+            cols_perc = layout_info.get("columns-percentage", [10000])
+            cell_map = layout_info.get("cell-child-map", [[0]])
             
-        if not WINDOWS_LIBS_AVAILABLE or not self.fancyzones_path or zone_name == 'Ninguna': return
+            total_r = sum(rows_perc) if sum(rows_perc) > 0 else 10000
+            total_c = sum(cols_perc) if sum(cols_perc) > 0 else 10000
+            
+            row_bounds = [top_bound]
+            accum = 0
+            for p in rows_perc:
+                accum += p
+                row_bounds.append(top_bound + int((accum / total_r) * height))
+                
+            col_bounds = [left_bound]
+            accum = 0
+            for p in cols_perc:
+                accum += p
+                col_bounds.append(left_bound + int((accum / total_c) * width))
+                
+            min_r, max_r = 9999, -1
+            min_c, max_c = 9999, -1
+            
+            for r_i, row in enumerate(cell_map):
+                for c_i, z_val in enumerate(row):
+                    if z_val == zone_idx:
+                        min_r = min(min_r, r_i)
+                        max_r = max(max_r, r_i)
+                        min_c = min(min_c, c_i)
+                        max_c = max(max_c, c_i)
+                        
+            if min_r <= max_r and min_c <= max_c:
+                z_t = row_bounds[min_r] + spacing
+                z_b = row_bounds[max_r + 1] - spacing
+                z_l = col_bounds[min_c] + spacing
+                z_r = col_bounds[max_c + 1] - spacing
+                return (z_l, z_t, max(50, z_r - z_l), max(50, z_b - z_t))
+                
+        elif ltype == "canvas":
+            ref_w = layout_info.get("ref-width", width)
+            if ref_w <= 0: ref_w = width
+            ref_h = layout_info.get("ref-height", height)
+            if ref_h <= 0: ref_h = height
+            
+            zones = layout_info.get("zones", [])
+            if zone_idx < len(zones):
+                z = zones[zone_idx]
+                zx = z.get("X", 0)
+                zy = z.get("Y", 0)
+                zw = z.get("width", 100)
+                zh = z.get("height", 100)
+                
+                x = left_bound + int((zx / ref_w) * width)
+                y = top_bound + int((zy / ref_h) * height)
+                w = int((zw / ref_w) * width)
+                h = int((zh / ref_h) * height)
+                return (x, y, w, h)
+        return None
+
+    def _apply_manual_zone_position(self, zone_name, target_mon_idx, hwnds_before, type_str, path_str, ide_cmd_str):
+        import win32gui
+        import win32api
+        import win32con
         
         parts = zone_name.rsplit(" - Zona ", 1)
         if len(parts) != 2: return
@@ -1401,150 +1466,62 @@ class DevLauncherApp(ctk.CTk):
         try: zone_idx = int(parts[1].split()[0]) - 1
         except: return
         if zone_idx < 0: return
-
-        # 1. Hallar UUID real del layout configurado en el Launcher
-        target_uuid = None
-        for lname, info in self.available_layouts.items():
-            if lname == layout_name:
-                target_uuid = info.get("uuid")
-                break
-        if not target_uuid: return
-
-        # 2. Hallar GUID del escritorio real
-        target_guid = None
-        if desk_num is not None:
-            try:
-                vds = get_virtual_desktops()
-                if 1 <= desk_num <= len(vds):
-                    target_guid = str(vds[desk_num - 1].id).upper()
-                    if not target_guid.startswith("{"): target_guid = "{" + target_guid + "}"
-            except: pass
+        
+        layout_info = self.available_layouts.get(layout_name, {})
+        if not layout_info: return
+        
+        mon_idx = target_mon_idx if target_mon_idx is not None else 0
+        try:
+            monitors = win32api.EnumDisplayMonitors()
+            if mon_idx < 0 or mon_idx >= len(monitors): mon_idx = 0
+            monitor_info = win32api.GetMonitorInfo(monitors[mon_idx][0])
+            work_area = monitor_info['Work']
+        except:
+            return
             
-        # 3. Hallar Monitor Number nativo de FZ (1-indexed based on EnumDisplayMonitors logic FZ uses)
-        monito_number = 1
-        if target_mon_idx is not None: monito_number = target_mon_idx + 1
-
-        # 4. Emparejar ALL dispositivos asociados a ese escritorio y monitor
-        # FancyZones guarda fantasmas de monitores viejos, extraemos todos para inyectarlos en tromba
-        applied_json_path = os.path.join(self.fancyzones_path, "applied-layouts.json")
-        target_devices = []
+        rect = self._calculate_zone_rect(layout_info, zone_idx, work_area)
+        if not rect: return
+        left, top, w, h = rect
         
-        if os.path.exists(applied_json_path):
-            try:
-                with open(applied_json_path, 'r', encoding='utf-8') as f:
-                    app_data = json.load(f)
-                    
-                for al in app_data.get("applied-layouts", []):
-                    dev = al.get("device", {})
-                    vd_match = True
-                    if target_guid:
-                        vd_match = (dev.get("virtual-desktop", "").upper() == target_guid.upper())
-                    
-                    mon_match = (dev.get("monitor-number", 1) == monito_number)
-                    
-                    if vd_match and mon_match:
-                        target_devices.append(dev)
-            except Exception as e:
-                print("Error applied-layouts:", e)
-
-        if not target_devices:
-            # Fallback manual de device si FZ lo ha borrado
-            target_devices.append({
-                "monitor": "FallbackMonitor",
-                "monitor-number": monito_number,
-                "virtual-desktop": target_guid if target_guid else ""
-            })
-
-        # 5. Inyectar o crear en app-zone-history.json
-        history_path = os.path.join(self.fancyzones_path, "app-zone-history.json")
-        hdata = {"app-zone-history": []}
+        new_hwnds = []
+        def enum_after(hwnd, _):
+            if win32gui.IsWindowVisible(hwnd) and hwnd not in hwnds_before:
+                title = win32gui.GetWindowText(hwnd)
+                if title and title != "Program Manager":
+                    new_hwnds.append(hwnd)
+        win32gui.EnumWindows(enum_after, 0)
         
-        for retry in range(10):
-            try:
-                if os.path.exists(history_path):
-                    with open(history_path, 'r', encoding='utf-8') as f:
-                        hdata = json.load(f)
-                break
-            except Exception: 
-                time.sleep(0.2)
-
-        app_list = hdata.get("app-zone-history", [])
+        target_kws = []
+        if type_str == 'url': target_kws = ['edge', 'chrome', 'firefox', 'brave']
+        elif type_str == 'vscode': target_kws = ['code', 'visual studio']
+        elif type_str == 'ide': target_kws = [str(ide_cmd_str).lower().replace(".exe", "")]
+        elif type_str == 'obsidian': target_kws = ['obsidian']
+        elif type_str == 'powershell': target_kws = ['terminal', 'powershell']
+        else: target_kws = [os.path.basename(path_str).lower().replace(".exe", "")]
         
-        def resolve_app_path(name):
-            if os.path.isabs(name): return os.path.normpath(name)
-            if name.lower() in ("windowsterminal.exe", "wt.exe"):
-                try:
-                    out = subprocess.check_output(['powershell', '-NoProfile', '-Command', '(Get-AppxPackage Microsoft.WindowsTerminal).InstallLocation'], timeout=3, text=True, creationflags=0x08000000).strip()
-                    if out: return os.path.join(out, "WindowsTerminal.exe")
-                except: pass
-            import winreg
-            try:
-                for root in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
-                    try:
-                        with winreg.OpenKey(root, rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}", 0, winreg.KEY_READ) as key:
-                            val, _ = winreg.QueryValueEx(key, "")
-                            if val: return os.path.normpath(val)
-                    except WindowsError: pass
-                    if not name.lower().endswith(".exe"):
-                        try:
-                            with winreg.OpenKey(root, rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}.exe", 0, winreg.KEY_READ) as key:
-                                val, _ = winreg.QueryValueEx(key, "")
-                                if val: return os.path.normpath(val)
-                        except WindowsError: pass
-            except: pass
-            w = shutil.which(name)
-            if w: return os.path.normpath(w)
-            return name
-        
-        for app_exe in app_exes:
-            # Encontrar el ABSOLUTE PATH del app, FZ requiere la ruta real o no hace match
-            exact_exe = resolve_app_path(app_exe)
-            target_app_entry = None
+        matched_hwnd = None
+        for hwnd in new_hwnds:
+            title = win32gui.GetWindowText(hwnd).lower()
+            p_path = self._get_process_path(hwnd)
             
-            for entry in app_list:
-                if exact_exe.lower() == entry.get("app-path", "").lower():
-                    exact_exe = entry["app-path"]
-                    target_app_entry = entry
-                    break
-                    
-            if not target_app_entry:
-                target_app_entry = {"app-path": exact_exe, "history": []}
-                app_list.append(target_app_entry)
+            if any(kw in title for kw in target_kws) or any(kw in p_path for kw in target_kws):
+                matched_hwnd = hwnd
+                break
                 
-            history_arr = target_app_entry.get("history", [])
+        # Fallback ultra agresivo: cogemos la principal/última ventana visual nacida
+        if not matched_hwnd and len(new_hwnds) > 0:
+            matched_hwnd = new_hwnds[0]
             
-            # Buscar si ya tiene un historial para este zoneset-uuid / device virtual desktop
-            for t_dev in target_devices:
-                updated_history = False
-                for h in history_arr:
-                    h_dev = h.get("device", {})
-                    # Matchear si el FZ history record aplica a nuestro layout UUID, y coincide con Virtual Desktop y num monitor
-                    if (h.get("zoneset-uuid") == target_uuid and 
-                        h_dev.get("virtual-desktop", "").upper() == target_guid and 
-                        h_dev.get("monitor-number", 1) == monito_number and
-                        h_dev.get("monitor", "") == t_dev.get("monitor", "")):
-                        
-                        h["zone-index-set"] = [zone_idx]
-                        h["device"] = t_dev
-                        updated_history = True
-                        break
-                        
-                if not updated_history:
-                    history_arr.append({
-                        "zone-index-set": [zone_idx],
-                        "device": t_dev,
-                        "zoneset-uuid": target_uuid
-                    })
-            
-        hdata["app-zone-history"] = app_list
-        
-        for retry in range(10):
+        if matched_hwnd:
             try:
-                with open(history_path, 'w', encoding='utf-8') as f:
-                    json.dump(hdata, f)
-                break
-            except Exception: 
-                time.sleep(0.2)
+                if win32gui.IsIconic(matched_hwnd):
+                    win32gui.ShowWindow(matched_hwnd, win32con.SW_RESTORE)
+                
+                # Compensación estándar de bordes invisibles aeroglass de Windows para DWM (suele ser 7px offset estético)
+                comp = 7
+                win32gui.SetWindowPos(matched_hwnd, win32con.HWND_TOP, left - comp, top, w + (comp*2), h + comp, win32con.SWP_SHOWWINDOW)
+            except Exception as e:
+                print(f"Error moviendo la ventana manually: {e}")
 
 if __name__ == "__main__":
     app = DevLauncherApp()
