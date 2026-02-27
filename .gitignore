@@ -1,5 +1,6 @@
 # Archivos de configuración personal (para no subir tus rutas privadas)
 *.json
+mis_apps_config*.json
 
 # Basura de Python
 __pycache__/

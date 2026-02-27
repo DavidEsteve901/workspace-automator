@@ -1,57 +1,64 @@
 # Workspace Automator 🚀
 
-Una herramienta GUI en Python para automatizar la apertura de todos los elementos de tus entornos de desarrollo (IDEs, Apps, Webs, Terminales y más) con un solo clic. Ideal para desarrolladores que quieren empezar a trabajar inmediatamente sin perder tiempo abriendo programas uno a uno.
+Una herramienta GUI profesional en Python para automatizar la apertura de tus entornos de desarrollo (IDEs, Apps, Webs, Terminales) con integración profunda en **Windows 11**, **PowerToys FancyZones** y **Escritorios Virtuales**.
 
 ## ✨ Características Principales
 
-* **📁 Categorías de Trabajo:** Organiza tus entornos en diferentes perfiles (ej: "Backend", "Frontend", "Proyecto X").
-* **⚡ Soporte Multi-tipo (¡Más que solo VS Code!):**
-  * �‍💻 **IDEs Personalizables:** Abre carpetas de proyecto no solo con VS Code, sino con el IDE que prefieras (`code`, `cursor`, `antigravity`, `pycharm`, etc.).
-  * �🖥️ **Apps (.exe):** Lanza ejecutables de escritorio tradicionales.
-  * 🌐 **Web:** Abre múltiples URLs directamente en pestañas de tu navegador predeterminado.
-  * � **Obsidian:** Integra y abre tus Vaults de Obsidian (`obsidian://`).
-  * 💻 **Terminal Multi-Pestaña:** Abre instancias de PowerShell con múltiples pestañas y comandos iniciales preconfigurados (usando Windows Terminal `wt.exe`).
-* **💾 Persistencia Automática:** Tus configuraciones y categorías se guardan automáticamente en formato JSON local (`mis_apps_config_v2.json`).
-* **🎨 Interfaz Moderna y Fluida:** Construida con `CustomTkinter` para ofrecer una experiencia nativa de Modo Oscuro con temática azul elegante.
-* **✍️ Editor de Comandos Integrado:** Interfaz dedicada para programar fácilmente las múltiples pestañas y comandos que quieres que se ejecuten en tus terminales al lanzar tu espacio de trabajo.
+* **📁 Gestión de Categorías:** Organiza tus flujos de trabajo (ej: "Backend Go", "Frontend React", "Data Science").
+* **🖥️ Soporte Nativo de Monitores y Escritorios:** Elige en qué monitor físico y en qué escritorio virtual debe aparecer cada aplicación. El launcher se encarga de cambiar de escritorio automáticamente antes de lanzar.
+* **🔮 Integración "Hacker" con FancyZones:**  
+  A diferencia de otros scripts, esta herramienta **no mueve ventanas manualmente**. En su lugar, realiza una **inyección de historial** directamente en los archivos de configuración de PowerToys (`app-zone-history.json`) antes del lanzamiento.
+* **📚 Apilamiento (Stacking) de Ventanas:** Soporte total para la rotación de ventanas en la misma zona de FancyZones (atajo `Win + RePág / AvPág`). Ideal para tener varias terminales o navegadores en el mismo hueco y saltar entre ellos.
+* **👨‍💻 Terminales Inteligentes:** Configura múltiples instancias de terminal que se abren como ventanas independientes, permitiendo que cada una se registre en su zona de FancyZones correspondiente.
+* **💾 Persistencia JSON:** Todas tus configuraciones se guardan localmente en `mis_apps_config_v2.json` (auto-ignorado en git).
 
-## 📦 Instalación
+## 📦 Instalación y Requisitos
 
-1. Clona este repositorio:
+1. **Clonar y entrar al directorio:**
+
    ```bash
    git clone https://github.com/TU-USUARIO/workspace-automator.git
    cd workspace-automator
    ```
 
-2. Instala las dependencias necesarias:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   *(Asegúrate de tener instalada la librería `customtkinter`)*
+2. **Instalar dependencias de Python:**
 
-3. **Requisito para Terminal Multi-pestaña (Opcional):**
-   Para aprovechar al máximo la función de múltiples pestañas de terminal, asegúrate de tener instalado [Windows Terminal](https://apps.microsoft.com/detail/9n0dx20hk701) (ejecutable `wt.exe`), que viene por defecto en Windows 11 o se puede instalar desde la Microsoft Store en Windows 10.
+   ```bash
+   python -m pip install -r requirements.txt
+   ```
+
+   *(Incluye `customtkinter`, `pyvda`, `pywin32`, `pygetwindow`, `pyautogui` para la magia Win11)*
+
+3. **Configuración CRÍTICA de PowerToys:**
+
+   Para que el posicionamiento automático funcione perfectamente, debes configurar PowerToys así:
+
+   * Abre **PowerToys Settings** > **FancyZones**.
+   * En **Comportamiento de la ventana**, activa: 
+     * `Mover las ventanas recién creadas a su última zona conocida`.
+   * (Recomendado) En **Cambiar entre ventanas de la zona**, elige tus atajos (ej: `Win + PgUp/PgDn`).
+
+4. **Windows Terminal:**
+
+   Asegúrate de tener instalado [Windows Terminal](https://apps.microsoft.com/detail/9n0dx20hk701) (`wt.exe`) para el soporte de terminales avanzado.
 
 ## 🚀 Uso
 
-Ejecuta el script principal desde tu terminal:
+Lanza la interfaz principal:
 
 ```bash
 python launcher_pro.py
 ```
 
-1. Crea o renombra una **Categoría** desde el menú superior.
-2. Utiliza los botones inferiores para añadir las herramientas que necesitas (Apps, Webs, Proyecto IDE, Obsidian o Terminal).
-3. Una vez configurado tu entorno, presiona el botón gigante **🚀 LANZAR ENTORNO**.
-4. ¡Disfruta de tu setup listo en segundos!
-
-## 🛠️ Tecnologías Utilizadas
-
-* **Lenguaje:** Python 3.x
-* **Interfaz:** [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) (por Tom Schimansky)
-* **Datos:** JSON puro
-* **Automatización:** Módulo nativo `subprocess` y llamadas a OS.
+1. **Configurar FancyZones:** Pulsa el botón "Configurar FancyZones" para detectar tus layouts activos.
+2. **Añadir Elementos:** Usa los botones inferiores para añadir Apps, URLs o Carpetas de Proyecto.
+3. **Editor Avanzado:** Al añadir o editar, selecciona el Monitor, el Escritorio y la Zona específica del layout donde quieres que "caiga" la aplicación.
+4. **Lanzar:** Pulsa el botón gigante **🚀 LANZAR ENTORNO** y observa cómo todo tu espacio de trabajo se monta solo en segundos.
 
 ---
 
-Creado por David para mejorar la productividad diaria.
+### 🛠️ Detalles Técnicos
+
+El script utiliza `pyvda` para la manipulación de la API de Escritorios Virtuales de Windows y accede directamente a `%LOCALAPPDATA%\Microsoft\PowerToys\FancyZones` para leer y escribir la configuración en tiempo real, garantizando una integración nativa sin parpadeos ni movimientos de ratón fantasmales.
+
+Creado para llevar la productividad en Windows al siguiente nivel. 💻✨
