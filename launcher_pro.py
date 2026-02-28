@@ -867,38 +867,247 @@ class CleanWorkspaceDialog(ctk.CTkToplevel):
         messagebox.showinfo("Limpieza Completada", f"Se ha solicitado el cierre de {count} ventanas.", parent=self)
         self.destroy()
 
+class HotkeysEditorDialog(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Editor de Atajos y Modificadores de Ratón")
+        self.geometry("700x650")
+        self.transient(parent)
+        self.grab_set()
+        self.parent_app = parent
+        
+        self.hotkeys = dict(parent.hotkeys_data)
+        
+        # Diccionario de descripciones amigables (Simplificado)
+        self.desc_map = {
+            "mouse_cycle_fwd": "Ciclo: Siguiente Pestaña (Ratón Lateral o Teclado)",
+            "mouse_cycle_bwd": "Ciclo: Anterior Pestaña (Ratón Lateral o Teclado)",
+            "util_reload_layouts": "Sistema: Recargar Layouts (Ctrl+Alt+L)"
+        }
+        
+        ctk.CTkLabel(self, text="Configuración de Atajos Personalizados", font=("Roboto", 18, "bold")).pack(pady=(15, 5))
+        ctk.CTkLabel(self, text="Instrucciones: Para editar un atajo pulsa en su botón 'Cambiar' y luego realiza \nla combinación deseada en tu teclado y/o ratón.", text_color="#aaa").pack(pady=(0, 15))
+        
+        self.scroll = ctk.CTkScrollableFrame(self, fg_color="#2B2B2B")
+        self.scroll.pack(fill="both", expand=True, padx=20, pady=5)
+        
+        self.vars = {}
+        for key, desc in self.desc_map.items():
+            row = ctk.CTkFrame(self.scroll, fg_color="#333", corner_radius=5)
+            row.pack(fill="x", pady=4, padx=5)
+            
+            # Nombre de la acción
+            ctk.CTkLabel(row, text=desc, width=280, anchor="w", font=("Roboto", 12)).pack(side="left", padx=10, pady=8)
+            
+            # Valor actual
+            curr_val = self.hotkeys.get(key, "Ninguno")
+            v = ctk.StringVar(value=curr_val)
+            self.vars[key] = v
+            
+            lbl_val = ctk.CTkLabel(row, textvariable=v, width=150, fg_color="#444", corner_radius=4, text_color="#2CC985", font=("Roboto", 12, "bold"))
+            lbl_val.pack(side="left", padx=10)
+            
+            # Botón Cambiar
+            ctk.CTkButton(row, text="Cambiar", width=80, fg_color="#5A5A5A", hover_color="#7A7A7A",
+                          command=lambda k=key, tv=v: self.start_recording(k, tv)).pack(side="left", padx=5)
+            
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=15)
+        ctk.CTkButton(btn_frame, text="Cancelar", fg_color="#555", command=self.destroy, width=100).pack(side="right", padx=(10, 0))
+        ctk.CTkButton(btn_frame, text="Guardar Atajos y Reiniciar Listeners", fg_color="#2CC985", hover_color="#24A36B", command=self.save, width=250).pack(side="right")
+
+    def start_recording(self, key, text_var):
+        d = RecordHotkeyDialog(self, key, text_var)
+        self.wait_window(d)
+
+    def save(self):
+        for k, v in self.vars.items():
+            self.parent_app.hotkeys_data[k] = v.get()
+        self.parent_app._save_data()
+        
+        messagebox.showinfo("Guardado", "Atajos guardados. Por favor, reinicia el Launcher para que apliquen los nuevos Pynput Listeners.")
+        self.destroy()
+
+class RecordHotkeyDialog(ctk.CTkToplevel):
+    def __init__(self, parent, action_key, text_var):
+        super().__init__(parent)
+        self.title("Grabar Atajo")
+        self.geometry("450x300")
+        self.transient(parent)
+        self.grab_set()
+        
+        self.action_key = action_key
+        self.text_var = text_var
+        
+        ctk.CTkLabel(self, text="Escuchando...", font=("Roboto", 18, "bold"), text_color="#2CC985").pack(pady=(30, 10))
+        if "mouse" in action_key:
+            ctk.CTkLabel(self, text="Por favor, mantén pulsadas las teclas (Ej: Win o Ctrl) \ny haz el CLIC ESPERADO en esta ventana.", text_color="#aaa").pack(pady=10)
+        else:
+            ctk.CTkLabel(self, text="Por favor, pulsa la combinación de teclado deseada.", text_color="#aaa").pack(pady=10)
+            
+        self.lbl_result = ctk.CTkLabel(self, text="Esperando entrada...", font=("Roboto", 14), fg_color="#333", width=300, corner_radius=5)
+        self.lbl_result.pack(pady=20, ipady=10)
+        
+        self.btn_save = ctk.CTkButton(self, text="Aceptar y Cerrar", command=self.apply, state="disabled")
+        self.btn_save.pack(pady=10)
+        
+        self.current_combo = ""
+        self._listener_thread = None
+        self._stop_listening = False
+
+        self.start_listening()
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def start_listening(self):
+        import threading
+        
+        def listener_task():
+            from pynput import keyboard, mouse
+            import time
+            
+            # --- Modo Teclado Puro ---
+            if "mouse" not in self.action_key:
+                recorded_keys = set()
+                
+                def on_press(key):
+                    if self._stop_listening: return False
+                    kname = getattr(key, 'name', None)
+                    if kname:
+                        if kname in ['ctrl_l', 'ctrl_r']: kname = 'ctrl'
+                        elif kname in ['alt_l', 'alt_r', 'alt_gr']: kname = 'alt'
+                        elif kname in ['shift', 'shift_r']: kname = 'shift'
+                        elif kname in ['cmd', 'cmd_r', 'cmd_l', 'win']: kname = 'win'
+                    else:
+                        kname = getattr(key, 'char', str(key))
+                        if kname and kname.startswith('<') and kname.endswith('>'):
+                            kname = kname[1:-1]
+                            
+                    if kname: recorded_keys.add(kname)
+                    
+                    # Generar string
+                    mods = []
+                    # Ordenar por convención
+                    for m in ['ctrl', 'alt', 'shift', 'win']:
+                        if m in recorded_keys: mods.append(m)
+                    others = [k for k in recorded_keys if k not in ['ctrl', 'alt', 'shift', 'win']]
+                    
+                    self.current_combo = "+".join(mods + others)
+                    self.after(0, lambda: self.lbl_result.configure(text=self.current_combo.upper()))
+                    self.after(0, lambda: self.btn_save.configure(state="normal", fg_color="#2CC985"))
+
+                def on_release(key):
+                    if self._stop_listening: return False
+                    
+                with keyboard.Listener(on_press=on_press, on_release=on_release) as l:
+                    while not self._stop_listening: time.sleep(0.1)
+                
+            # --- Modo Híbrido (Teclado + Ratón) ---
+            else:
+                kb_state = {"ctrl": False, "alt": False, "shift": False, "win": False}
+                
+                def on_press(key):
+                    if self._stop_listening: return False
+                    km = getattr(key, 'name', None)
+                    if km in ['ctrl_l', 'ctrl_r']: kb_state['ctrl'] = True
+                    elif km in ['alt_l', 'alt_r']: kb_state['alt'] = True
+                    elif km in ['shift', 'shift_r']: kb_state['shift'] = True
+                    elif km in ['cmd', 'cmd_r']: kb_state['win'] = True
+                    
+                def on_release(key):
+                    if self._stop_listening: return False
+                    km = getattr(key, 'name', None)
+                    if km in ['ctrl_l', 'ctrl_r']: kb_state['ctrl'] = False
+                    elif km in ['alt_l', 'alt_r']: kb_state['alt'] = False
+                    elif km in ['shift', 'shift_r']: kb_state['shift'] = False
+                    elif km in ['cmd', 'cmd_r']: kb_state['win'] = False
+                    
+                def on_click(x, y, button, pressed):
+                    if self._stop_listening: return False
+                    if pressed:
+                        btn_name = button.name
+                        mods = [k for k, v in kb_state.items() if v]
+                        self.current_combo = "+".join(mods + [btn_name])
+                        self.after(0, lambda: self.lbl_result.configure(text=self.current_combo.upper()))
+                        self.after(0, lambda: self.btn_save.configure(state="normal", fg_color="#2CC985"))
+                        # Una vez recibido el clic paramos de grabar
+                        self._stop_listening = True
+                        return False
+                        
+                k_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+                m_listener = mouse.Listener(on_click=on_click)
+                
+                k_listener.start()
+                m_listener.start()
+                
+                while not self._stop_listening: time.sleep(0.1)
+                
+                k_listener.stop()
+                m_listener.stop()
+                
+        self._listener_thread = threading.Thread(target=listener_task, daemon=True)
+        self._listener_thread.start()
+        
+    def apply(self):
+        if self.current_combo:
+            self.text_var.set(self.current_combo)
+        self.on_close()
+        
+    def on_close(self):
+        self._stop_listening = True
+        self.destroy()
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  APP PRINCIPAL
 # ─────────────────────────────────────────────────────────────────────────────
 class DevLauncherApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-
-        self.title("Dev Workspace Automator V9 - Windows Terminal Tabs")
-        self.geometry("900x750")
+        self.title("PRO Workspace Launcher")
+        self.geometry("1150x800")
+        self.minsize(900, 600)
         
         self.db_file = os.path.join(APP_DIR, "mis_apps_config_v2.json")
-        self.current_category = None
-        self.last_saved_category = None
         self.fancyzones_path = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\PowerToys\FancyZones")
-        self.available_layouts = {}
-        self.available_monitors = ["Por defecto"]
         self.default_layout_name = None
-        self.applied_mappings = {} # Almacena GUID_Desktop_MonitorFriendly -> Nombre de Layout de FZ
-        self.apps_data = self.load_data()
+
+        self.apps_data = {
+            "Desarrollo": [], "Navegación": [],
+            "Edición": [], "Ocio": [],
+            "Otro": []
+        }
+        self.current_category = "Desarrollo"
+        self.available_layouts = {}
+        self.available_monitors = []
+        self.applied_mappings = {}
+
+        # Estado global de modificadores para Pynput
+        self.kb_modifiers = {"ctrl": False, "alt": False, "shift": False, "win": False}
+        self.mouse_btn_states = {"left": False, "right": False, "middle": False}
+
+        # --- MOTOR CUSTOM DE ZONAS (Sustituto de FZ Runtime) ---
+        self.zone_stacks = {} # {(d_guid, m_dev, l_uuid, z_idx): [hwnd1, hwnd2]}
+        self.hotkeys_active = False
+        self._start_global_hotkeys()
+        # ----------------------------------------------------
+
+        self._load_data()
         self.load_fancyzones_layouts()
 
         # --- HEADER ---
         self.header_frame = ctk.CTkFrame(self)
         self.header_frame.pack(fill="x", padx=20, pady=(20, 10))
         
-        ctk.CTkLabel(self.header_frame, text="Modo:", font=("Roboto", 16, "bold")).pack(side="left", padx=10)
+        ctk.CTkLabel(self.header_frame, text="Pro Launcher - Modo:", font=("Roboto", 16, "bold")).pack(side="left", padx=10)
         self.category_option = ctk.CTkOptionMenu(self.header_frame, values=[], command=self.change_category, width=200)
         self.category_option.pack(side="left", padx=5)
         
         ctk.CTkButton(self.header_frame, text="Renombrar", width=80, fg_color="#555", command=self.rename_category_dialog).pack(side="left", padx=5)
         ctk.CTkButton(self.header_frame, text="Duplicar", width=80, fg_color="#555", command=self.duplicate_category_dialog).pack(side="left", padx=5)
         ctk.CTkButton(self.header_frame, text="🗑️", width=40, fg_color="#AA0000", hover_color="#770000", command=self.delete_category).pack(side="left", padx=5)
+        
+        self.btn_hotkeys = ctk.CTkButton(self.header_frame, text="⚙️ Atajos/ Ratón", width=120, fg_color="#444", hover_color="#555", command=self.open_hotkeys_editor)
+        self.btn_hotkeys.pack(side="right", padx=10, pady=10)
+        
         ctk.CTkButton(self.header_frame, text="+ Nueva", width=80, command=self.add_category_dialog).pack(side="right", padx=10)
 
         # --- POWERTOYS CONFIG ---
@@ -921,7 +1130,7 @@ class DevLauncherApp(ctk.CTk):
         bot_pt_bar = ctk.CTkFrame(self.pt_frame, fg_color="transparent")
         bot_pt_bar.pack(fill="x", pady=(5, 5))
         ctk.CTkButton(bot_pt_bar, text="🖥️ Asignar Distribuciones por Pantalla/Escritorio", 
-                      fg_color="#4B4B4B", hover_color="#333", command=self.open_assign_layouts_dialog).pack(side="right", padx=10)
+                      fg_color="#4B4B4B", hover_color="#333", command=self.open_assigner).pack(side="right", padx=10)
 
         # --- LANZAR Y LIMPIAR ---
         self.action_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -931,17 +1140,13 @@ class DevLauncherApp(ctk.CTk):
                                         fg_color="#2CC985", hover_color="#24A36B", command=self.launch_workspace)
         self.btn_launch.pack(side="left", fill="x", expand=True, padx=(0, 5))
         
-        self.btn_clean = ctk.CTkButton(self.action_frame, text="🧹 LIMPIAR ENTORNO", height=50, width=200, font=("Roboto", 16, "bold"), 
-                                       fg_color="#AA0000", hover_color="#770000", command=self.open_clean_dialog)
-        self.btn_clean.pack(side="right", fill="x", padx=(5, 0))
-
-        # --- LISTA ---
-        self.apps_frame = ctk.CTkScrollableFrame(self, label_text="Elementos configurados")
-        self.apps_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        self.btn_clean_bottom = ctk.CTkButton(self.action_frame, text="🧹 LIMPIAR ENTORNO", height=50, width=200, font=("Roboto", 16, "bold"), 
+                                       fg_color="#AA0000", hover_color="#770000", command=self.open_cleaner)
+        self.btn_clean_bottom.pack(side="right", fill="x", padx=(5, 0))
 
         # --- FOOTER ---
         self.footer_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.footer_frame.pack(fill="x", padx=20, pady=20)
+        self.footer_frame.pack(side="bottom", fill="x", padx=20, pady=20)
         
         ctk.CTkButton(self.footer_frame, text="Añadir .EXE", width=90, command=self.add_exe).pack(side="left", padx=5, expand=True, fill="x")
         ctk.CTkButton(self.footer_frame, text="Web", width=70, fg_color="#E5A00D", hover_color="#B57B02", command=self.add_url).pack(side="left", padx=5, expand=True, fill="x")
@@ -949,34 +1154,51 @@ class DevLauncherApp(ctk.CTk):
         ctk.CTkButton(self.footer_frame, text="Obsidian", width=90, fg_color="#7A3EE8", hover_color="#5D24B8", command=self.add_obsidian_vault).pack(side="left", padx=5, expand=True, fill="x")
         ctk.CTkButton(self.footer_frame, text="Terminal (Tabs)", width=110, fg_color="#5A5A5A", hover_color="#333", command=self.add_powershell).pack(side="left", padx=5, expand=True, fill="x")
 
+        # --- LISTA ---
+        self.apps_frame = ctk.CTkScrollableFrame(self, label_text="Elementos configurados")
+        self.apps_frame.pack(side="top", fill="both", expand=True, padx=20, pady=10)
+
         self.refresh_categories()
 
     # --- DATOS ---
-    def load_data(self):
-        if os.path.exists(self.db_file):
-            try:
-                with open(self.db_file, "r") as f:
-                    data = json.load(f)
-                    if "categories_data" in data and "settings" in data:
-                        self.last_saved_category = data["settings"].get("last_category")
-                        if "fancyzones_path" in data["settings"]:
-                            self.fancyzones_path = data["settings"]["fancyzones_path"]
-                        return data["categories_data"]
-                    return data
-            except: return {}
-        return {}
-
-    def save_data(self):
-        full_data = {
-            "settings": { 
-                "last_category": self.current_category,
-                "fancyzones_path": self.fancyzones_path
-            },
-            "categories_data": self.apps_data
-        }
+    def _load_data(self):
         try:
-            with open(self.db_file, "w") as f: json.dump(full_data, f, indent=4)
-        except Exception as e: messagebox.showerror("Error", str(e))
+            if os.path.exists(self.db_file):
+                with open(self.db_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.apps_data = data.get("apps", self.apps_data)
+                    self.last_saved_category = data.get("last_category", "Desarrollo")
+                    self.current_category = self.last_saved_category
+                    self.applied_mappings = data.get("applied_mappings", {})
+                    
+                    # Cargar Hotkeys (con valores por defecto si no existen)
+                    self.hotkeys_data = data.get("hotkeys", {
+                        "cycle_forward": "ctrl+alt+pagedown",
+                        "cycle_backward": "ctrl+alt+pageup",
+                        "mouse_cycle_fwd": "win+alt+right",
+                        "mouse_cycle_bwd": "win+alt+left",
+                        "util_reload_layouts": "ctrl+alt+l"
+                    })
+        except Exception as e:
+            print(f"Error cargando base de datos: {e}")
+            self.hotkeys_data = {
+                "cycle_forward": "ctrl+alt+pagedown", "cycle_backward": "ctrl+alt+pageup",
+                "mouse_cycle_fwd": "win+alt+right", "mouse_cycle_bwd": "win+alt+left",
+                "util_reload_layouts": "ctrl+alt+l"
+            }
+
+    def _save_data(self):
+        try:
+            data = {
+                "apps": self.apps_data,
+                "last_category": self.current_category,
+                "applied_mappings": self.applied_mappings,
+                "hotkeys": getattr(self, "hotkeys_data", {})
+            }
+            with open(self.db_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo guardar: {e}")
 
     # --- POWERTOYS CONFIG METHODS ---
     def show_fz_info(self):
@@ -1055,10 +1277,19 @@ class DevLauncherApp(ctk.CTk):
         if default_uuid:
             self.default_layout_name = next((n for n, dt in self.available_layouts.items() if dt.get("uuid") == default_uuid), None)
 
-    def open_assign_layouts_dialog(self):
-        dlg = AssignLayoutsDialog(self)
-        self.wait_window(dlg)
-        self.load_fancyzones_layouts()
+    def open_assigner(self):
+        d = AssignLayoutsDialog(self)
+        self.wait_window(d)
+        if d.applied_data:
+            self.load_fancyzones_layouts()
+
+    def open_cleaner(self):
+        d = CleanWorkspaceDialog(self)
+        self.wait_window(d)
+        
+    def open_hotkeys_editor(self):
+        d = HotkeysEditorDialog(self)
+        self.wait_window(d)
 
     # --- CATEGORÍAS ---
     def refresh_categories(self):
@@ -1066,7 +1297,7 @@ class DevLauncherApp(ctk.CTk):
         if not cats:
             self.apps_data["General"] = []
             cats = ["General"]
-            self.save_data()
+            self._save_data()
         
         self.category_option.configure(values=cats)
         target = cats[0]
@@ -1081,7 +1312,7 @@ class DevLauncherApp(ctk.CTk):
 
     def change_category(self, choice):
         self.current_category = choice
-        self.save_data()
+        self._save_data()
         self.refresh_apps_list()
 
     def add_category_dialog(self):
@@ -1089,7 +1320,7 @@ class DevLauncherApp(ctk.CTk):
             if n not in self.apps_data:
                 self.apps_data[n] = []
                 self.current_category = n
-                self.save_data()
+                self._save_data()
                 self.refresh_categories()
 
     def rename_category_dialog(self):
@@ -1098,7 +1329,7 @@ class DevLauncherApp(ctk.CTk):
             if n not in self.apps_data:
                 self.apps_data[n] = self.apps_data.pop(self.current_category)
                 self.current_category = n
-                self.save_data()
+                self._save_data()
                 self.refresh_categories()
 
     def duplicate_category_dialog(self):
@@ -1109,7 +1340,7 @@ class DevLauncherApp(ctk.CTk):
                 # Creamos una copia profunda de los elementos actuales
                 self.apps_data[n] = json.loads(json.dumps(self.apps_data[self.current_category]))
                 self.current_category = n
-                self.save_data()
+                self._save_data()
                 self.refresh_categories()
             else:
                 messagebox.showerror("Error", "Ya existe una categoría con ese nombre.")
@@ -1118,7 +1349,7 @@ class DevLauncherApp(ctk.CTk):
         if self.current_category and messagebox.askyesno("Borrar", f"¿Eliminar '{self.current_category}'?"):
             del self.apps_data[self.current_category]
             self.current_category = None
-            self.save_data()
+            self._save_data()
             self.refresh_categories()
 
     # --- LISTA ---
@@ -1164,7 +1395,7 @@ class DevLauncherApp(ctk.CTk):
         self.wait_window(dlg)
         if dlg.result:
             item.update(dlg.result)
-            self.save_data()
+            self._save_data()
             self.refresh_apps_list()
 
     # --- ADDERS ---
@@ -1207,7 +1438,7 @@ class DevLauncherApp(ctk.CTk):
             item_data.update(extras)
             
             self.apps_data[self.current_category].append(item_data)
-            self.save_data()
+            self._save_data()
             self.refresh_apps_list()
             
     def add_obsidian_vault(self):
@@ -1225,7 +1456,7 @@ class DevLauncherApp(ctk.CTk):
                 item_data = {"type": "powershell", "path": os.path.normpath(p)}
                 item_data.update(dlg.result)
                 self.apps_data[self.current_category].append(item_data)
-                self.save_data()
+                self._save_data()
                 self.refresh_apps_list()
 
     def add_item(self, t, p, extras=None):
@@ -1233,12 +1464,12 @@ class DevLauncherApp(ctk.CTk):
         if extras:
             item.update(extras)
         self.apps_data[self.current_category].append(item)
-        self.save_data()
+        self._save_data()
         self.refresh_apps_list()
         
     def remove_item(self, idx):
         del self.apps_data[self.current_category][idx]
-        self.save_data()
+        self._save_data()
         self.refresh_apps_list()
 
     # --- LANZAMIENTO AVANZADO Y LIMPIEZA ---
@@ -1308,6 +1539,10 @@ class DevLauncherApp(ctk.CTk):
             win32gui.SetForegroundWindow(hwnd)
             win32gui.BringWindowToTop(hwnd)
             win32gui.SetActiveWindow(hwnd)
+            
+            # Forzar posición Z al frente absoluto sin alterar posición ni tamaño
+            win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, 0, 0, 0, 0, 
+                                  win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW)
 
             if fg_tid and fg_tid != current_tid: user32.AttachThreadInput(fg_tid, current_tid, False)
             if target_tid and target_tid != current_tid: user32.AttachThreadInput(target_tid, current_tid, False)
@@ -1317,56 +1552,220 @@ class DevLauncherApp(ctk.CTk):
             print("Foreground error:", e)
             return False
 
-    def _snap_register_via_shift_drop(self, hwnd, z_l, z_t, z_w, z_h):
-        """Simula un Arrastre Genuino con la tecla Shift enfocando al centro absoluto de la zona"""
-        import ctypes, time, win32api, win32con, win32gui
+    def _start_global_hotkeys(self):
+        import threading
+        
+        def run_listeners():
+            try:
+                from pynput import keyboard, mouse
+                
+                # --- Mapas de acciones de Teclado ---
+                # Usaremos la forma de pynput para registrar hotkeys. Las teclas modificadoras usan `<win>` o `<ctrl>`
+                # y las letras minúsculas (ej: `l`, `r`, `page_down`).
+                def normalize_kb_str(kstr):
+                    return kstr.replace("pagedown", "page_down").replace("pageup", "page_up")
+                    
+                def format_pynput_str(kstr):
+                    parts = kstr.split('+')
+                    res = []
+                    for p in parts:
+                        p = normalize_kb_str(p)
+                        if p in ['ctrl', 'alt', 'shift', 'win', 'cmd', 'page_down', 'page_up', 'home', 'end']:
+                            res.append(f"<{p}>")
+                        else:
+                            res.append(p)
+                    return "+".join(res)
+                    
+                def is_mouse_combo(kstr):
+                    parts = kstr.lower().split('+')
+                    # Incluimos los nombres que pynput suele dar a los botones de ratón
+                    mouse_btns = ['left', 'right', 'middle', 'x1', 'x2']
+                    return any(b in parts for b in mouse_btns)
+
+                kb_mapping = {}
+                hk = self.hotkeys_data
+                
+                # Acciones a considerar
+                actions = {
+                    "mouse_cycle_fwd": self._cycle_zone_forward,
+                    "mouse_cycle_bwd": self._cycle_zone_backward,
+                    "cycle_forward": self._cycle_zone_forward,
+                    "cycle_backward": self._cycle_zone_backward,
+                    "util_reload_layouts": self.load_fancyzones_layouts
+                }
+
+                # Registrar solo teclado puro en GlobalHotKeys
+                for key_id, func in actions.items():
+                    combo = hk.get(key_id)
+                    if combo and not is_mouse_combo(combo):
+                        kb_mapping[format_pynput_str(combo)] = func
+
+                # --- Lógica de Estado para Combinaciones Teclado+Ratón ---
+                kb_state = {"ctrl": False, "alt": False, "shift": False, "win": False}
+                
+                def on_press(key):
+                    if hasattr(key, 'name'):
+                        nm = key.name
+                        if nm in ['ctrl_l', 'ctrl_r']: kb_state['ctrl'] = True
+                        elif nm in ['alt_l', 'alt_r', 'alt_gr']: kb_state['alt'] = True
+                        elif nm in ['shift', 'shift_r']: kb_state['shift'] = True
+                        elif nm in ['cmd', 'cmd_r', 'win']: kb_state['win'] = True
+                    return True
+                    
+                def on_release(key):
+                    if hasattr(key, 'name'):
+                        nm = key.name
+                        if nm in ['ctrl_l', 'ctrl_r']: kb_state['ctrl'] = False
+                        elif nm in ['alt_l', 'alt_r', 'alt_gr']: kb_state['alt'] = False
+                        elif nm in ['shift', 'shift_r']: kb_state['shift'] = False
+                        elif nm in ['cmd', 'cmd_r', 'win']: kb_state['win'] = False
+                    return True
+
+                def match_mouse_hotkey(macro_str, btn_str):
+                    if not macro_str: return False
+                    parts = set(macro_str.lower().split('+'))
+                    # Verificar si el botón está en la macro
+                    if btn_str.lower() not in parts: return False
+                    # Verificar modificadores
+                    needs_ctrl = "ctrl" in parts
+                    needs_alt = "alt" in parts
+                    needs_shift = "shift" in parts
+                    needs_win = "win" in parts or "cmd" in parts
+                    return (kb_state['ctrl'] == needs_ctrl and kb_state['alt'] == needs_alt and
+                            kb_state['shift'] == needs_shift and kb_state['win'] == needs_win)
+
+                def on_click(x, y, button, pressed):
+                    if pressed:
+                        btn_name = button.name # 'left', 'right', 'x1', etc.
+                        for key_id, func in actions.items():
+                            combo = hk.get(key_id)
+                            if combo and is_mouse_combo(combo):
+                                if match_mouse_hotkey(combo, btn_name):
+                                    func()
+                    return True
+
+                # Iniciar listenes de Pynput
+                h = keyboard.GlobalHotKeys(kb_mapping)
+                h.start()
+                
+                ml = mouse.Listener(on_click=on_click)
+                ml.start()
+                
+                kl = keyboard.Listener(on_press=on_press, on_release=on_release)
+                kl.start()
+
+                self.hotkeys_active = True
+                h.join()
+            except Exception as e:
+                print(f"Error iniciando Hotkeys Pynput: {e}")
+        
+        t = threading.Thread(target=run_listeners, daemon=True)
+        t.start()
+        
+    def _get_active_zone_context(self):
+        import win32gui, win32api, win32con
+        fg_hwnd = win32gui.GetForegroundWindow()
+        
+        # También probamos con la ventana bajo el ratón por si acaso el clic se hace
+        # sobre una ventana que aún no es la activa según el sistema operativo
+        pos = win32api.GetCursorPos()
         try:
-            if not self._force_foreground(hwnd):
-                time.sleep(0.1)
-
-            # Coordenadas de agarre (Barra de título teórica de la ventana que acabamos de posicionar)
-            title_x = int(z_l + (z_w // 2))
-            title_y = int(z_t + 15)
+            mouse_hwnd = win32gui.WindowFromPoint(pos)
+        except:
+            mouse_hwnd = None
             
-            # Coordenadas de inmersión profunda (Centro exacto de la Zona FancyZones)
-            zone_center_x = int(z_l + (z_w // 2))
-            zone_center_y = int(z_t + (z_h // 2))
-
-            # 1. Vamos a la barra de título
-            win32api.SetCursorPos((title_x, title_y))
-            time.sleep(0.1) # Pausa para registrar la presencia del cursor
+        # Generamos una lista de candidatos (foco + ratón + sus ancestros raíz)
+        candidates = []
+        if fg_hwnd: candidates.append(fg_hwnd)
+        if mouse_hwnd and mouse_hwnd != fg_hwnd: candidates.append(mouse_hwnd)
+        
+        check_list = []
+        for c in candidates:
+            if c:
+                check_list.append(c)
+                try:
+                    root = win32gui.GetAncestor(c, win32con.GA_ROOTOWNER)
+                    if root and root not in check_list: check_list.append(root)
+                except:
+                    pass
+        
+        target_key = None
+        found_target_hwnd = None
+        
+        # Buscar en nuestros stacks cuál de estas corresponde a una zona activa
+        for h in check_list:
+            for key, stack in self.zone_stacks.items():
+                if h in stack:
+                    target_key = key
+                    found_target_hwnd = h
+                    break
+            if target_key: break
             
-            # 2. Agarramos la ventana PRIMERO (Clic Izquierdo Abajo)
-            ctypes.windll.user32.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-            time.sleep(0.15) # Mantenemos agarrado para afianzar la ventana
+        if not target_key: return fg_hwnd, None, None
+        
+        # Purgar ventanas muertas
+        stack = [h for h in self.zone_stacks[target_key] if win32gui.IsWindow(h)]
+        self.zone_stacks[target_key] = stack
+        
+        return found_target_hwnd, target_key, stack
+
+    def _cycle_zone_forward(self):
+        fg, key, stack = self._get_active_zone_context()
+        if stack and len(stack) > 1:
+            try:
+                # Si la ventana actual está en el stack, vamos a la siguiente
+                if fg in stack:
+                    idx = stack.index(fg)
+                    next_idx = (idx + 1) % len(stack)
+                else:
+                    # Si por algún motivo se perdió el rastro pero estamos en la zona, empezamos por la primera
+                    next_idx = 0
+                
+                self._force_foreground(stack[next_idx])
+            except Exception as e:
+                print(f"Error en ciclo forward: {e}")
+
+    def _cycle_zone_backward(self):
+        fg, key, stack = self._get_active_zone_context()
+        if stack and len(stack) > 1:
+            try:
+                if fg in stack:
+                    idx = stack.index(fg)
+                    next_idx = (idx - 1) % len(stack)
+                else:
+                    next_idx = len(stack) - 1
+                
+                self._force_foreground(stack[next_idx])
+            except Exception as e:
+                print(f"Error en ciclo backward: {e}")
             
-            # 3. AHORA pulsamos SHIFT izquierdo (Estando ya agarrados para detonar FZ real)
-            ctypes.windll.user32.keybd_event(0xA0, 0, 0, 0) # VK_LSHIFT Down
-            time.sleep(0.1)
+    def _focus_zone_first(self):
+        fg, key, stack = self._get_active_zone_context()
+        if stack and len(stack) > 0: self._force_foreground(stack[0])
 
-            # 4. ARRASTRE FLUIDO HACIA EL CENTRO: Movemos pausadamente para que el driver humanoide y FZ lo lean
-            steps = 10
-            for i in range(1, steps + 1):
-                cur_x = int(title_x + (zone_center_x - title_x) * (i / steps))
-                cur_y = int(title_y + (zone_center_y - title_y) * (i / steps))
-                win32api.SetCursorPos((cur_x, cur_y))
-                time.sleep(0.02) # Micro-paradas
-
-            time.sleep(0.2) # MANTENEMOS EL CLIC EN EL CENTRO mientras FZ dibuja la zona en azul
-
-            # 5. Soltamos clic Izquierdo para soltar la ventana (Manteniendo el SHIFT AÚN)
-            ctypes.windll.user32.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-            time.sleep(0.1)
-
-            # 6. Soltar SHIFT finalmente
-            ctypes.windll.user32.keybd_event(0xA0, 0, win32con.KEYEVENTF_KEYUP, 0)
+    def _focus_zone_last(self):
+        fg, key, stack = self._get_active_zone_context()
+        if stack and len(stack) > 0: self._force_foreground(stack[-1])
+        
+    def _move_to_stack_bottom(self):
+        fg, key, stack = self._get_active_zone_context()
+        if stack and len(stack) > 1:
+            stack.remove(fg)
+            stack.append(fg)
+            self.zone_stacks[key] = stack
             
-            return True
-        except Exception as e:
-            print(f"Error en Shift Drop: {e}")
-            try: ctypes.windll.user32.keybd_event(0xA0, 0, win32con.KEYEVENTF_KEYUP, 0) # Failsafe
-            except: pass
-            return False
+    def _move_to_stack_top(self):
+        fg, key, stack = self._get_active_zone_context()
+        if stack and len(stack) > 1:
+            stack.remove(fg)
+            stack.insert(0, fg)
+            self.zone_stacks[key] = stack
+            
+    def _rebuild_dangling_stacks(self):
+        print("Rebuild Stacks (Ctrl+Alt+R) ejecutado: Stacks purgados.")
+        for k in self.zone_stacks:
+            import win32gui
+            self.zone_stacks[k] = [h for h in self.zone_stacks[k] if win32gui.IsWindow(h)]
 
     def launch_workspace(self):
         items_to_launch = self.apps_data.get(self.current_category, [])
@@ -1661,20 +2060,18 @@ class DevLauncherApp(ctk.CTk):
         
         if rect:
             z_l, z_t, z_w, z_h = rect
-            # 1. Snapshot Matemático Directo: Eliminadas compensaciones fantasma
-            # Dibujamos directamente las dimensiones en puro para que la barra de título caiga exacta
+            # Snapshot Matemático Directo: Eliminadas compensaciones fantasma
             win32gui.SetWindowPos(matched_hwnd, win32con.HWND_TOP, z_l, z_t, z_w, z_h, win32con.SWP_SHOWWINDOW)
             
-            # 2. Inmersión de Mouse Mágica con Shift para obligar a FancyZones a comerse la ventana
-            # Le pasamos todos los límites de la zona para que el ratón agarre la barra y tire hacia el núcleo.
-            self._snap_register_via_shift_drop(matched_hwnd, z_l, z_t, z_w, z_h)
+            # Custom Runtime Engine: Registrar ventana internamente en su zona en lugar de usar FancyZones
+            z_key = (intent["_d_guid"], intent["_m_dev"], intent["_l_uuid"], intent["_z_idx"])
+            if z_key not in self.zone_stacks:
+                self.zone_stacks[z_key] = []
             
-            # Verificación Geométrica de Seguridad (por si algo patinó groseramente)
-            time.sleep(0.15)
-            nwr = win32gui.GetWindowRect(matched_hwnd)
-            w_cen_x, w_cen_y = nwr[0] + (nwr[2]-nwr[0])//2, nwr[1] + (nwr[3]-nwr[1])//2
-            if not (l <= w_cen_x <= r and t_y <= w_cen_y <= b):
-                print(f"[WARNING] Monitor mismatch tras Drag Simulator para: {intent['path']}")
+            # Guardamos la HWND al final de la pila (Stack de Render/Rotación)
+            if matched_hwnd not in self.zone_stacks[z_key]:
+                self.zone_stacks[z_key].append(matched_hwnd)
+                
         else:
             # Fallback a centrado si no hay layout (o error FZ)
             cen_x, cen_y = l + (r-l)//2, t_y + (b-t_y)//2
