@@ -852,30 +852,49 @@ class CleanWorkspaceDialog(ctk.CTkToplevel):
         for item in items:
             t = item.get('type')
             p = item.get('path', '')
-            if not p: continue
+            c = item.get('cmd', '')
+            if not p and not c: continue
             
-            paths.append(os.path.normpath(p).lower())
+            if p: paths.append(os.path.normpath(p).lower())
             
-            base = os.path.basename(p)
+            base = os.path.basename(p) if p else ""
             if t == 'vscode':
-                kws.append(base.lower())
+                if p: kws.append(base.lower())
                 kws.append("visual studio code")
             elif t == 'ide':
-                kws.append(base.lower())
+                if p: kws.append(base.lower())
             elif t == 'obsidian':
-                kws.append(base.lower())
+                if p: kws.append(base.lower())
                 kws.append("obsidian")
             elif t == 'powershell':
-                kws.append(base.lower())
+                if p: kws.append(base.lower())
                 kws.append("terminal")
                 kws.append("powershell")
             elif t == 'url':
                 try:
-                    domain = p.replace("https://", "").replace("http://", "").split("/")[0]
-                    kws.append(domain.lower())
+                    def _extract_domain_kw(url_str):
+                        d = url_str.replace("https://", "").replace("http://", "").split("/")[0]
+                        d = d.replace("www.", "")
+                        return d.split(".")[0] if "." in d else d
+
+                    if p: kws.append(_extract_domain_kw(p).lower())
+                    if c:
+                        for chunk in c.split(TAB_SEPARATOR):
+                            clean_c = chunk.strip()
+                            if clean_c.startswith("http"):
+                                kws.append(_extract_domain_kw(clean_c).lower())
+                    
+                    # Add browser keywords if defined
+                    b_cmd = item.get('browser', '').lower()
+                    if b_cmd and b_cmd != 'default':
+                        b_exe = os.path.basename(b_cmd).replace(".exe", "")
+                        kws.append(b_exe)
+                    else:
+                        # Fallback common browsers that could be opened
+                        kws.extend(["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"])
                 except: pass
             elif t == 'exe' or t == 'app' or not t:
-                kws.append(base.replace(".exe", "").lower())
+                if p: kws.append(base.replace(".exe", "").lower())
                 
         # Filtrar kws muy cortas para no hacer falsos positivos, excepto si es algo específico
         return [k for k in kws if len(k) > 2], paths
@@ -1385,13 +1404,21 @@ class DevLauncherApp(ctk.CTk):
         self.action_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.action_frame.pack(fill="x", padx=20, pady=10)
         
-        self.btn_launch = ctk.CTkButton(self.action_frame, text="🚀 LANZAR ENTORNO", height=50, font=("Roboto", 18, "bold"), 
+        self.btn_launch = ctk.CTkButton(self.action_frame, text="🚀 LANZAR ENTORNO", height=50, font=("Roboto", 14, "bold"), 
                                         fg_color="#2CC985", hover_color="#24A36B", command=self.launch_workspace)
         self.btn_launch.pack(side="left", fill="x", expand=True, padx=(0, 5))
+
+        self.btn_recover = ctk.CTkButton(self.action_frame, text="🔄", height=50, width=50, font=("Roboto", 18, "bold"), 
+                                        fg_color="#007ACC", hover_color="#005A9E", command=self.recover_workspace)
+        self.btn_recover.pack(side="left", padx=(5, 0))
         
-        self.btn_clean_bottom = ctk.CTkButton(self.action_frame, text="🧹 LIMPIAR ENTORNO", height=50, width=200, font=("Roboto", 16, "bold"), 
+        self.btn_recover_info = ctk.CTkButton(self.action_frame, text="?", height=50, width=30, font=("Roboto", 14, "bold"), 
+                                        fg_color="#444", hover_color="#666", command=self.show_recover_info)
+        self.btn_recover_info.pack(side="left", padx=(5, 5))
+        
+        self.btn_clean_bottom = ctk.CTkButton(self.action_frame, text="🧹 LIMPIAR ENTORNO", height=50, font=("Roboto", 14, "bold"), 
                                        fg_color="#AA0000", hover_color="#770000", command=self.open_cleaner)
-        self.btn_clean_bottom.pack(side="right", fill="x", padx=(5, 0))
+        self.btn_clean_bottom.pack(side="left", fill="x", expand=True, padx=(5, 0))
 
         # --- FOOTER ---
         self.footer_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -2088,6 +2115,145 @@ class DevLauncherApp(ctk.CTk):
         for k in self.zone_stacks:
             import win32gui
             self.zone_stacks[k] = [h for h in self.zone_stacks[k] if win32gui.IsWindow(h)]
+
+    def recover_workspace(self):
+        import win32gui, win32process, threading, os
+        
+        # Load layouts directly before detecting anything
+        self.load_fancyzones_layouts()
+        self.btn_recover.configure(state="disabled")
+        
+        items_to_launch = self.apps_data.get(self.current_category, [])
+        valid_paths = set()
+        valid_kws = set()
+        for item in items_to_launch:
+            path = str(item.get("path", "")).lower()
+            t = item.get("type", "exe")
+            c = str(item.get('cmd', '')).lower()
+            
+            def _extract_domain_kw(url_str):
+                d = url_str.replace("https://", "").replace("http://", "").split("/")[0]
+                d = d.replace("www.", "")
+                return d.split(".")[0] if "." in d else d
+
+            if path:
+                valid_paths.add(os.path.normpath(path).lower())
+                base = os.path.basename(path).lower()
+                if t in ['vscode', 'ide']:
+                    valid_kws.add(base)
+                elif t == 'obsidian':
+                    valid_kws.add(base)
+                    valid_kws.add("obsidian")
+                elif t == 'powershell':
+                    valid_kws.add(base)
+                    valid_kws.add("terminal")
+                    valid_kws.add("powershell")
+                elif t == 'url':
+                    try:
+                        valid_kws.add(_extract_domain_kw(path))
+                    except: pass
+                elif t in ['exe', 'app'] or not t:
+                    valid_kws.add(base.replace(".exe", ""))
+            
+            # Extract URLs from cmd if any
+            if c:
+                for chunk in c.split(TAB_SEPARATOR.lower()):
+                    c_clean = chunk.strip()
+                    if c_clean:
+                        if c_clean.startswith("http"):
+                            try:
+                                valid_kws.add(_extract_domain_kw(c_clean))
+                            except: pass
+                        else:
+                            valid_paths.add(c_clean)
+            
+            if t == 'url':
+                b_cmd = item.get('browser', '').lower()
+                if b_cmd and b_cmd != 'default':
+                    b_exe = os.path.basename(b_cmd).replace(".exe", "")
+                    valid_kws.add(b_exe)
+                else:
+                    valid_kws.update(["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"])
+                            
+        valid_kws = {k for k in valid_kws if len(k) > 2}
+        print(f"\n[Recover] Iniciando. Buscando estas rutinas {valid_paths}")
+        print(f"[Recover] Buscando estas Palabras Clave: {valid_kws}\n")
+        
+        def _task():
+            try:
+                self.zone_stacks.clear()
+                
+                def _get_process_path(hwnd):
+                    try:
+                        import psutil
+                        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                        return psutil.Process(pid).exe().lower()
+                    except: return ""
+
+                def _enum_cb(hwnd, _):
+                    if not win32gui.IsWindowVisible(hwnd): return
+                    if not win32gui.GetWindowText(hwnd): return
+                    
+                    # We might skip typical overlay windows or taskbar
+                    cls_name = win32gui.GetClassName(hwnd)
+                    if cls_name in ["Progman", "Shell_TrayWnd", "Windows.UI.Core.CoreWindow"]: return
+                    
+                    # Filter by configured paths
+                    process_path = _get_process_path(hwnd)
+                    win_title = win32gui.GetWindowText(hwnd).lower()
+                    
+                    is_valid = False
+                    match_reason = ""
+                    for vp in valid_paths:
+                        if vp in process_path or vp in win_title:   
+                            is_valid = True
+                            match_reason = f"Ruta ({vp})"
+                            break
+                    
+                    if not is_valid:
+                        for kw in valid_kws:
+                            if kw in win_title or kw in process_path:
+                                is_valid = True
+                                match_reason = f"Keyword ({kw})"
+                                break
+
+                    if not is_valid: 
+                        print(f"  [IGNORADA] {win_title[:40]}... (No coincide con config)")
+                        return
+
+                    key = self._detect_zone_for_window(hwnd)
+                    if key:
+                        if key not in self.zone_stacks:
+                            self.zone_stacks[key] = []
+                        if hwnd not in self.zone_stacks[key]:
+                            self.zone_stacks[key].append(hwnd)
+                        print(f"  [RECUPERADA] -> '{win_title[:30]}...' coincidio por: {match_reason}")
+                    else:
+                        print(f"  [SIN ZONA FZ] -> '{win_title[:30]}...' coincidio pero NO esta encajada en una zona.")
+                            
+                win32gui.EnumWindows(_enum_cb, None)
+                
+                count = sum(len(v) for v in self.zone_stacks.values())
+                print(f"[Recover] Vinculadas {count} ventanas en {len(self.zone_stacks)} zonas.")
+                
+                self.after(0, lambda: self._on_recover_done(count))
+            except Exception as e:
+                print(f"Error recuperando entorno: {e}")
+                self.after(0, lambda: self.btn_recover.configure(state="normal"))
+                
+        threading.Thread(target=_task, daemon=True).start()
+
+    def _on_recover_done(self, count):
+        self.btn_recover.configure(state="normal")
+        from tkinter import messagebox
+        messagebox.showinfo("Recuperación completada", f"Se han detectado y emparejado {count} ventanas pertenecientes a tu categoría activa ('{self.current_category}').\n\nLos atajos de rotación ya vuelven a estar operativos sobre ellas.", parent=self)
+
+    def show_recover_info(self):
+        from tkinter import messagebox
+        messagebox.showinfo("¿Qué hace Recuperar Info?", 
+                            "Si has cerrado el launcher accidentalmente, o tenías ventanas abiertas manualmente, esta función las escanea y las vincula con las zonas de la configuración activa.\n\n"
+                            "⚠️ SOLO detectará las aplicaciones que estén registradas en la categoría que tengas seleccionada actualmente.", parent=self)
+
 
     def launch_workspace(self):
         items_to_launch = self.apps_data.get(self.current_category, [])
