@@ -103,15 +103,51 @@ class AddIDEDialog(ctk.CTkToplevel):
         self.destroy()
 
 class AddMultiWebDialog(ctk.CTkToplevel):
-    def __init__(self, parent):
+    # Navegadores conocidos y sus posibles rutas en el registro
+    KNOWN_BROWSERS = {
+        "Microsoft Edge": {"cmd": "msedge", "reg_names": ["Microsoft Edge"]},
+        "Google Chrome": {"cmd": "chrome", "reg_names": ["Google Chrome"]},
+        "Firefox": {"cmd": "firefox", "reg_names": ["Firefox"]},
+        "Brave": {"cmd": "brave", "reg_names": ["Brave"]},
+        "Opera": {"cmd": "opera", "reg_names": ["Opera Stable", "Opera"]},
+        "Vivaldi": {"cmd": "vivaldi", "reg_names": ["Vivaldi"]},
+    }
+
+    def __init__(self, parent, existing_browser=None):
         super().__init__(parent)
         self.title("Añadir Multi-Web")
-        self.geometry("500x400")
+        self.geometry("550x500")
         self.result = None
         self.transient(parent)
         self.grab_set()
         
-        ctk.CTkLabel(self, text="URLs para este grupo (Multi-pestaña):", font=("Roboto", 14, "bold")).pack(anchor="w", padx=20, pady=(20, 10))
+        # --- Selector de Navegador ---
+        browser_frame = ctk.CTkFrame(self, fg_color="transparent")
+        browser_frame.pack(fill="x", padx=20, pady=(15, 5))
+        
+        ctk.CTkLabel(browser_frame, text="🌐 Navegador:", font=("Roboto", 14, "bold")).pack(side="left", padx=(0, 10))
+        
+        self.detected_browsers = self._detect_browsers()
+        browser_options = ["🖥️ Por defecto del sistema"] + self.detected_browsers + ["✏️ Comando personalizado..."]
+        
+        self.browser_var = ctk.StringVar(value=existing_browser if existing_browser and existing_browser in browser_options else "🖥️ Por defecto del sistema")
+        self.browser_combo = ctk.CTkComboBox(browser_frame, values=browser_options, variable=self.browser_var, 
+                                              width=280, command=self._on_browser_change)
+        self.browser_combo.pack(side="left", fill="x", expand=True)
+        
+        # Campo de comando personalizado (oculto por defecto)
+        self.custom_cmd_frame = ctk.CTkFrame(self, fg_color="transparent")
+        ctk.CTkLabel(self.custom_cmd_frame, text="Comando:", width=70).pack(side="left", padx=(0, 5))
+        self.custom_cmd_var = ctk.StringVar(value="")
+        self.custom_cmd_entry = ctk.CTkEntry(self.custom_cmd_frame, textvariable=self.custom_cmd_var, 
+                                              placeholder_text="ej: C:\\Program Files\\MiNavegador\\browser.exe")
+        self.custom_cmd_entry.pack(side="left", fill="x", expand=True, padx=5)
+        # Solo visible si se elige personalizado
+        if existing_browser == "✏️ Comando personalizado...":
+            self.custom_cmd_frame.pack(fill="x", padx=20, pady=(0, 5))
+        
+        # --- URLs ---
+        ctk.CTkLabel(self, text="URLs para este grupo (Multi-pestaña):", font=("Roboto", 14, "bold")).pack(anchor="w", padx=20, pady=(10, 10))
         
         self.tabs_scroll = ctk.CTkScrollableFrame(self, height=200)
         self.tabs_scroll.pack(fill="both", expand=True, padx=20, pady=5)
@@ -124,7 +160,85 @@ class AddMultiWebDialog(ctk.CTkToplevel):
         self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.btn_frame.pack(fill="x", padx=20, pady=(10, 15))
         ctk.CTkButton(self.btn_frame, text="Cancelar", fg_color="#555", command=self.destroy, width=100).pack(side="right", padx=(10, 0))
-        ctk.CTkButton(self.btn_frame, text="Guardar Listado", fg_color="#2CC985", hover_color="#24A36B", command=self.save, width=140).pack(side="right")
+        ctk.CTkButton(self.btn_frame, text="Siguiente >", fg_color="#2CC985", hover_color="#24A36B", command=self.save, width=140).pack(side="right")
+
+    def _detect_browsers(self):
+        """Detecta navegadores instalados leyendo el registro de Windows."""
+        found = []
+        try:
+            import winreg
+            reg_path = r"SOFTWARE\Clients\StartMenuInternet"
+            for hive in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
+                try:
+                    key = winreg.OpenKey(hive, reg_path)
+                    i = 0
+                    while True:
+                        try:
+                            subkey_name = winreg.EnumKey(key, i)
+                            try:
+                                sk = winreg.OpenKey(key, subkey_name)
+                                display_name, _ = winreg.QueryValueEx(sk, "")
+                                winreg.CloseKey(sk)
+                            except:
+                                display_name = subkey_name
+                            
+                            # Intentar obtener el ejecutable
+                            try:
+                                cmd_key = winreg.OpenKey(key, f"{subkey_name}\\shell\\open\\command")
+                                cmd_val, _ = winreg.QueryValueEx(cmd_key, "")
+                                winreg.CloseKey(cmd_key)
+                            except:
+                                cmd_val = ""
+                            
+                            if display_name and display_name not in found:
+                                found.append(display_name)
+                            i += 1
+                        except OSError:
+                            break
+                    winreg.CloseKey(key)
+                except OSError:
+                    continue
+        except:
+            # Fallback: intentar detectar por ejecutable en PATH
+            import shutil
+            for name, info in self.KNOWN_BROWSERS.items():
+                if shutil.which(info["cmd"]):
+                    if name not in found:
+                        found.append(name)
+        return found if found else ["Microsoft Edge", "Google Chrome", "Firefox"]
+    
+    def _on_browser_change(self, choice):
+        if choice == "✏️ Comando personalizado...":
+            self.custom_cmd_frame.pack(fill="x", padx=20, pady=(0, 5), after=self.browser_combo.master)
+        else:
+            self.custom_cmd_frame.pack_forget()
+
+    def _get_browser_command(self):
+        """Devuelve el comando del navegador seleccionado."""
+        choice = self.browser_var.get()
+        if choice == "🖥️ Por defecto del sistema":
+            return "default"
+        elif choice == "✏️ Comando personalizado...":
+            cmd = self.custom_cmd_var.get().strip()
+            return cmd if cmd else "default"
+        else:
+            # Buscar en la tabla de conocidos
+            for name, info in self.KNOWN_BROWSERS.items():
+                if name in choice or choice in name:
+                    return info["cmd"]
+            # Si no está en conocidos, intentar extraer del registro
+            try:
+                import winreg
+                for hive in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
+                    try:
+                        cmd_key = winreg.OpenKey(hive, f"SOFTWARE\\Clients\\StartMenuInternet\\{choice}\\shell\\open\\command")
+                        cmd_val, _ = winreg.QueryValueEx(cmd_key, "")
+                        winreg.CloseKey(cmd_key)
+                        # Limpiar comillas del path
+                        return cmd_val.strip('"')
+                    except: continue
+            except: pass
+            return choice.lower().replace(" ", "")
 
     def add_tab_entry(self, text=""):
         idx = len(self.tab_entries) + 1
@@ -164,7 +278,9 @@ class AddMultiWebDialog(ctk.CTkToplevel):
             
         self.result = {
             "path": urls[0],
-            "cmd": f" {TAB_SEPARATOR} ".join(urls)
+            "cmd": f" {TAB_SEPARATOR} ".join(urls),
+            "browser": self._get_browser_command(),
+            "browser_display": self.browser_var.get()
         }
         self.destroy()
 
@@ -430,6 +546,29 @@ class AdvancedItemDialog(ctk.CTkToplevel):
             btn_text = "➕ Añadir Pestaña" if self.item_type == "powershell" else "➕ Añadir URL"
             ctk.CTkButton(self.right_frame, text=btn_text, command=self.add_tab_entry, fg_color="#4B4B4B", hover_color="#333").pack(pady=10)
             
+            # Selector de navegador para URLs
+            if self.item_type == "url":
+                browser_section = ctk.CTkFrame(self.right_frame, fg_color="transparent")
+                browser_section.pack(fill="x", pady=(5, 0))
+                ctk.CTkLabel(browser_section, text="🌐 Navegador:", font=("Roboto", 13, "bold")).pack(side="left", padx=(0, 8))
+                
+                detected = AddMultiWebDialog._detect_browsers(AddMultiWebDialog)
+                browser_options = ["🖥️ Por defecto del sistema"] + detected + ["✏️ Comando personalizado..."]
+                
+                saved_browser = self.item_data.get('browser_display', '🖥️ Por defecto del sistema')
+                self.browser_var = ctk.StringVar(value=saved_browser if saved_browser in browser_options else '🖥️ Por defecto del sistema')
+                self.browser_combo = ctk.CTkComboBox(browser_section, values=browser_options, variable=self.browser_var,
+                                                     width=250, command=self._on_browser_change)
+                self.browser_combo.pack(side="left", fill="x", expand=True)
+                
+                self.custom_browser_frame = ctk.CTkFrame(self.right_frame, fg_color="transparent")
+                ctk.CTkLabel(self.custom_browser_frame, text="Cmd:", width=40).pack(side="left")
+                self.custom_browser_var = ctk.StringVar(value=self.item_data.get('browser', '') if saved_browser.startswith('✏️') else '')
+                ctk.CTkEntry(self.custom_browser_frame, textvariable=self.custom_browser_var,
+                             placeholder_text="C:\\...\\browser.exe").pack(side="left", fill="x", expand=True, padx=5)
+                if saved_browser.startswith('✏️'):
+                    self.custom_browser_frame.pack(fill="x", pady=(2, 0))
+            
             self.tab_entries = []
             
             existing_cmd = self.item_data.get("cmd", "")
@@ -616,11 +755,33 @@ class AdvancedItemDialog(ctk.CTkToplevel):
             self.result["cmd"] = f" {TAB_SEPARATOR} ".join(tabs_texts)
             if self.item_type == "url":
                 self.result["path"] = tabs_texts[0] if tabs_texts else ""
+                # Guardar navegador
+                if hasattr(self, 'browser_var'):
+                    display = self.browser_var.get()
+                    self.result["browser_display"] = display
+                    if display == "🖥️ Por defecto del sistema":
+                        self.result["browser"] = "default"
+                    elif display == "✏️ Comando personalizado...":
+                        self.result["browser"] = self.custom_browser_var.get().strip() or "default"
+                    else:
+                        # Buscar en la tabla de conocidos
+                        cmd = display.lower().replace(" ", "")
+                        for name, info in AddMultiWebDialog.KNOWN_BROWSERS.items():
+                            if name in display or display in name:
+                                cmd = info["cmd"]
+                                break
+                        self.result["browser"] = cmd
             
         self.destroy()
 
     def cancel(self):
         self.destroy()
+
+    def _on_browser_change(self, choice):
+        if choice == "✏️ Comando personalizado...":
+            self.custom_browser_frame.pack(fill="x", pady=(2, 0))
+        else:
+            self.custom_browser_frame.pack_forget()
 
 class CleanWorkspaceDialog(ctk.CTkToplevel):
     def __init__(self, parent):
@@ -638,6 +799,7 @@ class CleanWorkspaceDialog(ctk.CTkToplevel):
         ctk.CTkLabel(self.top_frame, text="Selección rápida:", font=("Roboto", 14, "bold")).pack(side="left", padx=(0, 10))
         
         ctk.CTkButton(self.top_frame, text="Config. Actual", width=110, command=self.select_config_only).pack(side="left", padx=5)
+        ctk.CTkButton(self.top_frame, text="🚀 Solo Lanzadas", width=120, fg_color="#2CC985", hover_color="#24A36B", command=self.select_launched_only).pack(side="left", padx=5)
         
         # Opciones dinámicas de escritorio
         self.desk_var = ctk.StringVar(value="Escritorio Actual")
@@ -646,8 +808,8 @@ class CleanWorkspaceDialog(ctk.CTkToplevel):
         
         ctk.CTkButton(self.top_frame, text="Sel. Escritorio", width=100, command=self.select_chosen_desktop).pack(side="left", padx=5)
         
-        ctk.CTkButton(self.top_frame, text="Todos", width=80, command=self.select_all).pack(side="left", padx=5)
-        ctk.CTkButton(self.top_frame, text="Ninguno", width=80, command=self.select_none).pack(side="left", padx=5)
+        ctk.CTkButton(self.top_frame, text="Todos", width=60, command=self.select_all).pack(side="left", padx=3)
+        ctk.CTkButton(self.top_frame, text="Ninguno", width=60, command=self.select_none).pack(side="left", padx=3)
 
         # Scrollable Frame para la lista de ventanas
         self.scroll_frame = ctk.CTkScrollableFrame(self)
@@ -769,6 +931,13 @@ class CleanWorkspaceDialog(ctk.CTkToplevel):
 
         kws, conf_paths = self.get_config_keywords_and_paths()
         
+        # Obtener HWNDs registrados en zone_stacks (ventanas lanzadas por la config actual)
+        launched_hwnds = set()
+        if hasattr(self.parent_app, 'zone_stacks'):
+            for stack in self.parent_app.zone_stacks.values():
+                for h in stack:
+                    launched_hwnds.add(h)
+        
         # Obtener el HWND propio del launcher y del diálogo para excluirlos con seguridad
         own_hwnd = None
         try:
@@ -828,8 +997,13 @@ class CleanWorkspaceDialog(ctk.CTkToplevel):
                 p_path = self.get_process_path(hwnd)
                 
                 matched = False
-                if p_path and p_path in conf_paths:
+                # PRIORIDAD 1: Si está en zone_stacks, fue lanzada por la config → match directo
+                if hwnd in launched_hwnds:
                     matched = True
+                # PRIORIDAD 2: Coincidencia por path del proceso
+                if not matched and p_path and p_path in conf_paths:
+                    matched = True
+                # PRIORIDAD 3: Coincidencia por keywords en el título
                 if not matched and any(kw in t_lower for kw in kws):
                     matched = True
                 
@@ -840,11 +1014,13 @@ class CleanWorkspaceDialog(ctk.CTkToplevel):
                     "desktop_id": desk_id,
                     "desktop_name": desk_name,
                     "kw_match": matched,
+                    "launched": hwnd in launched_hwnds,
                     "var": ctk.BooleanVar(value=False)
                 })
 
         win32gui.EnumWindows(enum_windows_proc, 0)
-        self.windows_data.sort(key=lambda x: (not x["kw_match"], x["desktop_name"], x["title"]))
+        # Ordenar: primero las lanzadas, luego las de config, luego el resto
+        self.windows_data.sort(key=lambda x: (not x["launched"], not x["kw_match"], x["desktop_name"], x["title"]))
 
     def populate_list(self):
         for w in self.scroll_frame.winfo_children(): w.destroy()
@@ -855,6 +1031,11 @@ class CleanWorkspaceDialog(ctk.CTkToplevel):
             
             chk = ctk.CTkCheckBox(row, text="", variable=wdata["var"], width=30)
             chk.pack(side="left", padx=5)
+            
+            # Indicador de origen
+            if wdata["launched"]:
+                lbl_origin = ctk.CTkLabel(row, text="🚀", width=22, font=("Roboto", 12))
+                lbl_origin.pack(side="left", padx=(0, 3))
             
             lbl_title = ctk.CTkLabel(row, text=wdata["title"], anchor="w")
             lbl_title.pack(side="left", padx=5, fill="x", expand=True)
@@ -867,9 +1048,16 @@ class CleanWorkspaceDialog(ctk.CTkToplevel):
             lbl_desk = ctk.CTkLabel(row, text=f"[{wdata['desktop_name']}]", width=120, text_color="gray")
             lbl_desk.pack(side="right", padx=5)
 
-            if wdata["kw_match"]:
-                lbl_title.configure(text_color="#2CC985") # Resaltar las que coinciden con la config
+            if wdata["launched"]:
+                lbl_title.configure(text_color="#2CC985")
                 chk.select()
+            elif wdata["kw_match"]:
+                lbl_title.configure(text_color="#87CEEB")
+
+    def select_launched_only(self):
+        """Seleccionar SOLO las ventanas que el launcher abrió en esta sesión."""
+        for w in self.windows_data:
+            w["var"].set(w["launched"])
 
     def select_config_only(self):
         for w in self.windows_data:
@@ -1431,7 +1619,10 @@ class DevLauncherApp(ctk.CTk):
 
             if t == 'url': 
                 num_tabs = cmd.count(TAB_SEPARATOR) + 1 if cmd else 1
-                tag, col, txt = "[WEB]", "#E5A00D", f"Web ({num_tabs} pestañas): {p}"
+                browser_display = item.get('browser_display', 'Edge')
+                if browser_display.startswith("🖥️"): browser_display = "Default"
+                elif browser_display.startswith("✏️"): browser_display = item.get('browser', 'Custom')
+                tag, col, txt = "[WEB]", "#E5A00D", f"Web [{browser_display}] ({num_tabs} pest.): {p}"
             elif t == 'vscode': tag, col, txt = "[CODE]", "#007ACC", f"Proyecto: {os.path.basename(p)}"
             elif t == 'ide': 
                 ide_cmd = str(item.get('ide_cmd', 'IDE')).upper()[:6]
@@ -1590,26 +1781,23 @@ class DevLauncherApp(ctk.CTk):
         except: pass
 
         try:
-            # Usar SwitchToThisWindow que es más agresivo trayendo desde el fondo
-            # (hHwnd, bAltTab:True para que se comporte como un cambio de usuario consciente)
+            # SwitchToThisWindow es el método más agresivo en Windows modernos
             ctypes.windll.user32.SwitchToThisWindow(hwnd, True)
             
-            # El truco del ALT para engañar a Windows y permitir el SetForegroundWindow
-            # simulando una entrada de teclado rápida.
-            ctypes.windll.user32.keybd_event(0x12, 0, 0, 0) # Alt Down
-            ctypes.windll.user32.keybd_event(0x12, 0, 0x0002, 0) # Alt Up
+            # Truco del Alt para desbloquear SetForegroundWindow
+            ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)      # Alt Down
+            ctypes.windll.user32.keybd_event(0x12, 0, 0x0002, 0)  # Alt Up
             
             win32gui.SetForegroundWindow(hwnd)
             win32gui.BringWindowToTop(hwnd)
-            win32gui.SetActiveWindow(hwnd)
             
-            # Forzar posición Z al frente absoluto sin alterar posición ni tamaño
-            win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, 0, 0, 0, 0, 
-                                  win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW)
+            # Forzar posición Z al frente absoluto sin tamaño
+            flags = win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW
+            win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0, flags)
+            win32gui.SetWindowPos(hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0, flags)
 
             return True
         except:
-            # Si falla el método estándar, al menos hemos hecho el SwitchToThisWindow arriba
             return False
 
     def _start_global_hotkeys(self):
@@ -1779,9 +1967,11 @@ class DevLauncherApp(ctk.CTk):
         except:
             mouse_hwnd = None
             
+        # Priorizar la ventana bajo el ratón sobre la foreground
+        # Así el ciclo funciona con un solo clic aunque la zona no tenga el foco
         candidates = []
-        if fg_hwnd: candidates.append(fg_hwnd)
-        if mouse_hwnd and mouse_hwnd != fg_hwnd: candidates.append(mouse_hwnd)
+        if mouse_hwnd: candidates.append(mouse_hwnd)
+        if fg_hwnd and fg_hwnd != mouse_hwnd: candidates.append(fg_hwnd)
         
         check_list = []
         for c in candidates:
@@ -1797,7 +1987,6 @@ class DevLauncherApp(ctk.CTk):
         found_target_hwnd = None
         
         # BUSQUEDA ESTATICA: Solo miramos en que grupo ESTÁ registrada la ventana.
-        # No intentamos adivinar si ha cambiado de sitio dinamicamente aqui.
         for h in check_list:
             for key, stack in self.zone_stacks.items():
                 if h in stack:
@@ -1812,42 +2001,44 @@ class DevLauncherApp(ctk.CTk):
         valid_stack = [h for h in self.zone_stacks[target_key] if win32gui.IsWindow(h)]
         self.zone_stacks[target_key] = valid_stack
         
-        return found_target_hwnd, target_key, valid_stack
+        # Si la foreground está en el mismo stack, usarla como referencia para el ciclo
+        # (así el avance es relativo a la ventana que realmente se ve)
+        ref_hwnd = found_target_hwnd
+        if fg_hwnd in valid_stack:
+            ref_hwnd = fg_hwnd
+        
+        return ref_hwnd, target_key, valid_stack
 
     def _cycle_zone_forward(self):
         import threading
         def task():
-            fg, key, stack = self._get_active_zone_context()
-            if stack and len(stack) > 1:
-                try:
-                    # Si la ventana actual está en el stack, vamos a la siguiente
+            try:
+                fg, key, stack = self._get_active_zone_context()
+                if stack and len(stack) > 1:
                     if fg in stack:
                         idx = stack.index(fg)
                         next_idx = (idx + 1) % len(stack)
                     else:
-                        # Si por algún motivo se perdió el rastro pero estamos en la zona, empezamos por la primera
                         next_idx = 0
-                    
                     self._force_foreground(stack[next_idx])
-                except Exception as e:
-                    print(f"Error en ciclo forward: {e}")
+            except Exception as e:
+                print(f"Error en ciclo forward: {e}")
         threading.Thread(target=task, daemon=True).start()
 
     def _cycle_zone_backward(self):
         import threading
         def task():
-            fg, key, stack = self._get_active_zone_context()
-            if stack and len(stack) > 1:
-                try:
+            try:
+                fg, key, stack = self._get_active_zone_context()
+                if stack and len(stack) > 1:
                     if fg in stack:
                         idx = stack.index(fg)
                         next_idx = (idx - 1) % len(stack)
                     else:
                         next_idx = len(stack) - 1
-                    
                     self._force_foreground(stack[next_idx])
-                except Exception as e:
-                    print(f"Error en ciclo backward: {e}")
+            except Exception as e:
+                print(f"Error en ciclo backward: {e}")
         threading.Thread(target=task, daemon=True).start()
             
     def _focus_zone_first(self):
@@ -2210,15 +2401,46 @@ class DevLauncherApp(ctk.CTk):
         process = None
         try:
             if t == 'url':
+                browser_cmd = intent.get('browser', 'default')
                 cmds_raw = intent.get('cmd', '')
+                urls_to_open = []
                 if cmds_raw:
                     for u in cmds_raw.split(TAB_SEPARATOR):
                         cu = u.strip()
-                        if cu:
-                            subprocess.Popen(f'start msedge --new-window "{cu}"', shell=True)
-                            time.sleep(0.5)
+                        if cu: urls_to_open.append(cu)
                 else:
-                    subprocess.Popen(f'start msedge --new-window "{p}"', shell=True)
+                    urls_to_open = [p]
+                
+                if not urls_to_open:
+                    urls_to_open = [p]
+                
+                # Siempre abrir en ventana NUEVA y aparte
+                # Primera URL: --new-window, el resto se pasan como argumentos al mismo comando
+                all_urls_quoted = ' '.join(f'"{u}"' for u in urls_to_open)
+                
+                if browser_cmd == 'default':
+                    # webbrowser.open no soporta --new-window, usamos el navegador registrado
+                    import webbrowser as wb
+                    try:
+                        # Intentar obtener el navegador por defecto del registro
+                        import winreg
+                        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice") as key:
+                            prog_id, _ = winreg.QueryValueEx(key, "ProgId")
+                        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, f"{prog_id}\\shell\\open\\command") as key:
+                            default_cmd, _ = winreg.QueryValueEx(key, "")
+                        # Extraer el ejecutable
+                        default_exe = default_cmd.split('"')[1] if '"' in default_cmd else default_cmd.split(' ')[0]
+                        subprocess.Popen(f'"{default_exe}" --new-window {all_urls_quoted}', shell=True)
+                    except:
+                        # Fallback: abrir primera URL con webbrowser, resto como tabs
+                        wb.open_new(urls_to_open[0])
+                        for extra_url in urls_to_open[1:]:
+                            time.sleep(0.3)
+                            wb.open_new_tab(extra_url)
+                elif os.path.exists(browser_cmd):
+                    subprocess.Popen(f'"{browser_cmd}" --new-window {all_urls_quoted}', shell=True)
+                else:
+                    subprocess.Popen(f'start {browser_cmd} --new-window {all_urls_quoted}', shell=True)
             elif t == 'vscode': process = subprocess.Popen(f'code "{p}"', shell=True)
             elif t == 'ide': process = subprocess.Popen(f'{intent.get("ide_cmd", "code")} "{p}"', shell=True)
             elif t == 'exe': 
