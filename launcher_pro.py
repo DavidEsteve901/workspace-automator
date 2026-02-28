@@ -769,15 +769,50 @@ class CleanWorkspaceDialog(ctk.CTkToplevel):
 
         kws, conf_paths = self.get_config_keywords_and_paths()
         
+        # Obtener el HWND propio del launcher y del diálogo para excluirlos con seguridad
+        own_hwnd = None
+        try:
+            own_hwnd = self.parent_app.winfo_id()
+        except: pass
+        dialog_hwnd = None
+        try:
+            dialog_hwnd = self.winfo_id()
+        except: pass
+        
+        # Procesos de sistema que nunca se deben cerrar
+        SYSTEM_PROCESSES = {
+            'explorer.exe', 'searchhost.exe', 'startmenuexperiencehost.exe',
+            'shellexperiencehost.exe', 'textinputhost.exe', 'systeminformer.exe',
+            'taskmgr.exe', 'applicationframehost.exe', 'widgets.exe',
+            'lockapp.exe', 'runtimebroker.exe', 'dwm.exe', 'csrss.exe',
+            'powertoys.exe', 'powertoys.fancyzones.exe'
+        }
+        SYSTEM_TITLES = {'program manager', 'settings', 'configuración', 'microsoft text input application'}
+        
+        # Proceso propio (para excluir python.exe que ejecuta este script)
+        own_pid = os.getpid()
+
         def enum_windows_proc(hwnd, lParam):
             if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd):
                 title = win32gui.GetWindowText(hwnd)
                 if not title: return
-                if title == "Program Manager": return
+                if title.lower() in SYSTEM_TITLES: return
                 
-                # Excluir esta app y algunas cosas de sistema
-                if "Dev Workspace Automator V9" in title or "Limpiar Entorno" in title: return
-                if title == "Settings" or title == "Configuración": return
+                # Excluir el propio launcher y este diálogo por HWND (más fiable que título)
+                if hwnd == own_hwnd or hwnd == dialog_hwnd: return
+                
+                # Excluir por PID propio
+                try:
+                    import win32process
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    if pid == own_pid: return
+                except: pass
+                
+                # Excluir procesos de sistema
+                p_path = self.get_process_path(hwnd)
+                if p_path:
+                    proc_name = os.path.basename(p_path).lower()
+                    if proc_name in SYSTEM_PROCESSES: return
                 
                 try:
                     view = AppView(hwnd)
@@ -801,6 +836,7 @@ class CleanWorkspaceDialog(ctk.CTkToplevel):
                 self.windows_data.append({
                     "hwnd": hwnd,
                     "title": title,
+                    "process_path": p_path,
                     "desktop_id": desk_id,
                     "desktop_name": desk_name,
                     "kw_match": matched,
@@ -822,6 +858,11 @@ class CleanWorkspaceDialog(ctk.CTkToplevel):
             
             lbl_title = ctk.CTkLabel(row, text=wdata["title"], anchor="w")
             lbl_title.pack(side="left", padx=5, fill="x", expand=True)
+            
+            # Mostrar nombre del proceso para identificación
+            proc_name = os.path.basename(wdata.get("process_path", "")) if wdata.get("process_path") else "?"
+            lbl_proc = ctk.CTkLabel(row, text=f"({proc_name})", width=100, text_color="#888", font=("Roboto", 11))
+            lbl_proc.pack(side="right", padx=2)
             
             lbl_desk = ctk.CTkLabel(row, text=f"[{wdata['desktop_name']}]", width=120, text_color="gray")
             lbl_desk.pack(side="right", padx=5)
@@ -855,14 +896,34 @@ class CleanWorkspaceDialog(ctk.CTkToplevel):
     def close_selected(self):
         import win32gui
         import win32con
+        
+        selected = [w for w in self.windows_data if w["var"].get()]
+        if not selected:
+            messagebox.showwarning("Aviso", "No hay ventanas seleccionadas.", parent=self)
+            return
+            
+        if not messagebox.askyesno("Confirmar", f"¿Cerrar {len(selected)} ventanas seleccionadas?", parent=self):
+            return
+        
         count = 0
-        for w in self.windows_data:
-            if w["var"].get():
-                try:
-                    win32gui.PostMessage(w["hwnd"], win32con.WM_CLOSE, 0, 0)
-                    count += 1
-                except Exception as e:
-                    print(f"Error cerrando {w['title']}: {e}")
+        closed_hwnds = []
+        for w in selected:
+            try:
+                win32gui.PostMessage(w["hwnd"], win32con.WM_CLOSE, 0, 0)
+                count += 1
+                closed_hwnds.append(w["hwnd"])
+            except Exception as e:
+                print(f"Error cerrando {w['title']}: {e}")
+        
+        # Limpiar ventanas cerradas de zone_stacks para que la rotación no intente activarlas
+        if hasattr(self.parent_app, 'zone_stacks'):
+            for z_key in list(self.parent_app.zone_stacks.keys()):
+                self.parent_app.zone_stacks[z_key] = [
+                    h for h in self.parent_app.zone_stacks[z_key] if h not in closed_hwnds
+                ]
+                # Eliminar stacks vacíos
+                if not self.parent_app.zone_stacks[z_key]:
+                    del self.parent_app.zone_stacks[z_key]
         
         messagebox.showinfo("Limpieza Completada", f"Se ha solicitado el cierre de {count} ventanas.", parent=self)
         self.destroy()
