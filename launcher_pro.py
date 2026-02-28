@@ -1231,7 +1231,7 @@ class DevLauncherApp(ctk.CTk):
                 
                 for layout in data.get("custom-layouts", []):
                     layout_name = layout.get("name", "Unnamed")
-                    layout_uuid = layout.get("uuid", "").upper()
+                    layout_uuid = str(layout.get("uuid", "")).strip("{}").lower()
                     
                     info = layout.get("info", {})
                     info["type"] = layout.get("type", "")
@@ -1249,9 +1249,9 @@ class DevLauncherApp(ctk.CTk):
                     applied_data = json.load(f)
                     for app_layout in applied_data.get("applied-layouts", []):
                         al = app_layout.get("applied-layout", {})
-                        uuid = al.get("uuid", "").upper()
+                        uuid = str(al.get("uuid", "")).strip("{}").lower()
                         
-                        if uuid and uuid != "{00000000-0000-0000-0000-000000000000}":
+                        if uuid and uuid != "00000000-0000-0000-0000-000000000000":
                             default_uuid = uuid
                             
                             # Enlace para autodetectar qué escritorio usa qué layout:
@@ -1522,20 +1522,22 @@ class DevLauncherApp(ctk.CTk):
 
     def _force_foreground(self, hwnd):
         import win32gui, win32con, win32process, win32api, ctypes
+        if not hwnd or not win32gui.IsWindow(hwnd): return False
+        
         try:
             if win32gui.IsIconic(hwnd): win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
         except: pass
 
         try:
-            fg = win32gui.GetForegroundWindow()
-            current_tid = win32api.GetCurrentThreadId()
-            fg_tid = win32process.GetWindowThreadProcessId(fg)[0] if fg else 0
-            target_tid = win32process.GetWindowThreadProcessId(hwnd)[0]
-
-            user32 = ctypes.windll.user32
-            if fg_tid and fg_tid != current_tid: user32.AttachThreadInput(fg_tid, current_tid, True)
-            if target_tid and target_tid != current_tid: user32.AttachThreadInput(target_tid, current_tid, True)
-
+            # Usar SwitchToThisWindow que es más agresivo trayendo desde el fondo
+            # (hHwnd, bAltTab:True para que se comporte como un cambio de usuario consciente)
+            ctypes.windll.user32.SwitchToThisWindow(hwnd, True)
+            
+            # El truco del ALT para engañar a Windows y permitir el SetForegroundWindow
+            # simulando una entrada de teclado rápida.
+            ctypes.windll.user32.keybd_event(0x12, 0, 0, 0) # Alt Down
+            ctypes.windll.user32.keybd_event(0x12, 0, 0x0002, 0) # Alt Up
+            
             win32gui.SetForegroundWindow(hwnd)
             win32gui.BringWindowToTop(hwnd)
             win32gui.SetActiveWindow(hwnd)
@@ -1544,12 +1546,9 @@ class DevLauncherApp(ctk.CTk):
             win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, 0, 0, 0, 0, 
                                   win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW)
 
-            if fg_tid and fg_tid != current_tid: user32.AttachThreadInput(fg_tid, current_tid, False)
-            if target_tid and target_tid != current_tid: user32.AttachThreadInput(target_tid, current_tid, False)
-
             return True
-        except Exception as e:
-            print("Foreground error:", e)
+        except:
+            # Si falla el método estándar, al menos hemos hecho el SwitchToThisWindow arriba
             return False
 
     def _start_global_hotkeys(self):
@@ -1642,6 +1641,53 @@ class DevLauncherApp(ctk.CTk):
                             if combo and is_mouse_combo(combo):
                                 if match_mouse_hotkey(combo, btn_name):
                                     func()
+                    else: # RELEASE
+                        # Cuando soltamos el clic izquierdo con Shift, dejamos que FancyZones haga su 
+                        # encaje visual real. Luego, pasado un momento, actualizamos su grupo.
+                        if getattr(button, 'name', '') == 'left' and kb_state.get('shift'):
+                            import threading
+                            def _delayed_zone_update():
+                                import time, win32gui
+                                print("[Snap] Shift+LClick suelto - esperando encaje de FancyZones...")
+                                # Intentar detectar la zona varias veces por si la animación de FZ es lenta
+                                for attempt in range(5):
+                                    time.sleep(0.4) 
+                                    hwnd = win32gui.GetForegroundWindow()
+                                    if not hwnd or not win32gui.IsWindow(hwnd): break
+                                    
+                                    target_key = self._detect_zone_for_window(hwnd)
+                                    print(f"[Snap] Intento {attempt+1}: hwnd={hwnd} target_key={target_key}")
+                                    if target_key:
+                                        # Buscar grupo EXISTENTE que coincida en MONITOR + ZONA
+                                        # El layout UUID puede diferir entre config de usuario y applied-layouts de FZ
+                                        detected_device = target_key[1]  # monitor device
+                                        detected_z_idx = target_key[3]   # zone index
+                                        
+                                        # Buscar grupo existente en el mismo monitor y misma zona
+                                        existing_key = None
+                                        for k in self.zone_stacks:
+                                            if len(k) >= 4 and k[1] == detected_device and k[3] == detected_z_idx:
+                                                existing_key = k
+                                                break
+                                        
+                                        # Si hay grupo existente, usar esa clave; si no, usar la detectada
+                                        final_key = existing_key if existing_key else target_key
+                                        
+                                        # Quitar de otros stacks
+                                        for k in list(self.zone_stacks.keys()):
+                                            if hwnd in self.zone_stacks[k] and k != final_key:
+                                                self.zone_stacks[k].remove(hwnd)
+                                                print(f"[Snap] Eliminada del grupo anterior: {k}")
+                                                
+                                        # Unirse al stack de esa zona
+                                        if final_key not in self.zone_stacks: 
+                                            self.zone_stacks[final_key] = []
+                                        if hwnd not in self.zone_stacks[final_key]:
+                                            self.zone_stacks[final_key].append(hwnd)
+                                        print(f"[Snap OK] Ventana {hwnd} unida a grupo: {final_key}")
+                                        print(f"[Snap OK] Grupo completo ({len(self.zone_stacks[final_key])}): {self.zone_stacks[final_key]}")
+                                        break
+                            threading.Thread(target=_delayed_zone_update, daemon=True).start()
                     return True
 
                 # Iniciar listenes de Pynput
@@ -1666,15 +1712,12 @@ class DevLauncherApp(ctk.CTk):
         import win32gui, win32api, win32con
         fg_hwnd = win32gui.GetForegroundWindow()
         
-        # También probamos con la ventana bajo el ratón por si acaso el clic se hace
-        # sobre una ventana que aún no es la activa según el sistema operativo
         pos = win32api.GetCursorPos()
         try:
             mouse_hwnd = win32gui.WindowFromPoint(pos)
         except:
             mouse_hwnd = None
             
-        # Generamos una lista de candidatos (foco + ratón + sus ancestros raíz)
         candidates = []
         if fg_hwnd: candidates.append(fg_hwnd)
         if mouse_hwnd and mouse_hwnd != fg_hwnd: candidates.append(mouse_hwnd)
@@ -1692,7 +1735,8 @@ class DevLauncherApp(ctk.CTk):
         target_key = None
         found_target_hwnd = None
         
-        # Buscar en nuestros stacks cuál de estas corresponde a una zona activa
+        # BUSQUEDA ESTATICA: Solo miramos en que grupo ESTÁ registrada la ventana.
+        # No intentamos adivinar si ha cambiado de sitio dinamicamente aqui.
         for h in check_list:
             for key, stack in self.zone_stacks.items():
                 if h in stack:
@@ -1703,41 +1747,47 @@ class DevLauncherApp(ctk.CTk):
             
         if not target_key: return fg_hwnd, None, None
         
-        # Purgar ventanas muertas
-        stack = [h for h in self.zone_stacks[target_key] if win32gui.IsWindow(h)]
-        self.zone_stacks[target_key] = stack
+        # Purgar solo ventanas muertas (que ya no existen en el SO)
+        valid_stack = [h for h in self.zone_stacks[target_key] if win32gui.IsWindow(h)]
+        self.zone_stacks[target_key] = valid_stack
         
-        return found_target_hwnd, target_key, stack
+        return found_target_hwnd, target_key, valid_stack
 
     def _cycle_zone_forward(self):
-        fg, key, stack = self._get_active_zone_context()
-        if stack and len(stack) > 1:
-            try:
-                # Si la ventana actual está en el stack, vamos a la siguiente
-                if fg in stack:
-                    idx = stack.index(fg)
-                    next_idx = (idx + 1) % len(stack)
-                else:
-                    # Si por algún motivo se perdió el rastro pero estamos en la zona, empezamos por la primera
-                    next_idx = 0
-                
-                self._force_foreground(stack[next_idx])
-            except Exception as e:
-                print(f"Error en ciclo forward: {e}")
+        import threading
+        def task():
+            fg, key, stack = self._get_active_zone_context()
+            if stack and len(stack) > 1:
+                try:
+                    # Si la ventana actual está en el stack, vamos a la siguiente
+                    if fg in stack:
+                        idx = stack.index(fg)
+                        next_idx = (idx + 1) % len(stack)
+                    else:
+                        # Si por algún motivo se perdió el rastro pero estamos en la zona, empezamos por la primera
+                        next_idx = 0
+                    
+                    self._force_foreground(stack[next_idx])
+                except Exception as e:
+                    print(f"Error en ciclo forward: {e}")
+        threading.Thread(target=task, daemon=True).start()
 
     def _cycle_zone_backward(self):
-        fg, key, stack = self._get_active_zone_context()
-        if stack and len(stack) > 1:
-            try:
-                if fg in stack:
-                    idx = stack.index(fg)
-                    next_idx = (idx - 1) % len(stack)
-                else:
-                    next_idx = len(stack) - 1
-                
-                self._force_foreground(stack[next_idx])
-            except Exception as e:
-                print(f"Error en ciclo backward: {e}")
+        import threading
+        def task():
+            fg, key, stack = self._get_active_zone_context()
+            if stack and len(stack) > 1:
+                try:
+                    if fg in stack:
+                        idx = stack.index(fg)
+                        next_idx = (idx - 1) % len(stack)
+                    else:
+                        next_idx = len(stack) - 1
+                    
+                    self._force_foreground(stack[next_idx])
+                except Exception as e:
+                    print(f"Error en ciclo backward: {e}")
+        threading.Thread(target=task, daemon=True).start()
             
     def _focus_zone_first(self):
         fg, key, stack = self._get_active_zone_context()
@@ -1806,6 +1856,14 @@ class DevLauncherApp(ctk.CTk):
                         d_idx = int(desktop.split(" ")[1]) - 1
                         if 0 <= d_idx < len(desk_guids): d_guid = desk_guids[d_idx]
                     except: pass
+                
+                # Si no hay escritorio explícito, usar el escritorio ACTUAL real
+                # para que la clave del grupo coincida con la detección dinámica
+                if d_guid is None:
+                    try:
+                        from pyvda import VirtualDesktop
+                        d_guid = VirtualDesktop.current().id
+                    except: pass
                     
                 m_dev = monitors_info[0]["device"] if monitors_info else "\\\\.\\DISPLAY1"
                 m_eidx = 0
@@ -1837,11 +1895,15 @@ class DevLauncherApp(ctk.CTk):
                         li = self.available_layouts.get(lname)
                         if li: layout_uuid = li.get("uuid")
 
+                def _norm(gid):
+                    if not gid: return "00000000-0000-0000-0000-000000000000"
+                    return str(gid).strip("{}").lower()
+
                 intent = copy.deepcopy(item)
-                intent["_d_guid"] = d_guid
-                intent["_m_dev"] = m_dev
+                intent["_d_guid"] = _norm(d_guid)
+                intent["_m_dev"] = str(m_dev).lower()
                 intent["_m_eidx"] = m_eidx
-                intent["_l_uuid"] = layout_uuid
+                intent["_l_uuid"] = _norm(layout_uuid)
                 intent["_z_idx"] = zone_idx
                 intents.append(intent)
 
@@ -1851,12 +1913,12 @@ class DevLauncherApp(ctk.CTk):
                 groups[intt["_d_guid"]][intt["_m_dev"]].append(intt)
 
             for dguid in groups:
-                if dguid and WINDOWS_LIBS_AVAILABLE:
+                if dguid and dguid != "00000000-0000-0000-0000-000000000000" and WINDOWS_LIBS_AVAILABLE:
                     try:
-                        target_d = next((d for d in get_virtual_desktops() if str(d.id) == str(dguid)), None)
+                        target_d = next((d for d in get_virtual_desktops() if str(d.id).strip("{}").lower() == dguid), None)
                         if target_d:
                             target_d.go()
-                            if not self._wait_for_condition(lambda: str(VirtualDesktop.current().id) == str(dguid), timeout=4.0):
+                            if not self._wait_for_condition(lambda: str(VirtualDesktop.current().id).strip("{}").lower() == dguid, timeout=4.0):
                                 print(f"[ERROR DURO] Cambio fallido al escritorio: {dguid}")
                                 continue
                     except Exception as e:
@@ -1870,13 +1932,139 @@ class DevLauncherApp(ctk.CTk):
                         self.apply_fz_layout_cli(uuid, meidx + 1)
                         time.sleep(0.3)
 
+                    # Lanzar ventanas secuencialmente (el paralelo confunde detección de hwnds)
                     for intt in cur_items:
                         self._launch_and_snap_intent(intt, monitors_info)
 
+            # === REPASO FINAL: Re-posicionar todas las ventanas que se hayan movido ===
+            time.sleep(1.5)  # Esperar a que todo se asiente
+            print("[Repaso] Verificando posiciones finales...")
+            for z_key, hwnds in list(self.zone_stacks.items()):
+                if len(z_key) < 4: continue
+                # Buscar el layout y la zona para recalcular la posición correcta
+                l_uuid_key = z_key[2]
+                z_idx_key = z_key[3]
+                
+                layout_name = next((n for n, dt in self.available_layouts.items() if dt.get("uuid") == l_uuid_key), None)
+                if not layout_name: continue
+                layout_info = self.available_layouts[layout_name]
+                
+                # Buscar el monitor correcto
+                m_dev_key = z_key[1]
+                mi = next((m for m in monitors_info if m['device'].lower() == m_dev_key), monitors_info[0] if monitors_info else None)
+                if not mi: continue
+                
+                rect = self._calculate_zone_rect(layout_info, z_idx_key, mi['work_area'])
+                if not rect: continue
+                z_l, z_t, z_w, z_h = rect
+                
+                for hwnd in hwnds:
+                    if not win32gui.IsWindow(hwnd): continue
+                    try:
+                        cur_rect = win32gui.GetWindowRect(hwnd)
+                        cl, ct, cr, cb = cur_rect
+                        # Si la ventana se ha movido significativamente de su posición correcta
+                        if abs(cl - z_l) > 50 or abs(ct - z_t) > 50 or abs((cr-cl) - z_w) > 50 or abs((cb-ct) - z_h) > 50:
+                            win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, z_l, z_t, z_w, z_h, win32con.SWP_SHOWWINDOW)
+                            print(f"[Repaso] Reposicionada hwnd={hwnd} en zona {z_idx_key}")
+                    except: pass
+            print("[Repaso] Posiciones verificadas ✓")
             self.after(0, lambda: self.btn_launch.configure(state="normal", text="🚀 LANZAR ENTORNO"))
 
         import threading
         threading.Thread(target=_launch_task, daemon=True).start()
+
+    def _get_zone_key(self, d_guid, m_dev, l_uuid, z_idx):
+        """Genera una clave de zona normalizada (lower, sin llaves) para consistencia en zone_stacks."""
+        def _norm(gid):
+            if not gid: return "00000000-0000-0000-0000-000000000000"
+            return str(gid).strip("{}").lower()
+        return (_norm(d_guid), str(m_dev).lower(), _norm(l_uuid), int(z_idx))
+
+    def _detect_zone_for_window(self, hwnd):
+        """Devuelve la clave de zona (d_guid, m_dev, l_uuid, z_idx) en la que se encuentra la ventana físicamente, o None."""
+        if not hwnd or not WINDOWS_LIBS_AVAILABLE: return None
+        import win32gui, win32api, json, os
+
+        if not win32gui.IsWindow(hwnd): return None
+        
+        # 1. Leer layouts aplicados de PowerToys (Origen de la verdad actual)
+        pt_applied = os.path.join(self.fancyzones_path, "applied-layouts.json")
+        if not os.path.exists(pt_applied): return None
+        
+        try:
+            with open(pt_applied, 'r', encoding='utf-8') as f:
+                pt_data = json.load(f)
+        except: return None
+        
+        applied_list = pt_data.get("applied-layouts", [])
+        if not applied_list: return None
+        
+        # 2. Info entorno actual
+        d_guid = "00000000-0000-0000-0000-000000000000"
+        try:
+            from pyvda import VirtualDesktop
+            d_guid = str(VirtualDesktop.current().id)
+        except: pass
+        
+        rect = win32gui.GetWindowRect(hwnd)
+        wl, wt, wr, wb = rect
+        wcx, wcy = wl + (wr - wl)//2, wt + (wb - wt)//2
+        ww, wh = wr - wl, wb - wt
+        
+        monitors_info = []
+        try:
+            for idx, (hMonitor, _, pyRect) in enumerate(win32api.EnumDisplayMonitors()):
+                 minfo = win32api.GetMonitorInfo(hMonitor)
+                 monitors_info.append({
+                     "device": minfo.get("Device", ""),
+                     "work_area": minfo.get("Work"),
+                     "idx": idx
+                 })
+        except: pass
+
+        def _norm_id(gid):
+            if not gid: return "00000000-0000-0000-0000-000000000000"
+            return str(gid).strip("{}").lower()
+
+        # 3. Emparejar con zonas comparando el centro de la ventana
+        for entry in applied_list:
+            # Normalizar el virtual-desktop-id del entry para comparar
+            e_d_guid = _norm_id(entry.get("virtual-desktop-id", ""))
+            if e_d_guid != "00000000-0000-0000-0000-000000000000" and e_d_guid != _norm_id(d_guid):
+                continue
+            
+            l_info = entry.get("applied-layout", {})
+            l_uuid = _norm_id(l_info.get("uuid", ""))  # Normalizado para buscar en available_layouts
+            if not l_uuid or l_uuid == "00000000-0000-0000-0000-000000000000": continue
+            
+            # Buscar el layout comparando UUIDs normalizados
+            lname = next((n for n, d in self.available_layouts.items() if _norm_id(d.get("uuid", "")) == l_uuid), None)
+            if not lname:
+                continue
+            layout_data = self.available_layouts[lname]
+            
+            num_zones = 0
+            if layout_data.get("type") == "grid":
+                for row in layout_data.get("cell-child-map", []):
+                    for cell in row: num_zones = max(num_zones, cell + 1)
+            else:
+                num_zones = len(layout_data.get("zones", []))
+
+            for mi in monitors_info:
+                for z_idx in range(num_zones):
+                    z_rect = self._calculate_zone_rect(layout_data, z_idx, mi['work_area'])
+                    if z_rect:
+                        zl, zt, zw, zh = z_rect
+                        # Usar SOLO el centro para determinar la zona - sin restricción de tamaño.
+                        # FancyZones cambia el tamaño de la ventana, pero el centro siempre
+                        # cae dentro de la zona correcta.
+                        if zl <= wcx <= zl + zw and zt <= wcy <= zt + zh:
+                            key = self._get_zone_key(_norm_id(d_guid), mi['device'], l_uuid, z_idx)
+                            print(f"[Detect OK] hwnd={hwnd} -> zone={z_idx} layout={lname} key={key}")
+                            return key
+        print(f"[Detect FAIL] hwnd={hwnd} cx={wcx} cy={wcy} w={ww} h={wh}")
+        return None
 
     def _get_process_path(self, hwnd):
         try:
@@ -2064,13 +2252,14 @@ class DevLauncherApp(ctk.CTk):
             win32gui.SetWindowPos(matched_hwnd, win32con.HWND_TOP, z_l, z_t, z_w, z_h, win32con.SWP_SHOWWINDOW)
             
             # Custom Runtime Engine: Registrar ventana internamente en su zona en lugar de usar FancyZones
-            z_key = (intent["_d_guid"], intent["_m_dev"], intent["_l_uuid"], intent["_z_idx"])
+            z_key = self._get_zone_key(intent["_d_guid"], intent["_m_dev"], intent["_l_uuid"], intent["_z_idx"])
             if z_key not in self.zone_stacks:
                 self.zone_stacks[z_key] = []
             
             # Guardamos la HWND al final de la pila (Stack de Render/Rotación)
             if matched_hwnd not in self.zone_stacks[z_key]:
                 self.zone_stacks[z_key].append(matched_hwnd)
+            print(f"[Launch] hwnd={matched_hwnd} -> key={z_key} stack={self.zone_stacks[z_key]}")
                 
         else:
             # Fallback a centrado si no hay layout (o error FZ)
