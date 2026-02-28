@@ -2010,35 +2010,55 @@ class DevLauncherApp(ctk.CTk):
         return ref_hwnd, target_key, valid_stack
 
     def _cycle_zone_forward(self):
-        import threading
+        import threading, time
+        if not hasattr(self, '_cycle_lock'): self._cycle_lock = threading.Lock()
         def task():
-            try:
-                fg, key, stack = self._get_active_zone_context()
-                if stack and len(stack) > 1:
-                    if fg in stack:
-                        idx = stack.index(fg)
-                        next_idx = (idx + 1) % len(stack)
-                    else:
-                        next_idx = 0
-                    self._force_foreground(stack[next_idx])
-            except Exception as e:
-                print(f"Error en ciclo forward: {e}")
+            with self._cycle_lock:
+                try:
+                    fg, key, stack = self._get_active_zone_context()
+                    now = time.time()
+                    if hasattr(self, '_last_cycle_time') and (now - self._last_cycle_time) < 0.5:
+                        if hasattr(self, '_last_cycle_hwnd') and self._last_cycle_hwnd in stack:
+                            fg = self._last_cycle_hwnd
+
+                    if stack and len(stack) > 1:
+                        if fg in stack:
+                            idx = stack.index(fg)
+                            next_idx = (idx + 1) % len(stack)
+                        else:
+                            next_idx = 0
+                        target_hwnd = stack[next_idx]
+                        self._force_foreground(target_hwnd)
+                        self._last_cycle_hwnd = target_hwnd
+                        self._last_cycle_time = time.time()
+                except Exception as e:
+                    print(f"Error en ciclo forward: {e}")
         threading.Thread(target=task, daemon=True).start()
 
     def _cycle_zone_backward(self):
-        import threading
+        import threading, time
+        if not hasattr(self, '_cycle_lock'): self._cycle_lock = threading.Lock()
         def task():
-            try:
-                fg, key, stack = self._get_active_zone_context()
-                if stack and len(stack) > 1:
-                    if fg in stack:
-                        idx = stack.index(fg)
-                        next_idx = (idx - 1) % len(stack)
-                    else:
-                        next_idx = len(stack) - 1
-                    self._force_foreground(stack[next_idx])
-            except Exception as e:
-                print(f"Error en ciclo backward: {e}")
+            with self._cycle_lock:
+                try:
+                    fg, key, stack = self._get_active_zone_context()
+                    now = time.time()
+                    if hasattr(self, '_last_cycle_time') and (now - self._last_cycle_time) < 0.5:
+                        if hasattr(self, '_last_cycle_hwnd') and self._last_cycle_hwnd in stack:
+                            fg = self._last_cycle_hwnd
+
+                    if stack and len(stack) > 1:
+                        if fg in stack:
+                            idx = stack.index(fg)
+                            next_idx = (idx - 1) % len(stack)
+                        else:
+                            next_idx = len(stack) - 1
+                        target_hwnd = stack[next_idx]
+                        self._force_foreground(target_hwnd)
+                        self._last_cycle_hwnd = target_hwnd
+                        self._last_cycle_time = time.time()
+                except Exception as e:
+                    print(f"Error en ciclo backward: {e}")
         threading.Thread(target=task, daemon=True).start()
             
     def _focus_zone_first(self):
