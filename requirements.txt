@@ -1,5 +1,5 @@
 customtkinter
 pyvda
-pygetwindow
 pywin32
-pyautogui
+pynput
+pygetwindow
