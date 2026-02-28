@@ -24,6 +24,16 @@ try:
 except ImportError:
     WINDOWS_LIBS_AVAILABLE = False
 
+try:
+    import ctypes
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except:
+    try:
+        import ctypes
+        ctypes.windll.user32.SetProcessDPIAware()
+    except:
+        pass
+
 # --- CONFIGURACIÓN DE RUTAS ---
 if getattr(sys, 'frozen', False):
     APP_DIR = os.path.dirname(sys.executable)
@@ -1239,152 +1249,249 @@ class DevLauncherApp(ctk.CTk):
         dlg = CleanWorkspaceDialog(self)
         self.wait_window(dlg)
 
+    def _wait_for_condition(self, condition_func, timeout=5.0, interval=0.1):
+        import time
+        start = time.time()
+        while time.time() - start < timeout:
+            res = condition_func()
+            if res: return res
+            time.sleep(interval)
+        return None
+
+    def _get_hwnds_for_pid(self, pid):
+        import win32gui, win32process
+        hwnds = []
+        def callback(hwnd, _):
+            if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd):
+                _, found_pid = win32process.GetWindowThreadProcessId(hwnd)
+                if found_pid == pid:
+                    hwnds.append(hwnd)
+        win32gui.EnumWindows(callback, 0)
+        return hwnds
+
+    def apply_fz_layout_cli(self, layout_uuid, monitor_num=None):
+        import os, subprocess
+        possible = [
+            r"C:\Program Files\PowerToys\FancyZonesCLI.exe",
+            r"C:\Program Files\PowerToys\WinUI3Apps\FancyZonesCLI.exe",
+        ]
+        cli = next((p for p in possible if os.path.exists(p)), None)
+        if not cli: return False
+
+        cmd = [cli, "set-layout", layout_uuid]
+        if monitor_num is None: cmd += ["--all"]
+        else: cmd += ["--monitor", str(monitor_num)]
+
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True, creationflags=0x08000000)
+            return True
+        except Exception as e:
+            print("FancyZonesCLI error:", e)
+            return False
+
+    def _force_foreground(self, hwnd):
+        import win32gui, win32con, win32process, win32api, ctypes
+        try:
+            if win32gui.IsIconic(hwnd): win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        except: pass
+
+        try:
+            fg = win32gui.GetForegroundWindow()
+            current_tid = win32api.GetCurrentThreadId()
+            fg_tid = win32process.GetWindowThreadProcessId(fg)[0] if fg else 0
+            target_tid = win32process.GetWindowThreadProcessId(hwnd)[0]
+
+            user32 = ctypes.windll.user32
+            if fg_tid and fg_tid != current_tid: user32.AttachThreadInput(fg_tid, current_tid, True)
+            if target_tid and target_tid != current_tid: user32.AttachThreadInput(target_tid, current_tid, True)
+
+            win32gui.SetForegroundWindow(hwnd)
+            win32gui.BringWindowToTop(hwnd)
+            win32gui.SetActiveWindow(hwnd)
+
+            if fg_tid and fg_tid != current_tid: user32.AttachThreadInput(fg_tid, current_tid, False)
+            if target_tid and target_tid != current_tid: user32.AttachThreadInput(target_tid, current_tid, False)
+
+            return True
+        except Exception as e:
+            print("Foreground error:", e)
+            return False
+
+    def _snap_register_via_shift_drop(self, hwnd, z_l, z_t, z_w, z_h):
+        """Simula un Arrastre Genuino con la tecla Shift enfocando al centro absoluto de la zona"""
+        import ctypes, time, win32api, win32con, win32gui
+        try:
+            if not self._force_foreground(hwnd):
+                time.sleep(0.1)
+
+            # Coordenadas de agarre (Barra de título teórica de la ventana que acabamos de posicionar)
+            title_x = int(z_l + (z_w // 2))
+            title_y = int(z_t + 15)
+            
+            # Coordenadas de inmersión profunda (Centro exacto de la Zona FancyZones)
+            zone_center_x = int(z_l + (z_w // 2))
+            zone_center_y = int(z_t + (z_h // 2))
+
+            # 1. Vamos a la barra de título
+            win32api.SetCursorPos((title_x, title_y))
+            time.sleep(0.1) # Pausa para registrar la presencia del cursor
+            
+            # 2. Agarramos la ventana PRIMERO (Clic Izquierdo Abajo)
+            ctypes.windll.user32.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+            time.sleep(0.15) # Mantenemos agarrado para afianzar la ventana
+            
+            # 3. AHORA pulsamos SHIFT izquierdo (Estando ya agarrados para detonar FZ real)
+            ctypes.windll.user32.keybd_event(0xA0, 0, 0, 0) # VK_LSHIFT Down
+            time.sleep(0.1)
+
+            # 4. ARRASTRE FLUIDO HACIA EL CENTRO: Movemos pausadamente para que el driver humanoide y FZ lo lean
+            steps = 10
+            for i in range(1, steps + 1):
+                cur_x = int(title_x + (zone_center_x - title_x) * (i / steps))
+                cur_y = int(title_y + (zone_center_y - title_y) * (i / steps))
+                win32api.SetCursorPos((cur_x, cur_y))
+                time.sleep(0.02) # Micro-paradas
+
+            time.sleep(0.2) # MANTENEMOS EL CLIC EN EL CENTRO mientras FZ dibuja la zona en azul
+
+            # 5. Soltamos clic Izquierdo para soltar la ventana (Manteniendo el SHIFT AÚN)
+            ctypes.windll.user32.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+            time.sleep(0.1)
+
+            # 6. Soltar SHIFT finalmente
+            ctypes.windll.user32.keybd_event(0xA0, 0, win32con.KEYEVENTF_KEYUP, 0)
+            
+            return True
+        except Exception as e:
+            print(f"Error en Shift Drop: {e}")
+            try: ctypes.windll.user32.keybd_event(0xA0, 0, win32con.KEYEVENTF_KEYUP, 0) # Failsafe
+            except: pass
+            return False
+
     def launch_workspace(self):
         items_to_launch = self.apps_data.get(self.current_category, [])
         if not items_to_launch: return
 
-        # Cambiar el botón visualmente
+        self.load_fancyzones_layouts()
         self.btn_launch.configure(state="disabled", text="⏳ LANZANDO ENTORNO...")
 
         def _launch_task():
-            for item in items_to_launch:
+            import win32api, win32gui, copy, time
+            desk_guids = []
+            if WINDOWS_LIBS_AVAILABLE:
                 try:
-                    t = item.get('type')
-                    p = item.get('path')
-                    desktop = item.get('desktop', 'Por defecto')
-                    monitor = item.get('monitor', 'Por defecto')
-                    zone = item.get('fancyzone', 'Ninguna')
-                    delay_str = item.get('delay', '0')
+                    desktops = get_virtual_desktops()
+                    desk_guids = [d.id for d in desktops]
+                except: pass
+                
+            monitors_info = []
+            try:
+                for idx, (hMonitor, _, pyRect) in enumerate(win32api.EnumDisplayMonitors()):
+                    minfo = win32api.GetMonitorInfo(hMonitor)
+                    monitors_info.append({
+                        "device": minfo.get("Device", f"\\\\.\\DISPLAY{idx+1}"),
+                        "work_area": minfo.get("Work"),
+                        "bounds": pyRect,
+                        "enum_idx": idx
+                    })
+            except: pass
+
+            intents = []
+            for item in items_to_launch:
+                desktop = item.get('desktop', 'Por defecto')
+                mon = item.get('monitor', 'Por defecto')
+                
+                d_guid = None
+                if desktop.startswith("Escritorio "):
+                    try: 
+                        d_idx = int(desktop.split(" ")[1]) - 1
+                        if 0 <= d_idx < len(desk_guids): d_guid = desk_guids[d_idx]
+                    except: pass
                     
-                    try: delay_s = float(delay_str)
-                    except: delay_s = 0.0
+                m_dev = monitors_info[0]["device"] if monitors_info else "\\\\.\\DISPLAY1"
+                m_eidx = 0
+                if mon.startswith("Pantalla "):
+                    try: 
+                        m_idx = int(mon.split(" ")[1]) - 1
+                        if 0 <= m_idx < len(monitors_info): 
+                            m_dev = monitors_info[m_idx]["device"]
+                            m_eidx = monitors_info[m_idx]["enum_idx"]
+                    except: pass
+                elif mon.startswith("Monitor "):
+                    try: 
+                        m_idx = int(mon.replace("Monitor ", "")) - 1
+                        if 0 <= m_idx < len(monitors_info): 
+                            m_dev = monitors_info[m_idx]["device"]
+                            m_eidx = monitors_info[m_idx]["enum_idx"]
+                    except: pass
                     
-                    desk_num = None
-                    if desktop.startswith("Escritorio "):
-                        try: desk_num = int(desktop.split(" ")[1])
+                layout_uuid = None
+                zone_idx = 0
+                zone_name = item.get('fancyzone', 'Ninguna')
+                if zone_name != 'Ninguna':
+                    parts = zone_name.rsplit(" - Zona ", 1)
+                    if len(parts) == 2:
+                        lname = parts[0]
+                        try: zone_idx = int(parts[1].split()[0]) - 1
                         except: pass
                         
-                    target_mon_idx = None
-                    if monitor.startswith("Pantalla "):
-                        try: target_mon_idx = int(monitor.split(" ")[1]) - 1
-                        except: pass
-                    elif monitor.startswith("Monitor "):
-                        try: target_mon_idx = int(monitor.replace("Monitor ", "")) - 1
-                        except: pass
-                    
-                    if delay_s > 0:
-                        time.sleep(delay_s)
-                        
-                    # [CRÍTICO] Forzar el salto de escritorio ANTES de lanzar el proceso
-                    if desk_num is not None and WINDOWS_LIBS_AVAILABLE:
-                        try:
-                            desktops = get_virtual_desktops()
-                            if 1 <= desk_num <= len(desktops):
-                                target_desktop = desktops[desk_num - 1]
-                                target_desktop.go() # Te transporta fisicamente a ese escritorio
-                                time.sleep(0.8) # Darle respiro seguro de animacion a Windows al cambiar de escritorio
-                        except Exception as e:
-                            print(f"Error cambiando escritorio antes de lanzar: {e}")
-                    
-                    hwnds_before = set()
-                    if WINDOWS_LIBS_AVAILABLE:
-                        import win32gui
-                        def enum_before(hwnd, _):
-                            if win32gui.IsWindowVisible(hwnd): hwnds_before.add(hwnd)
-                        win32gui.EnumWindows(enum_before, 0)
-                        
-                    def _launch_and_position():
-                        process = None
-                        if t == 'url':
-                            cmds_raw = item.get('cmd', '')
-                            if cmds_raw:
-                                urls = cmds_raw.split(TAB_SEPARATOR)
-                                first = True
-                                for u in urls:
-                                    clean_u = u.strip()
-                                    if clean_u:
-                                        if first:
-                                            webbrowser.open_new(clean_u)
-                                            time.sleep(1.0) # Dar margen para que la nueva ventana se abra y tome foco
-                                            first = False
-                                        else:
-                                            webbrowser.open_new_tab(clean_u)
-                                            time.sleep(0.2)
-                            else:
-                                webbrowser.open_new(p)
-                        elif t == 'vscode': 
-                            process = subprocess.Popen(f'code "{p}"', shell=True)
-                        elif t == 'ide': 
-                            ide_cmd = item.get('ide_cmd', 'code')
-                            process = subprocess.Popen(f'{ide_cmd} "{p}"', shell=True)
-                        elif t == 'exe': 
-                            process = subprocess.Popen(p)
-                        elif t == 'obsidian':
-                            encoded = urllib.parse.quote(p)
-                            webbrowser.open(f"obsidian://open?path={encoded}")
-                        elif t == 'powershell':
-                            cmds_raw = item.get('cmd', '')
-                            tabs_content = cmds_raw.split(TAB_SEPARATOR)
-                            
-                            if shutil.which("wt") is None:
-                                simple_cmd = tabs_content[0].replace(";", " & ")
-                                process = subprocess.Popen(f'start powershell -NoExit -Command "Set-Location \'{p}\'; {simple_cmd}"', shell=True)
-                            else:
-                                # Lanzar todas las pestañas dentro de una MISMA ventana de Windows Terminal 
-                                wt_args = ["wt", "-w", "-1", "-d", p, "powershell", "-NoExit"]
-                                
-                                first_cmd = tabs_content[0].strip()
-                                if first_cmd:
-                                    wt_args.extend(["-Command", first_cmd])
-                                    
-                                for content in tabs_content[1:]:
-                                    wt_args.append(";")
-                                    wt_args.extend(["new-tab", "-d", p, "powershell", "-NoExit"])
-                                    clean_cmds = content.strip()
-                                    if clean_cmds:
-                                        wt_args.extend(["-Command", clean_cmds])
-                                
-                                subprocess.Popen(wt_args)
-    
-                    _launch_and_position()
-                    
-                    # Pausa para dar tiempo a Windows de pintar la ventana antes de pescarla y moverla
-                    time.sleep(1.8)
-                    
-                    if WINDOWS_LIBS_AVAILABLE and zone != 'Ninguna':
-                        self._apply_manual_zone_position(zone, target_mon_idx, hwnds_before, t, p, item.get('ide_cmd', ''))
-                        
-                    # Pausa post-movimiento para no atascar el OS
-                    time.sleep(0.5)
-    
-                except Exception as e:
-                    print(f"Error lanzando {item.get('type')}: {e}")
-            
-            # Restaurar el botón desde otro hilo
+                        li = self.available_layouts.get(lname)
+                        if li: layout_uuid = li.get("uuid")
+
+                intent = copy.deepcopy(item)
+                intent["_d_guid"] = d_guid
+                intent["_m_dev"] = m_dev
+                intent["_m_eidx"] = m_eidx
+                intent["_l_uuid"] = layout_uuid
+                intent["_z_idx"] = zone_idx
+                intents.append(intent)
+
+            from collections import defaultdict
+            groups = defaultdict(lambda: defaultdict(list))
+            for intt in intents:
+                groups[intt["_d_guid"]][intt["_m_dev"]].append(intt)
+
+            for dguid in groups:
+                if dguid and WINDOWS_LIBS_AVAILABLE:
+                    try:
+                        target_d = next((d for d in get_virtual_desktops() if str(d.id) == str(dguid)), None)
+                        if target_d:
+                            target_d.go()
+                            if not self._wait_for_condition(lambda: str(VirtualDesktop.current().id) == str(dguid), timeout=4.0):
+                                print(f"[ERROR DURO] Cambio fallido al escritorio: {dguid}")
+                                continue
+                    except Exception as e:
+                        print(f"Desktop Switch Error: {e}")
+
+                for mdev in groups[dguid]:
+                    cur_items = groups[dguid][mdev]
+                    uuid = cur_items[0]["_l_uuid"]
+                    meidx = cur_items[0]["_m_eidx"]
+                    if uuid:
+                        self.apply_fz_layout_cli(uuid, meidx + 1)
+                        time.sleep(0.3)
+
+                    for intt in cur_items:
+                        self._launch_and_snap_intent(intt, monitors_info)
+
             self.after(0, lambda: self.btn_launch.configure(state="normal", text="🚀 LANZAR ENTORNO"))
 
+        import threading
         threading.Thread(target=_launch_task, daemon=True).start()
 
     def _get_process_path(self, hwnd):
         try:
-            import win32process
-            import ctypes
+            import win32process, ctypes, os
             from ctypes import wintypes
-            
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            
             kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
-            hProcess = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            hProcess = kernel32.OpenProcess(0x1000, False, pid)
             if not hProcess: return ""
-            
             exe_path = ctypes.create_unicode_buffer(260)
             size = wintypes.DWORD(260)
             success = kernel32.QueryFullProcessImageNameW(hProcess, 0, exe_path, ctypes.byref(size))
             kernel32.CloseHandle(hProcess)
-            
-            if success:
-                return os.path.normpath(exe_path.value).lower()
+            if success: return os.path.normpath(exe_path.value).lower()
         except: pass
         return ""
 
@@ -1393,135 +1500,185 @@ class DevLauncherApp(ctk.CTk):
         left_bound, top_bound, right_bound, bottom_bound = work_area
         width = right_bound - left_bound
         height = bottom_bound - top_bound
-        
         spacing = layout_info.get("spacing", 0) if layout_info.get("show-spacing", True) else 0
         
         if ltype == "grid":
             rows_perc = layout_info.get("rows-percentage", [10000])
             cols_perc = layout_info.get("columns-percentage", [10000])
             cell_map = layout_info.get("cell-child-map", [[0]])
-            
             total_r = sum(rows_perc) if sum(rows_perc) > 0 else 10000
             total_c = sum(cols_perc) if sum(cols_perc) > 0 else 10000
-            
             row_bounds = [top_bound]
             accum = 0
             for p in rows_perc:
                 accum += p
                 row_bounds.append(top_bound + int((accum / total_r) * height))
-                
             col_bounds = [left_bound]
             accum = 0
             for p in cols_perc:
                 accum += p
                 col_bounds.append(left_bound + int((accum / total_c) * width))
-                
             min_r, max_r = 9999, -1
             min_c, max_c = 9999, -1
-            
             for r_i, row in enumerate(cell_map):
                 for c_i, z_val in enumerate(row):
                     if z_val == zone_idx:
-                        min_r = min(min_r, r_i)
-                        max_r = max(max_r, r_i)
-                        min_c = min(min_c, c_i)
-                        max_c = max(max_c, c_i)
-                        
+                        min_r, max_r = min(min_r, r_i), max(max_r, r_i)
+                        min_c, max_c = min(min_c, c_i), max(max_c, c_i)
             if min_r <= max_r and min_c <= max_c:
                 z_t = row_bounds[min_r] + spacing
                 z_b = row_bounds[max_r + 1] - spacing
                 z_l = col_bounds[min_c] + spacing
                 z_r = col_bounds[max_c + 1] - spacing
                 return (z_l, z_t, max(50, z_r - z_l), max(50, z_b - z_t))
-                
         elif ltype == "canvas":
             ref_w = layout_info.get("ref-width", width)
             if ref_w <= 0: ref_w = width
             ref_h = layout_info.get("ref-height", height)
             if ref_h <= 0: ref_h = height
-            
             zones = layout_info.get("zones", [])
             if zone_idx < len(zones):
                 z = zones[zone_idx]
-                zx = z.get("X", 0)
-                zy = z.get("Y", 0)
-                zw = z.get("width", 100)
-                zh = z.get("height", 100)
-                
-                x = left_bound + int((zx / ref_w) * width)
-                y = top_bound + int((zy / ref_h) * height)
-                w = int((zw / ref_w) * width)
-                h = int((zh / ref_h) * height)
+                x = left_bound + int((z.get("X", 0) / ref_w) * width)
+                y = top_bound + int((z.get("Y", 0) / ref_h) * height)
+                w = int((z.get("width", 100) / ref_w) * width)
+                h = int((z.get("height", 100) / ref_h) * height)
                 return (x, y, w, h)
         return None
 
-    def _apply_manual_zone_position(self, zone_name, target_mon_idx, hwnds_before, type_str, path_str, ide_cmd_str):
-        import win32gui
-        import win32api
-        import win32con
+    def _launch_and_snap_intent(self, intent, monitors_info):
+        import win32gui, win32con, os, subprocess, time, shutil, webbrowser, urllib.parse
+        t = intent.get('type')
+        p = intent.get('path')
+        delay_s = float(intent.get('delay', '0') or 0)
         
-        parts = zone_name.rsplit(" - Zona ", 1)
-        if len(parts) != 2: return
-        layout_name = parts[0]
-        try: zone_idx = int(parts[1].split()[0]) - 1
-        except: return
-        if zone_idx < 0: return
+        if delay_s > 0: time.sleep(delay_s)
+
+        hwnds_before = set()
+        def enum_before(hwnd, _):
+            if win32gui.IsWindowVisible(hwnd): hwnds_before.add(hwnd)
+        win32gui.EnumWindows(enum_before, 0)
         
-        layout_info = self.available_layouts.get(layout_name, {})
-        if not layout_info: return
-        
-        mon_idx = target_mon_idx if target_mon_idx is not None else 0
+        process = None
         try:
-            monitors = win32api.EnumDisplayMonitors()
-            if mon_idx < 0 or mon_idx >= len(monitors): mon_idx = 0
-            monitor_info = win32api.GetMonitorInfo(monitors[mon_idx][0])
-            work_area = monitor_info['Work']
-        except:
+            if t == 'url':
+                cmds_raw = intent.get('cmd', '')
+                if cmds_raw:
+                    for u in cmds_raw.split(TAB_SEPARATOR):
+                        cu = u.strip()
+                        if cu:
+                            subprocess.Popen(f'start msedge --new-window "{cu}"', shell=True)
+                            time.sleep(0.5)
+                else:
+                    subprocess.Popen(f'start msedge --new-window "{p}"', shell=True)
+            elif t == 'vscode': process = subprocess.Popen(f'code "{p}"', shell=True)
+            elif t == 'ide': process = subprocess.Popen(f'{intent.get("ide_cmd", "code")} "{p}"', shell=True)
+            elif t == 'exe': 
+                try: process = subprocess.Popen(p)
+                except OSError: os.startfile(p)
+            elif t == 'obsidian':
+                encoded = urllib.parse.quote(p)
+                webbrowser.open(f"obsidian://open?path={encoded}")
+            elif t == 'powershell':
+                tabs_content = intent.get('cmd', '').split(TAB_SEPARATOR)
+                def f_ps(ct, bp):
+                    ct = ct.strip()
+                    if not ct: return ""
+                    tp = ct.strip("'\"")
+                    ap = os.path.join(bp, tp) if not os.path.isabs(tp) else tp
+                    if os.path.isdir(ap): return f"Set-Location '{tp}'"
+                    if os.path.isfile(ap): return f"& '{tp}'"
+                    pts = ct.split(" ")
+                    for i in range(len(pts), 0, -1):
+                        pp = " ".join(pts[:i]).strip("'\"")
+                        if not pp: continue
+                        app = os.path.join(bp, pp) if not os.path.isabs(pp) else pp
+                        if os.path.isfile(app): return f"& '{pp}' {' '.join(pts[i:])}".strip()
+                    return ct
+                    
+                if shutil.which("wt") is None:
+                    sc = f_ps(tabs_content[0], p).replace(";", " & ")
+                    process = subprocess.Popen(f'start powershell -NoExit -Command "Set-Location \'{p}\'; {sc}"', shell=True)
+                else:
+                    wta = ["wt", "-w", "-1", "-d", p, "powershell", "-NoExit"]
+                    if f_ps(tabs_content[0], p): wta.extend(["-Command", f_ps(tabs_content[0], p)])
+                    for ct in tabs_content[1:]:
+                        wta.extend([";", "new-tab", "-d", p, "powershell", "-NoExit"])
+                        if f_ps(ct, p): wta.extend(["-Command", f_ps(ct, p)])
+                    process = subprocess.Popen(wta)
+        except Exception as e:
+            print(f"[ERROR DURO] Fallo al iniciar {t}: {e}")
             return
-            
-        rect = self._calculate_zone_rect(layout_info, zone_idx, work_area)
-        if not rect: return
-        left, top, w, h = rect
-        
-        new_hwnds = []
-        def enum_after(hwnd, _):
-            if win32gui.IsWindowVisible(hwnd) and hwnd not in hwnds_before:
-                title = win32gui.GetWindowText(hwnd)
-                if title and title != "Program Manager":
-                    new_hwnds.append(hwnd)
-        win32gui.EnumWindows(enum_after, 0)
-        
-        target_kws = []
-        if type_str == 'url': target_kws = ['edge', 'chrome', 'firefox', 'brave']
-        elif type_str == 'vscode': target_kws = ['code', 'visual studio']
-        elif type_str == 'ide': target_kws = [str(ide_cmd_str).lower().replace(".exe", "")]
-        elif type_str == 'obsidian': target_kws = ['obsidian']
-        elif type_str == 'powershell': target_kws = ['terminal', 'powershell']
-        else: target_kws = [os.path.basename(path_str).lower().replace(".exe", "")]
-        
+
+        if not WINDOWS_LIBS_AVAILABLE or not intent["_l_uuid"] or intent.get('fancyzone', 'Ninguna') == 'Ninguna':
+            return
+
         matched_hwnd = None
-        for hwnd in new_hwnds:
-            title = win32gui.GetWindowText(hwnd).lower()
-            p_path = self._get_process_path(hwnd)
+        if process and process.pid:
+            matched_hwnd = self._wait_for_condition(lambda: (self._get_hwnds_for_pid(process.pid) or [None])[0], timeout=6.0)
             
-            if any(kw in title for kw in target_kws) or any(kw in p_path for kw in target_kws):
-                matched_hwnd = hwnd
-                break
-                
-        # Fallback ultra agresivo: cogemos la principal/última ventana visual nacida
-        if not matched_hwnd and len(new_hwnds) > 0:
-            matched_hwnd = new_hwnds[0]
+        if not matched_hwnd:
+            def check_new():
+                nh = []
+                def ea(h, _):
+                    if win32gui.IsWindowVisible(h) and h not in hwnds_before:
+                        tit = win32gui.GetWindowText(h)
+                        if tit and tit != "Program Manager": nh.append(h)
+                win32gui.EnumWindows(ea, 0)
+                target_kws = ['edge', 'chrome', 'firefox', 'brave'] if t == 'url' else \
+                             ['code', 'visual studio'] if t == 'vscode' else \
+                             [str(intent.get('ide_cmd', '')).lower().replace(".exe", "")] if t == 'ide' else \
+                             ['obsidian'] if t == 'obsidian' else \
+                             ['terminal', 'powershell'] if t == 'powershell' else \
+                             [os.path.basename(p).lower().replace(".exe", "")]
+                for h in nh:
+                    if any(kw in win32gui.GetWindowText(h).lower() for kw in target_kws) or \
+                       any(kw in self._get_process_path(h) for kw in target_kws): return h
+                return nh[0] if nh else None
+            matched_hwnd = self._wait_for_condition(check_new, timeout=6.0)
+
+        if not matched_hwnd:
+            print(f"[ERROR DURO] Timeout esperando ventana para: {intent['path']}")
+            return
+
+        # Prepare Window
+        if win32gui.IsIconic(matched_hwnd):
+            win32gui.ShowWindow(matched_hwnd, win32con.SW_RESTORE)
+        placement = win32gui.GetWindowPlacement(matched_hwnd)
+        if placement[1] == win32con.SW_SHOWMAXIMIZED:
+            win32gui.ShowWindow(matched_hwnd, win32con.SW_RESTORE)
+
+        if not self._force_foreground(matched_hwnd):
+            print(f"[ERROR DURO] Foco denegado para: {intent['path']}")
+            # Seguimos intentando moverlo, el snap absoluto puede funcionar sin foco completo.
             
-        if matched_hwnd:
-            try:
-                if win32gui.IsIconic(matched_hwnd):
-                    win32gui.ShowWindow(matched_hwnd, win32con.SW_RESTORE)
-                
-                # Compensación estándar de bordes invisibles aeroglass de Windows para DWM (suele ser 7px offset estético)
-                comp = 7
-                win32gui.SetWindowPos(matched_hwnd, win32con.HWND_TOP, left - comp, top, w + (comp*2), h + comp, win32con.SWP_SHOWWINDOW)
-            except Exception as e:
-                print(f"Error moviendo la ventana manually: {e}")
+        mi = next((m for m in monitors_info if m['enum_idx'] == intent["_m_eidx"]), monitors_info[0])
+        l, t_y, r, b = mi['work_area']
+        
+        layout_name = next((n for n, dt in self.available_layouts.items() if dt.get("uuid") == intent["_l_uuid"]), None)
+        layout_info = self.available_layouts.get(layout_name, {}) if layout_name else {}
+        rect = self._calculate_zone_rect(layout_info, intent["_z_idx"], mi['work_area'])
+        
+        if rect:
+            z_l, z_t, z_w, z_h = rect
+            # 1. Snapshot Matemático Directo: Eliminadas compensaciones fantasma
+            # Dibujamos directamente las dimensiones en puro para que la barra de título caiga exacta
+            win32gui.SetWindowPos(matched_hwnd, win32con.HWND_TOP, z_l, z_t, z_w, z_h, win32con.SWP_SHOWWINDOW)
+            
+            # 2. Inmersión de Mouse Mágica con Shift para obligar a FancyZones a comerse la ventana
+            # Le pasamos todos los límites de la zona para que el ratón agarre la barra y tire hacia el núcleo.
+            self._snap_register_via_shift_drop(matched_hwnd, z_l, z_t, z_w, z_h)
+            
+            # Verificación Geométrica de Seguridad (por si algo patinó groseramente)
+            time.sleep(0.15)
+            nwr = win32gui.GetWindowRect(matched_hwnd)
+            w_cen_x, w_cen_y = nwr[0] + (nwr[2]-nwr[0])//2, nwr[1] + (nwr[3]-nwr[1])//2
+            if not (l <= w_cen_x <= r and t_y <= w_cen_y <= b):
+                print(f"[WARNING] Monitor mismatch tras Drag Simulator para: {intent['path']}")
+        else:
+            # Fallback a centrado si no hay layout (o error FZ)
+            cen_x, cen_y = l + (r-l)//2, t_y + (b-t_y)//2
+            win32gui.SetWindowPos(matched_hwnd, win32con.HWND_TOP, cen_x - 400, cen_y - 300, 800, 600, win32con.SWP_SHOWWINDOW)
 
 if __name__ == "__main__":
     app = DevLauncherApp()
