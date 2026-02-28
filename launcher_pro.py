@@ -1909,6 +1909,32 @@ class DevLauncherApp(ctk.CTk):
                     return (kb_state['ctrl'] == needs_ctrl and kb_state['alt'] == needs_alt and
                             kb_state['shift'] == needs_shift and kb_state['win'] == needs_win)
 
+                def win32_event_filter(msg, data):
+                    is_down = msg in (0x0201, 0x0204, 0x0207, 0x020B)
+                    is_up = msg in (0x0202, 0x0205, 0x0208, 0x020C)
+                    if not (is_down or is_up):
+                        return True
+                        
+                    btn_name = None
+                    if msg in (0x0201, 0x0202): btn_name = 'left'
+                    elif msg in (0x0204, 0x0205): btn_name = 'right'
+                    elif msg in (0x0207, 0x0208): btn_name = 'middle'
+                    elif msg in (0x020B, 0x020C):
+                        hiword = (getattr(data, 'mouseData', 0) >> 16) & 0xFFFF
+                        if hiword == 1: btn_name = 'x1'
+                        elif hiword == 2: btn_name = 'x2'
+
+                    if btn_name:
+                        for key_id, func in actions.items():
+                            combo = hk.get(key_id)
+                            if combo and is_mouse_combo(combo):
+                                if match_mouse_hotkey(combo, btn_name):
+                                    if is_down:
+                                        import threading
+                                        threading.Thread(target=func, daemon=True).start()
+                                    return False
+                    return True
+
                 def on_click(x, y, button, pressed):
                     if pressed:
                         btn_name = button.name # 'left', 'right', 'x1', etc.
@@ -1970,7 +1996,8 @@ class DevLauncherApp(ctk.CTk):
                 h = keyboard.GlobalHotKeys(kb_mapping)
                 h.start()
                 
-                ml = mouse.Listener(on_click=on_click)
+                # Usar win32_event_filter intercepta y bloquea la pulsación para que Windows no la procese (ej: atrás en navegador)
+                ml = mouse.Listener(on_click=on_click, win32_event_filter=win32_event_filter)
                 ml.start()
                 
                 kl = keyboard.Listener(on_press=on_press, on_release=on_release)
