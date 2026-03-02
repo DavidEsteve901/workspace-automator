@@ -1256,11 +1256,32 @@ class HotkeysEditorDialog(ctk.CTkToplevel):
         self.desc_map = {
             "mouse_cycle_fwd": "Ciclo: Siguiente Pestaña (Ratón Lateral o Teclado)",
             "mouse_cycle_bwd": "Ciclo: Anterior Pestaña (Ratón Lateral o Teclado)",
+            "desktop_cycle_fwd": "Escritorio Virtual: Siguiente",
+            "desktop_cycle_bwd": "Escritorio Virtual: Anterior",
             "util_reload_layouts": "Sistema: Recargar Layouts (Ctrl+Alt+L)"
         }
         
         ctk.CTkLabel(self, text="Configuración de Atajos Personalizados", font=("Roboto", 18, "bold")).pack(pady=(15, 5))
-        ctk.CTkLabel(self, text="Instrucciones: Para editar un atajo pulsa en su botón 'Cambiar' y luego realiza \nla combinación deseada en tu teclado y/o ratón.", text_color="#aaa").pack(pady=(0, 15))
+        ctk.CTkLabel(self, text="Instrucciones: Para editar un atajo pulsa en su botón 'Cambiar' y luego realiza \nla combinación deseada en tu teclado y/o ratón.", text_color="#aaa").pack(pady=(0, 10))
+        
+        # --- Switches de activación ---
+        toggle_frame = ctk.CTkFrame(self, fg_color="#2B2B2B", corner_radius=8)
+        toggle_frame.pack(fill="x", padx=20, pady=(0, 10))
+        ctk.CTkLabel(toggle_frame, text="Módulos Activos", font=("Roboto", 14, "bold")).pack(anchor="w", padx=10, pady=(8, 4))
+        
+        sw_row1 = ctk.CTkFrame(toggle_frame, fg_color="transparent")
+        sw_row1.pack(fill="x", padx=10, pady=2)
+        self.zone_cycle_var = ctk.BooleanVar(value=parent.hotkeys_data.get("_zone_cycle_enabled", True))
+        ctk.CTkSwitch(sw_row1, text="Navegación entre ventanas/pestañas (Zone Cycling)", 
+                       variable=self.zone_cycle_var, onvalue=True, offvalue=False,
+                       fg_color="#555", progress_color="#2CC985").pack(anchor="w")
+        
+        sw_row2 = ctk.CTkFrame(toggle_frame, fg_color="transparent")
+        sw_row2.pack(fill="x", padx=10, pady=(2, 8))
+        self.desktop_cycle_var = ctk.BooleanVar(value=parent.hotkeys_data.get("_desktop_cycle_enabled", True))
+        ctk.CTkSwitch(sw_row2, text="Cambio de escritorios virtuales", 
+                       variable=self.desktop_cycle_var, onvalue=True, offvalue=False,
+                       fg_color="#555", progress_color="#2CC985").pack(anchor="w")
         
         self.scroll = ctk.CTkScrollableFrame(self, fg_color="#2B2B2B")
         self.scroll.pack(fill="both", expand=True, padx=20, pady=5)
@@ -1270,10 +1291,8 @@ class HotkeysEditorDialog(ctk.CTkToplevel):
             row = ctk.CTkFrame(self.scroll, fg_color="#333", corner_radius=5)
             row.pack(fill="x", pady=4, padx=5)
             
-            # Nombre de la acción
             ctk.CTkLabel(row, text=desc, width=280, anchor="w", font=("Roboto", 12)).pack(side="left", padx=10, pady=8)
             
-            # Valor actual
             curr_val = self.hotkeys.get(key, "Ninguno")
             v = ctk.StringVar(value=curr_val)
             self.vars[key] = v
@@ -1281,7 +1300,6 @@ class HotkeysEditorDialog(ctk.CTkToplevel):
             lbl_val = ctk.CTkLabel(row, textvariable=v, width=150, fg_color="#444", corner_radius=4, text_color="#2CC985", font=("Roboto", 12, "bold"))
             lbl_val.pack(side="left", padx=10)
             
-            # Botón Cambiar
             ctk.CTkButton(row, text="Cambiar", width=80, fg_color="#5A5A5A", hover_color="#7A7A7A",
                           command=lambda k=key, tv=v: self.start_recording(k, tv)).pack(side="left", padx=5)
             
@@ -1297,6 +1315,8 @@ class HotkeysEditorDialog(ctk.CTkToplevel):
     def save(self):
         for k, v in self.vars.items():
             self.parent_app.hotkeys_data[k] = v.get()
+        self.parent_app.hotkeys_data["_zone_cycle_enabled"] = self.zone_cycle_var.get()
+        self.parent_app.hotkeys_data["_desktop_cycle_enabled"] = self.desktop_cycle_var.get()
         self.parent_app._save_data()
         
         messagebox.showinfo("Guardado", "Atajos guardados. Por favor, reinicia el Launcher para que apliquen los nuevos Pynput Listeners.")
@@ -1314,10 +1334,7 @@ class RecordHotkeyDialog(ctk.CTkToplevel):
         self.text_var = text_var
         
         ctk.CTkLabel(self, text="Escuchando...", font=("Roboto", 18, "bold"), text_color="#2CC985").pack(pady=(30, 10))
-        if "mouse" in action_key:
-            ctk.CTkLabel(self, text="Por favor, mantén pulsadas las teclas (Ej: Win o Ctrl) \ny haz el CLIC ESPERADO en esta ventana.", text_color="#aaa").pack(pady=10)
-        else:
-            ctk.CTkLabel(self, text="Por favor, pulsa la combinación de teclado deseada.", text_color="#aaa").pack(pady=10)
+        ctk.CTkLabel(self, text="Pulsa la combinación de teclado, O mantén tus modificadores + Botón del Ratón.\n(Los clics comunes primarios sin modificadores se ignoran para no molestar la UI).", text_color="#aaa").pack(pady=10)
             
         self.lbl_result = ctk.CTkLabel(self, text="Esperando entrada...", font=("Roboto", 14), fg_color="#333", width=300, corner_radius=5)
         self.lbl_result.pack(pady=20, ipady=10)
@@ -1339,85 +1356,93 @@ class RecordHotkeyDialog(ctk.CTkToplevel):
             from pynput import keyboard, mouse
             import time
             
-            # --- Modo Teclado Puro ---
-            if "mouse" not in self.action_key:
-                recorded_keys = set()
+            recorded_keys = set()
+            kb_state = {"ctrl": False, "alt": False, "shift": False, "win": False}
+            
+            def get_mods():
+                mods = []
+                for m in ['ctrl', 'alt', 'shift', 'win']:
+                    if kb_state[m] or m in recorded_keys: mods.append(m)
+                return list(dict.fromkeys(mods))
                 
-                def on_press(key):
-                    if self._stop_listening: return False
-                    kname = getattr(key, 'name', None)
-                    if kname:
-                        if kname in ['ctrl_l', 'ctrl_r']: kname = 'ctrl'
-                        elif kname in ['alt_l', 'alt_r', 'alt_gr']: kname = 'alt'
-                        elif kname in ['shift', 'shift_r']: kname = 'shift'
-                        elif kname in ['cmd', 'cmd_r', 'cmd_l', 'win']: kname = 'win'
-                    else:
-                        kname = getattr(key, 'char', str(key))
-                        if kname and kname.startswith('<') and kname.endswith('>'):
-                            kname = kname[1:-1]
-                            
-                    if kname: recorded_keys.add(kname)
-                    
-                    # Generar string
-                    mods = []
-                    # Ordenar por convención
-                    for m in ['ctrl', 'alt', 'shift', 'win']:
-                        if m in recorded_keys: mods.append(m)
-                    others = [k for k in recorded_keys if k not in ['ctrl', 'alt', 'shift', 'win']]
-                    
+            def on_press(key):
+                if self._stop_listening: return False
+                kname = getattr(key, 'name', None)
+                if kname:
+                    if kname in ['ctrl_l', 'ctrl_r']: 
+                        kb_state['ctrl'] = True
+                        kname = 'ctrl'
+                    elif kname in ['alt_l', 'alt_r', 'alt_gr']: 
+                        kb_state['alt'] = True
+                        kname = 'alt'
+                    elif kname in ['shift', 'shift_r']: 
+                        kb_state['shift'] = True
+                        kname = 'shift'
+                    elif kname in ['cmd', 'cmd_r', 'cmd_l', 'win']: 
+                        kb_state['win'] = True
+                        kname = 'win'
+                else:
+                    kname = getattr(key, 'char', str(key))
+                    if kname and kname.startswith('<') and kname.endswith('>'):
+                        kname = kname[1:-1]
+                        
+                if kname: recorded_keys.add(kname)
+                
+                mods = get_mods()
+                others = [k for k in recorded_keys if k not in ['ctrl', 'alt', 'shift', 'win']]
+                
+                if others:
                     self.current_combo = "+".join(mods + others)
+                    self.after(0, lambda: self.btn_save.configure(state="normal", fg_color="#2CC985"))
+                else:
+                    self.current_combo = "+".join(mods)
+                    
+                self.after(0, lambda: self.lbl_result.configure(text=self.current_combo.upper()))
+
+            def on_release(key):
+                if self._stop_listening: return False
+                kname = getattr(key, 'name', None)
+                if kname in ['ctrl_l', 'ctrl_r']: kb_state['ctrl'] = False
+                elif kname in ['alt_l', 'alt_r', 'alt_gr']: kb_state['alt'] = False
+                elif kname in ['shift', 'shift_r']: kb_state['shift'] = False
+                elif kname in ['cmd', 'cmd_r', 'cmd_l', 'win']: kb_state['win'] = False
+                
+            def on_click(x, y, button, pressed):
+                if self._stop_listening: return False
+                if pressed:
+                    btn_name = button.name
+                    mods = get_mods()
+                    # Ignoramos clic izquierdo puro para que el usuario pueda usar la interfaz gráfica
+                    if btn_name == 'left' and not mods:
+                        return True
+                        
+                    # Prefijamos los botones simples del ratón para no confundirlos con las flechas del teclado
+                    if btn_name not in ['x1', 'x2']:
+                        btn_name = 'mouse_' + btn_name
+                    
+                    # Calcular teclas extra no-modificadoras que el usuario haya pulsado en el teclado
+                    kb_others = [k for k in recorded_keys if k not in ['ctrl', 'alt', 'shift', 'win']]
+                    if kb_others:
+                        self.current_combo = "+".join(mods + kb_others + [btn_name])
+                    else:
+                        self.current_combo = "+".join(mods + [btn_name])
+                        
                     self.after(0, lambda: self.lbl_result.configure(text=self.current_combo.upper()))
                     self.after(0, lambda: self.btn_save.configure(state="normal", fg_color="#2CC985"))
-
-                def on_release(key):
-                    if self._stop_listening: return False
+                    self._stop_listening = True
+                    return False
                     
-                with keyboard.Listener(on_press=on_press, on_release=on_release) as l:
-                    while not self._stop_listening: time.sleep(0.1)
-                
-            # --- Modo Híbrido (Teclado + Ratón) ---
-            else:
-                kb_state = {"ctrl": False, "alt": False, "shift": False, "win": False}
-                
-                def on_press(key):
-                    if self._stop_listening: return False
-                    km = getattr(key, 'name', None)
-                    if km in ['ctrl_l', 'ctrl_r']: kb_state['ctrl'] = True
-                    elif km in ['alt_l', 'alt_r']: kb_state['alt'] = True
-                    elif km in ['shift', 'shift_r']: kb_state['shift'] = True
-                    elif km in ['cmd', 'cmd_r']: kb_state['win'] = True
-                    
-                def on_release(key):
-                    if self._stop_listening: return False
-                    km = getattr(key, 'name', None)
-                    if km in ['ctrl_l', 'ctrl_r']: kb_state['ctrl'] = False
-                    elif km in ['alt_l', 'alt_r']: kb_state['alt'] = False
-                    elif km in ['shift', 'shift_r']: kb_state['shift'] = False
-                    elif km in ['cmd', 'cmd_r']: kb_state['win'] = False
-                    
-                def on_click(x, y, button, pressed):
-                    if self._stop_listening: return False
-                    if pressed:
-                        btn_name = button.name
-                        mods = [k for k, v in kb_state.items() if v]
-                        self.current_combo = "+".join(mods + [btn_name])
-                        self.after(0, lambda: self.lbl_result.configure(text=self.current_combo.upper()))
-                        self.after(0, lambda: self.btn_save.configure(state="normal", fg_color="#2CC985"))
-                        # Una vez recibido el clic paramos de grabar
-                        self._stop_listening = True
-                        return False
-                        
-                k_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-                m_listener = mouse.Listener(on_click=on_click)
-                
-                k_listener.start()
-                m_listener.start()
-                
-                while not self._stop_listening: time.sleep(0.1)
-                
-                k_listener.stop()
-                m_listener.stop()
-                
+            k_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+            m_listener = mouse.Listener(on_click=on_click)
+            
+            k_listener.start()
+            m_listener.start()
+            
+            while not self._stop_listening: time.sleep(0.1)
+            
+            k_listener.stop()
+            m_listener.stop()
+            
         self._listener_thread = threading.Thread(target=listener_task, daemon=True)
         self._listener_thread.start()
         
@@ -1553,19 +1578,24 @@ class DevLauncherApp(ctk.CTk):
                     self.current_category = self.last_saved_category
                     self.applied_mappings = data.get("applied_mappings", {})
                     
-                    # Cargar Hotkeys (con valores por defecto si no existen)
-                    self.hotkeys_data = data.get("hotkeys", {
+                    # Cargar Hotkeys: mezclar defaults con lo guardado para no perder nuevas claves
+                    default_hotkeys = {
                         "cycle_forward": "ctrl+alt+pagedown",
                         "cycle_backward": "ctrl+alt+pageup",
-                        "mouse_cycle_fwd": "win+alt+right",
-                        "mouse_cycle_bwd": "win+alt+left",
+                        "mouse_cycle_fwd": "alt+x1",
+                        "mouse_cycle_bwd": "alt+x2",
+                        "desktop_cycle_fwd": "x2",
+                        "desktop_cycle_bwd": "x1",
                         "util_reload_layouts": "ctrl+alt+l"
-                    })
+                    }
+                    saved_hk = data.get("hotkeys", {})
+                    self.hotkeys_data = {**default_hotkeys, **saved_hk}
         except Exception as e:
             print(f"Error cargando base de datos: {e}")
             self.hotkeys_data = {
                 "cycle_forward": "ctrl+alt+pagedown", "cycle_backward": "ctrl+alt+pageup",
-                "mouse_cycle_fwd": "win+alt+right", "mouse_cycle_bwd": "win+alt+left",
+                "mouse_cycle_fwd": "alt+x1", "mouse_cycle_bwd": "alt+x2",
+                "desktop_cycle_fwd": "x2", "desktop_cycle_bwd": "x1",
                 "util_reload_layouts": "ctrl+alt+l"
             }
 
@@ -1950,8 +1980,13 @@ class DevLauncherApp(ctk.CTk):
                     parts = kstr.split('+')
                     res = []
                     for p in parts:
-                        p = normalize_kb_str(p)
-                        if p in ['ctrl', 'alt', 'shift', 'win', 'cmd', 'page_down', 'page_up', 'home', 'end']:
+                        p = normalize_kb_str(p).lower()
+                        if p == 'win': p = 'cmd'
+                        
+                        structural_keys = ['ctrl', 'alt', 'shift', 'cmd', 'page_down', 'page_up', 
+                                           'home', 'end', 'up', 'down', 'left', 'right', 'enter', 
+                                           'space', 'esc', 'tab', 'backspace', 'delete', 'insert']
+                        if p in structural_keys:
                             res.append(f"<{p}>")
                         else:
                             res.append(p)
@@ -1959,27 +1994,41 @@ class DevLauncherApp(ctk.CTk):
                     
                 def is_mouse_combo(kstr):
                     parts = kstr.lower().split('+')
-                    # Incluimos los nombres que pynput suele dar a los botones de ratón
-                    mouse_btns = ['left', 'right', 'middle', 'x1', 'x2']
+                    mouse_btns = ['x1', 'x2', 'mouse_left', 'mouse_right', 'mouse_middle']
                     return any(b in parts for b in mouse_btns)
 
                 kb_mapping = {}
                 hk = self.hotkeys_data
                 
-                # Acciones a considerar
-                actions = {
-                    "mouse_cycle_fwd": self._cycle_zone_forward,
-                    "mouse_cycle_bwd": self._cycle_zone_backward,
-                    "cycle_forward": self._cycle_zone_forward,
-                    "cycle_backward": self._cycle_zone_backward,
-                    "util_reload_layouts": self.load_fancyzones_layouts
-                }
+                # Flags de activación
+                zone_cycle_enabled = hk.get("_zone_cycle_enabled", True)
+                desktop_cycle_enabled = hk.get("_desktop_cycle_enabled", True)
+                print(f"[Hotkeys] Zone Cycle: {'ON' if zone_cycle_enabled else 'OFF'}, Desktop Cycle: {'ON' if desktop_cycle_enabled else 'OFF'}")
+                
+                # Acciones a considerar (filtradas por flags de activación)
+                actions = {}
+                if zone_cycle_enabled:
+                    actions["mouse_cycle_fwd"] = self._cycle_zone_forward
+                    actions["mouse_cycle_bwd"] = self._cycle_zone_backward
+                    actions["cycle_forward"] = self._cycle_zone_forward
+                    actions["cycle_backward"] = self._cycle_zone_backward
+                if desktop_cycle_enabled:
+                    actions["desktop_cycle_fwd"] = self._cycle_desktop_forward
+                    actions["desktop_cycle_bwd"] = self._cycle_desktop_backward
+                actions["util_reload_layouts"] = self.load_fancyzones_layouts
 
                 # Registrar solo teclado puro en GlobalHotKeys
                 for key_id, func in actions.items():
                     combo = hk.get(key_id)
-                    if combo and not is_mouse_combo(combo):
-                        kb_mapping[format_pynput_str(combo)] = func
+                    if not combo or combo.lower() == 'ninguno':
+                        print(f"[Hotkeys] IGNORADO (sin combo): '{key_id}' = '{combo}'")
+                        continue
+                    if is_mouse_combo(combo):
+                        print(f"[Hotkeys] RATON registrado: '{key_id}' = '{combo}'")
+                    else:
+                        formatted = format_pynput_str(combo)
+                        kb_mapping[formatted] = func
+                        print(f"[Hotkeys] TECLADO registrado: '{key_id}' = '{combo}' -> pynput='{formatted}'")
 
                 # --- Lógica de Estado para Combinaciones Teclado+Ratón ---
                 kb_state = {"ctrl": False, "alt": False, "shift": False, "win": False}
@@ -2003,31 +2052,34 @@ class DevLauncherApp(ctk.CTk):
                     return True
 
                 def match_mouse_hotkey(macro_str, btn_str):
-                    if not macro_str: return False
+                    if not macro_str or macro_str == 'Ninguno': return False
                     parts = set(macro_str.lower().split('+'))
+                    
+                    check_btn = btn_str if btn_str in ['x1', 'x2'] else f"mouse_{btn_str}"
+                    
                     # Verificar si el botón está en la macro
-                    if btn_str.lower() not in parts: return False
+                    if check_btn not in parts: return False
+                    
                     # Verificar modificadores requeridos
                     needs_ctrl = "ctrl" in parts
                     needs_alt = "alt" in parts
                     needs_shift = "shift" in parts
                     needs_win = "win" in parts or "cmd" in parts
                     
-                    # Usar comprobación síncrona real del hardware (GetAsyncKeyState),
-                    # ya que el Thread del teclado de pynput puede ir milisegundos por detrás del del ratón.
+                    # Usar comprobación síncrona real del hardware (GetAsyncKeyState)
                     import win32api
                     real_alt = (win32api.GetAsyncKeyState(0x12) & 0x8000) != 0
                     real_ctrl = (win32api.GetAsyncKeyState(0x11) & 0x8000) != 0
                     real_shift = (win32api.GetAsyncKeyState(0x10) & 0x8000) != 0
                     real_win = (win32api.GetAsyncKeyState(0x5B) & 0x8000) != 0 or (win32api.GetAsyncKeyState(0x5C) & 0x8000) != 0
 
-                    # También verificamos kb_state como fallback por si acaso,
-                    # pero la verdad absoluta al instante de clikear nos la da el hardware directo
                     is_alt = real_alt or kb_state['alt']
                     is_ctrl = real_ctrl or kb_state['ctrl']
                     is_shift = real_shift or kb_state['shift']
                     is_win = real_win or kb_state['win']
                     
+                    # Comparación ESTRICTA: las teclas reales deben coincidir EXACTAMENTE con las requeridas.
+                    # Esto evita que "x1" (sin modificadores) se dispare cuando hay Alt pulsado.
                     return (is_ctrl == needs_ctrl and is_alt == needs_alt and
                             is_shift == needs_shift and is_win == needs_win)
 
@@ -2048,37 +2100,79 @@ class DevLauncherApp(ctk.CTk):
                         if hiword == 1: btn_name = 'x1'
                         elif hiword == 2: btn_name = 'x2'
 
-                    if btn_name:
-                        # Si suprimimos el clic de bajada (DOWN), estamos atados a suprimir también su soltada (UP)
-                        # aunque el usuario haya soltado las teclas modificadoras como ALT antes de soltar el botón.
-                        if is_up and btn_name in suppressed_mouse_btns:
-                            suppressed_mouse_btns.remove(btn_name)
-                            return False
+                    if not btn_name:
+                        return True
 
-                        for key_id, func in actions.items():
-                            combo = hk.get(key_id)
-                            if combo and is_mouse_combo(combo):
-                                if match_mouse_hotkey(combo, btn_name):
-                                    if is_down:
-                                        suppressed_mouse_btns.add(btn_name)
-                                        import threading
-                                        threading.Thread(target=func, daemon=True).start()
-                                    elif is_up and btn_name in suppressed_mouse_btns:
-                                        # Fallback por si acaso retuvo los modos correctos hasta el final
-                                        suppressed_mouse_btns.remove(btn_name)
-                                        
-                                    return False
-                    return True
+                    # UP de un botón que suprimimos en DOWN → suprimir también
+                    if is_up and btn_name in suppressed_mouse_btns:
+                        suppressed_mouse_btns.discard(btn_name)
+                        return False
+
+                    if not is_down:
+                        return True
+
+                    # Buscar TODOS los combos registrados que usen este botón físico
+                    mouse_combos_for_btn = []
+                    for key_id, func in actions.items():
+                        combo = hk.get(key_id)
+                        if combo and is_mouse_combo(combo):
+                            check_btn = btn_name if btn_name in ['x1', 'x2'] else f"mouse_{btn_name}"
+                            if check_btn in combo.lower().split('+'):
+                                mouse_combos_for_btn.append((key_id, func, combo))
+                    
+                    if not mouse_combos_for_btn:
+                        return True  # Ningún combo usa este botón, dejar pasar
+
+                    # Marcar como suprimido y decidir acción en hilo aparte
+                    suppressed_mouse_btns.add(btn_name)
+                    
+                    # ¿Hay conflicto simple/complejo?
+                    has_complex = any(len(c[2].split('+')) > 1 for c in mouse_combos_for_btn)
+                    has_simple = any(len(c[2].split('+')) == 1 for c in mouse_combos_for_btn)
+                    
+                    # Capturar variables para el closure
+                    _btn = btn_name
+                    _combos = list(mouse_combos_for_btn)
+                    _needs_delay = has_complex and has_simple
+                    
+                    def _deferred_execute():
+                        import time
+                        if _needs_delay:
+                            time.sleep(0.06)  # 60ms para que los modificadores se asienten
+                        
+                        candidates = []
+                        for key_id, func, combo in _combos:
+                            if match_mouse_hotkey(combo, _btn):
+                                specificity = len(combo.split('+'))
+                                candidates.append((specificity, key_id, func, combo))
+                        
+                        if candidates:
+                            candidates.sort(key=lambda c: c[0], reverse=True)
+                            _, best_key_id, best_func, best_combo = candidates[0]
+                            print(f"[Hook] MATCH btn={_btn} -> action={best_key_id} combo={best_combo}")
+                            best_func()
+                        else:
+                            print(f"[Hook] No match para btn={_btn} tras espera")
+                    
+                    import threading
+                    threading.Thread(target=_deferred_execute, daemon=True).start()
+                    return False  # Suprimir el evento de Windows
 
 
                 def on_click(x, y, button, pressed):
                     if pressed:
-                        btn_name = button.name # 'left', 'right', 'x1', etc.
+                        btn_name = button.name
+                        candidates = []
                         for key_id, func in actions.items():
                             combo = hk.get(key_id)
                             if combo and is_mouse_combo(combo):
                                 if match_mouse_hotkey(combo, btn_name):
-                                    func()
+                                    specificity = len(combo.split('+'))
+                                    candidates.append((specificity, key_id, func))
+                        if candidates:
+                            candidates.sort(key=lambda c: c[0], reverse=True)
+                            _, _, best_func = candidates[0]
+                            best_func()
                     else: # RELEASE
                         # Cuando soltamos el clic izquierdo con Shift, dejamos que FancyZones haga su 
                         # encaje visual real. Luego, pasado un momento, actualizamos su grupo.
@@ -2210,9 +2304,10 @@ class DevLauncherApp(ctk.CTk):
             with self._cycle_lock:
                 try:
                     fg, key, stack = self._get_active_zone_context()
+                    print(f"[Cycle FWD] fg={fg} key={key} stack={stack}")
                     now = time.time()
                     if hasattr(self, '_last_cycle_time') and (now - self._last_cycle_time) < 0.5:
-                        if hasattr(self, '_last_cycle_hwnd') and self._last_cycle_hwnd in stack:
+                        if hasattr(self, '_last_cycle_hwnd') and stack and self._last_cycle_hwnd in stack:
                             fg = self._last_cycle_hwnd
 
                     if stack and len(stack) > 1:
@@ -2222,9 +2317,12 @@ class DevLauncherApp(ctk.CTk):
                         else:
                             next_idx = 0
                         target_hwnd = stack[next_idx]
+                        print(f"[Cycle FWD] Activando hwnd={target_hwnd}")
                         self._force_foreground(target_hwnd)
                         self._last_cycle_hwnd = target_hwnd
                         self._last_cycle_time = time.time()
+                    else:
+                        print(f"[Cycle FWD] Sin stack o stack de 1 elemento, nada que rotar.")
                 except Exception as e:
                     print(f"Error en ciclo forward: {e}")
         threading.Thread(target=task, daemon=True).start()
@@ -2236,9 +2334,10 @@ class DevLauncherApp(ctk.CTk):
             with self._cycle_lock:
                 try:
                     fg, key, stack = self._get_active_zone_context()
+                    print(f"[Cycle BWD] fg={fg} key={key} stack={stack}")
                     now = time.time()
                     if hasattr(self, '_last_cycle_time') and (now - self._last_cycle_time) < 0.5:
-                        if hasattr(self, '_last_cycle_hwnd') and self._last_cycle_hwnd in stack:
+                        if hasattr(self, '_last_cycle_hwnd') and stack and self._last_cycle_hwnd in stack:
                             fg = self._last_cycle_hwnd
 
                     if stack and len(stack) > 1:
@@ -2248,11 +2347,56 @@ class DevLauncherApp(ctk.CTk):
                         else:
                             next_idx = len(stack) - 1
                         target_hwnd = stack[next_idx]
+                        print(f"[Cycle BWD] Activando hwnd={target_hwnd}")
                         self._force_foreground(target_hwnd)
                         self._last_cycle_hwnd = target_hwnd
                         self._last_cycle_time = time.time()
+                    else:
+                        print(f"[Cycle BWD] Sin stack o stack de 1 elemento, nada que rotar.")
                 except Exception as e:
                     print(f"Error en ciclo backward: {e}")
+        threading.Thread(target=task, daemon=True).start()
+
+    def _cycle_desktop_forward(self):
+        import threading
+        def task():
+            if not WINDOWS_LIBS_AVAILABLE: return
+            try:
+                from pyvda import get_virtual_desktops, VirtualDesktop
+                desktops = get_virtual_desktops()
+                if not desktops: return
+                current = VirtualDesktop.current()
+                idx = -1
+                for i, d in enumerate(desktops):
+                    if d.id == current.id:
+                        idx = i
+                        break
+                if idx != -1:
+                    next_idx = (idx + 1) % len(desktops)
+                    desktops[next_idx].go()
+            except Exception as e:
+                print(f"Error ciclo escritorio fwd: {e}")
+        threading.Thread(target=task, daemon=True).start()
+        
+    def _cycle_desktop_backward(self):
+        import threading
+        def task():
+            if not WINDOWS_LIBS_AVAILABLE: return
+            try:
+                from pyvda import get_virtual_desktops, VirtualDesktop
+                desktops = get_virtual_desktops()
+                if not desktops: return
+                current = VirtualDesktop.current()
+                idx = -1
+                for i, d in enumerate(desktops):
+                    if d.id == current.id:
+                        idx = i
+                        break
+                if idx != -1:
+                    next_idx = (idx - 1) % len(desktops)
+                    desktops[next_idx].go()
+            except Exception as e:
+                print(f"Error ciclo escritorio bwd: {e}")
         threading.Thread(target=task, daemon=True).start()
             
     def _focus_zone_first(self):
