@@ -2007,13 +2007,29 @@ class DevLauncherApp(ctk.CTk):
                     parts = set(macro_str.lower().split('+'))
                     # Verificar si el botón está en la macro
                     if btn_str.lower() not in parts: return False
-                    # Verificar modificadores
+                    # Verificar modificadores requeridos
                     needs_ctrl = "ctrl" in parts
                     needs_alt = "alt" in parts
                     needs_shift = "shift" in parts
                     needs_win = "win" in parts or "cmd" in parts
-                    return (kb_state['ctrl'] == needs_ctrl and kb_state['alt'] == needs_alt and
-                            kb_state['shift'] == needs_shift and kb_state['win'] == needs_win)
+                    
+                    # Usar comprobación síncrona real del hardware (GetAsyncKeyState),
+                    # ya que el Thread del teclado de pynput puede ir milisegundos por detrás del del ratón.
+                    import win32api
+                    real_alt = (win32api.GetAsyncKeyState(0x12) & 0x8000) != 0
+                    real_ctrl = (win32api.GetAsyncKeyState(0x11) & 0x8000) != 0
+                    real_shift = (win32api.GetAsyncKeyState(0x10) & 0x8000) != 0
+                    real_win = (win32api.GetAsyncKeyState(0x5B) & 0x8000) != 0 or (win32api.GetAsyncKeyState(0x5C) & 0x8000) != 0
+
+                    # También verificamos kb_state como fallback por si acaso,
+                    # pero la verdad absoluta al instante de clikear nos la da el hardware directo
+                    is_alt = real_alt or kb_state['alt']
+                    is_ctrl = real_ctrl or kb_state['ctrl']
+                    is_shift = real_shift or kb_state['shift']
+                    is_win = real_win or kb_state['win']
+                    
+                    return (is_ctrl == needs_ctrl and is_alt == needs_alt and
+                            is_shift == needs_shift and is_win == needs_win)
 
                 suppressed_mouse_btns = set()
 
@@ -2066,7 +2082,10 @@ class DevLauncherApp(ctk.CTk):
                     else: # RELEASE
                         # Cuando soltamos el clic izquierdo con Shift, dejamos que FancyZones haga su 
                         # encaje visual real. Luego, pasado un momento, actualizamos su grupo.
-                        if getattr(button, 'name', '') == 'left' and kb_state.get('shift'):
+                        import win32api
+                        real_shift = (win32api.GetAsyncKeyState(0x10) & 0x8000) != 0
+                        is_shift_down = kb_state.get('shift') or real_shift
+                        if getattr(button, 'name', '') == 'left' and is_shift_down:
                             import threading
                             def _delayed_zone_update():
                                 import time, win32gui
