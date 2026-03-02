@@ -2015,6 +2015,8 @@ class DevLauncherApp(ctk.CTk):
                     return (kb_state['ctrl'] == needs_ctrl and kb_state['alt'] == needs_alt and
                             kb_state['shift'] == needs_shift and kb_state['win'] == needs_win)
 
+                suppressed_mouse_btns = set()
+
                 def win32_event_filter(msg, data):
                     is_down = msg in (0x0201, 0x0204, 0x0207, 0x020B)
                     is_up = msg in (0x0202, 0x0205, 0x0208, 0x020C)
@@ -2031,15 +2033,27 @@ class DevLauncherApp(ctk.CTk):
                         elif hiword == 2: btn_name = 'x2'
 
                     if btn_name:
+                        # Si suprimimos el clic de bajada (DOWN), estamos atados a suprimir también su soltada (UP)
+                        # aunque el usuario haya soltado las teclas modificadoras como ALT antes de soltar el botón.
+                        if is_up and btn_name in suppressed_mouse_btns:
+                            suppressed_mouse_btns.remove(btn_name)
+                            return False
+
                         for key_id, func in actions.items():
                             combo = hk.get(key_id)
                             if combo and is_mouse_combo(combo):
                                 if match_mouse_hotkey(combo, btn_name):
                                     if is_down:
+                                        suppressed_mouse_btns.add(btn_name)
                                         import threading
                                         threading.Thread(target=func, daemon=True).start()
+                                    elif is_up and btn_name in suppressed_mouse_btns:
+                                        # Fallback por si acaso retuvo los modos correctos hasta el final
+                                        suppressed_mouse_btns.remove(btn_name)
+                                        
                                     return False
                     return True
+
 
                 def on_click(x, y, button, pressed):
                     if pressed:
