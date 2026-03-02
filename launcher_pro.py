@@ -319,6 +319,46 @@ class AssignLayoutsDialog(ctk.CTkToplevel):
         
         ctk.CTkButton(btn_frame, text="Cancelar", fg_color="#555", command=self.destroy, width=100).pack(side="right", padx=(10, 0))
         ctk.CTkButton(btn_frame, text="Guardar en PowerToys", fg_color="#2CC985", hover_color="#24A36B", command=self.save, width=180).pack(side="right")
+        ctk.CTkButton(btn_frame, text="🔄 Recargar", fg_color="#007ACC", hover_color="#005A9E", command=self.refresh_data, width=120).pack(side="left")
+
+    def get_active_fz_monitors(self):
+        active_ids = []
+        if not WINDOWS_LIBS_AVAILABLE: return active_ids
+        try:
+            import win32api
+            i = 0
+            while True:
+                d = win32api.EnumDisplayDevices(None, i, 0)
+                if not d.DeviceName: break
+                if d.StateFlags & 1:
+                    m_i = 0
+                    while True:
+                        try:
+                            m = win32api.EnumDisplayDevices(d.DeviceName, m_i, 0)
+                            if not m.DeviceID: break
+                            parts = m.DeviceID.split("\\")
+                            if len(parts) > 1 and parts[0] == "MONITOR":
+                                active_ids.append(parts[1])
+                            m_i += 1
+                        except: break
+                i += 1
+        except Exception: pass
+        return active_ids
+
+    def refresh_data(self):
+        for w in self.scroll.winfo_children():
+            w.destroy()
+        self.combos_map.clear()
+        self.load_data()
+
+    def _create_row(self, item):
+        row = ctk.CTkFrame(self.scroll, fg_color="#333", corner_radius=5)
+        row.pack(fill="x", pady=4, padx=5)
+        lbl = ctk.CTkLabel(row, text=item["text"], anchor="w", font=("Roboto", 13))
+        lbl.pack(side="left", padx=10, fill="x", expand=True)
+        combo = ctk.CTkComboBox(row, values=item["opts"], variable=item["var"], width=180)
+        combo.pack(side="right", padx=10, pady=5)
+        self.combos_map.append((item["app_lay_ref"], item["var"]))
 
     def load_data(self):
         if not os.path.exists(self.applied_path):
@@ -331,54 +371,120 @@ class AssignLayoutsDialog(ctk.CTkToplevel):
                 
             layouts_list = self.applied_data.get("applied-layouts", [])
             
-            # Mapear GUIDs de escritorios visuales reales
             desk_names_map = {}
+            active_vd_guids = []
             if WINDOWS_LIBS_AVAILABLE:
                 try:
                     for i, d in enumerate(get_virtual_desktops()):
                         g = str(d.id).upper()
                         if not g.startswith("{"): g = "{" + g + "}"
                         desk_names_map[g] = d.name if d.name else f"Escritorio {i+1}"
+                        active_vd_guids.append(g)
                 except: pass
+
+            active_fz_mons = self.get_active_fz_monitors()
             
+            known_monitor_devices = {}
+            existing_combos = set()
+            for al in layouts_list:
+                dev = al.get("device", {})
+                mon_str = dev.get("monitor", "")
+                if mon_str:
+                    known_monitor_devices[mon_str] = {
+                        "monitor": mon_str,
+                        "monitor-instance": dev.get("monitor-instance", ""),
+                        "monitor-number": dev.get("monitor-number", 1),
+                        "serial-number": dev.get("serial-number", "0")
+                    }
+                vd_guid = dev.get("virtual-desktop", "").upper()
+                if not vd_guid.startswith("{"): vd_guid = "{" + vd_guid + "}"
+                existing_combos.add((mon_str, vd_guid))
+
+            for mon_id, dev_base in known_monitor_devices.items():
+                is_active_mon = (mon_id in active_fz_mons) or ("LOCALDISPLAY" in mon_id)
+                if is_active_mon:
+                    for g in active_vd_guids:
+                        if (mon_id, g) not in existing_combos:
+                            new_entry = {
+                                "device": {
+                                    "monitor": mon_id,
+                                    "monitor-instance": dev_base.get("monitor-instance", ""),
+                                    "monitor-number": dev_base.get("monitor-number", 1),
+                                    "serial-number": dev_base.get("serial-number", "0"),
+                                    "virtual-desktop": g
+                                },
+                                "applied-layout": {
+                                    "uuid": "{00000000-0000-0000-0000-000000000000}",
+                                    "type": "priority-grid",
+                                    "show-spacing": True,
+                                    "spacing": 16,
+                                    "zone-count": 0,
+                                    "sensitivity-radius": 20
+                                }
+                            }
+                            layouts_list.append(new_entry)
+                            existing_combos.add((mon_id, g))
+
+            active_ui = []
+            inactive_ui = []
+
             for al in layouts_list:
                 dev = al.get("device", {})
                 mon_str = dev.get("monitor", "Unk")
                 mon_num = dev.get("monitor-number", "?")
-                vd_guid = dev.get("virtual-desktop", "?")
+                vd_guid = dev.get("virtual-desktop", "?").upper()
+                if not vd_guid.startswith("{"): vd_guid = "{" + vd_guid + "}"
                 
-                # Limpiar texto del monitor para que sea legible
                 clean_mon = mon_str.replace("\\\\.\\", "").replace("DISPLAY", "Display ")
                 if clean_mon == mon_str and "LOCALDISPLAY" in mon_str: clean_mon = "Display Principal"
                 
-                # Intentar mapear el GUID del escritorio al real
-                vd_name = desk_names_map.get(vd_guid.upper())
-                if not vd_name: 
-                    # Fallback si por alguna rareza el GUID no está activo actualmente
-                    vd_name = f"Virtual D. ({vd_guid[:8]})"
+                vd_name = desk_names_map.get(vd_guid)
+                is_vd_active = bool(vd_name)
+                if not vd_name: vd_name = f"Virtual D. ({vd_guid[:8]})"
+                
+                is_mon_active = False
+                for am in active_fz_mons:
+                    if am in mon_str: is_mon_active = True
+                if "LOCALDISPLAY" in mon_str: is_mon_active = True
+
+                is_active = is_vd_active and is_mon_active
                 
                 app_lay = al.get("applied-layout", {})
                 curr_uuid = app_lay.get("uuid", "")
-                curr_name = self.uuid_to_name.get(curr_uuid, "Desconocido/Priority Grid")
+                curr_name = self.uuid_to_name.get(curr_uuid.upper(), self.uuid_to_name.get(curr_uuid, "Desconocido/Priority Grid"))
                 
-                row = ctk.CTkFrame(self.scroll, fg_color="#333", corner_radius=5)
-                row.pack(fill="x", pady=4, padx=5)
-                
-                lbl = ctk.CTkLabel(row, text=f"📺 {clean_mon}  |  🖥️ {vd_name}", anchor="w", font=("Roboto", 13))
-                lbl.pack(side="left", padx=10, fill="x", expand=True)
-
                 available_opts = list(self.name_to_uuid.keys())
                 if curr_name not in available_opts and curr_name != "Desconocido/Priority Grid":
                     available_opts.append(curr_name)
                     
                 var = ctk.StringVar(value=curr_name if curr_name in available_opts else (available_opts[0] if available_opts else ""))
-                combo = ctk.CTkComboBox(row, values=available_opts, variable=var, width=180)
-                combo.pack(side="right", padx=10, pady=5)
                 
-                # Guardamos la referencia para poder editar el dict después
-                self.combos_map.append((app_lay, var))
+                item_data = {
+                    "text": f"📺 Pantalla {mon_num} [{clean_mon}]  |  🖥️ {vd_name}",
+                    "var": var,
+                    "opts": available_opts,
+                    "app_lay_ref": app_lay
+                }
+                
+                if is_active: active_ui.append(item_data)
+                else: inactive_ui.append(item_data)
+
+            active_ui.sort(key=lambda x: x["text"])
+            inactive_ui.sort(key=lambda x: x["text"])
+
+            if active_ui:
+                ctk.CTkLabel(self.scroll, text="🟢 ACTIVOS (Conectados ahora)", font=("Roboto", 13, "bold"), text_color="#2CC985").pack(anchor="w", pady=(5, 2), padx=10)
+                for item in active_ui:
+                    self._create_row(item)
+            
+            if inactive_ui:
+                ctk.CTkLabel(self.scroll, text="⚪ INACTIVOS / HISTORIAL", font=("Roboto", 13, "bold"), text_color="#888888").pack(anchor="w", pady=(15, 2), padx=10)
+                for item in inactive_ui:
+                    self._create_row(item)
                 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             ctk.CTkLabel(self.scroll, text=f"Error leyendo config: {e}").pack(pady=20)
 
     def save(self):
@@ -2298,6 +2404,27 @@ class DevLauncherApp(ctk.CTk):
                     desk_guids = [d.id for d in desktops]
                 except: pass
                 
+            active_fz_mons = {}
+            if WINDOWS_LIBS_AVAILABLE:
+                try:
+                    i = 0
+                    while True:
+                        d = win32api.EnumDisplayDevices(None, i, 0)
+                        if not d.DeviceName: break
+                        if d.StateFlags & 1:
+                            m_i = 0
+                            while True:
+                                try:
+                                    m = win32api.EnumDisplayDevices(d.DeviceName, m_i, 0)
+                                    if not m.DeviceID: break
+                                    parts = m.DeviceID.split("\\")
+                                    if len(parts) > 1 and parts[0] == "MONITOR":
+                                        active_fz_mons[parts[1]] = d.DeviceName
+                                    m_i += 1
+                                except: break
+                        i += 1
+                except Exception: pass
+
             monitors_info = []
             try:
                 for idx, (hMonitor, _, pyRect) in enumerate(win32api.EnumDisplayMonitors()):
@@ -2306,7 +2433,8 @@ class DevLauncherApp(ctk.CTk):
                         "device": minfo.get("Device", f"\\\\.\\DISPLAY{idx+1}"),
                         "work_area": minfo.get("Work"),
                         "bounds": pyRect,
-                        "enum_idx": idx
+                        "enum_idx": idx,
+                        "is_primary": minfo.get("Flags", 0) == 1
                     })
             except: pass
 
@@ -2332,16 +2460,27 @@ class DevLauncherApp(ctk.CTk):
                     
                 m_dev = monitors_info[0]["device"] if monitors_info else "\\\\.\\DISPLAY1"
                 m_eidx = 0
-                if mon.startswith("Pantalla "):
+                
+                target_dev = None
+                if "[" in mon and "]" in mon:
+                    hw_id = mon.split("[")[1].split("]")[0]
+                    target_dev = active_fz_mons.get(hw_id)
+                    if not target_dev and hw_id.startswith("Display "):
+                        target_dev = "\\\\.\\DISPLAY" + hw_id.replace("Display ", "")
+                    elif not target_dev and hw_id == "Display Principal":
+                        prim = next((m for m in monitors_info if m.get("is_primary")), None)
+                        if prim: target_dev = prim["device"]
+
+                if target_dev:
+                    for mi in monitors_info:
+                        if mi["device"] == target_dev:
+                            m_dev = mi["device"]
+                            m_eidx = mi["enum_idx"]
+                            break
+                elif mon.startswith("Pantalla ") or mon.startswith("Monitor "):
                     try: 
-                        m_idx = int(mon.split(" ")[1]) - 1
-                        if 0 <= m_idx < len(monitors_info): 
-                            m_dev = monitors_info[m_idx]["device"]
-                            m_eidx = monitors_info[m_idx]["enum_idx"]
-                    except: pass
-                elif mon.startswith("Monitor "):
-                    try: 
-                        m_idx = int(mon.replace("Monitor ", "")) - 1
+                        num_str = mon.replace("Monitor ", "").replace("Pantalla ", "").split(" ")[0]
+                        m_idx = int(num_str) - 1
                         if 0 <= m_idx < len(monitors_info): 
                             m_dev = monitors_info[m_idx]["device"]
                             m_eidx = monitors_info[m_idx]["enum_idx"]
