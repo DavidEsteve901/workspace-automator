@@ -2583,7 +2583,7 @@ class DevLauncherApp(ctk.CTk):
                         cl, ct, cr, cb = cur_rect
                         # Si la ventana se ha movido significativamente de su posición correcta
                         if abs(cl - z_l) > 50 or abs(ct - z_t) > 50 or abs((cr-cl) - z_w) > 50 or abs((cb-ct) - z_h) > 50:
-                            win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, z_l, z_t, z_w, z_h, win32con.SWP_SHOWWINDOW)
+                            self._apply_zone_rect_with_shadow_compensation(hwnd, z_l, z_t, z_w, z_h)
                             print(f"[Repaso] Reposicionada hwnd={hwnd} en zona {z_idx_key}")
                     except: pass
             print("[Repaso] Posiciones verificadas ✓")
@@ -2751,6 +2751,38 @@ class DevLauncherApp(ctk.CTk):
                 return (x, y, w, h)
         return None
 
+    def _apply_zone_rect_with_shadow_compensation(self, hwnd, z_l, z_t, z_w, z_h):
+        import win32gui, win32con, ctypes
+        from ctypes.wintypes import RECT
+
+        try:
+            rect = win32gui.GetWindowRect(hwnd)
+            logical_l, logical_t, logical_r, logical_b = rect
+
+            DWMWA_EXTENDED_FRAME_BOUNDS = 9
+            visual_rect = RECT()
+            if ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(visual_rect), ctypes.sizeof(visual_rect)) == 0:
+                visual_l, visual_t = visual_rect.left, visual_rect.top
+                visual_r, visual_b = visual_rect.right, visual_rect.bottom
+                
+                offset_l = visual_l - logical_l
+                offset_t = visual_t - logical_t
+                offset_r = logical_r - visual_r
+                offset_b = logical_b - visual_b
+
+                new_l = z_l - offset_l
+                new_t = z_t - offset_t
+                new_w = z_w + offset_l + offset_r
+                new_h = z_h + offset_t + offset_b
+
+                win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, new_l, new_t, new_w, new_h, win32con.SWP_SHOWWINDOW)
+                return True
+        except Exception as e:
+            pass
+
+        win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, z_l, z_t, z_w, z_h, win32con.SWP_SHOWWINDOW)
+        return False
+
     def _launch_and_snap_intent(self, intent, monitors_info):
         import win32gui, win32con, os, subprocess, time, shutil, webbrowser, urllib.parse
         t = intent.get('type')
@@ -2897,8 +2929,8 @@ class DevLauncherApp(ctk.CTk):
         
         if rect:
             z_l, z_t, z_w, z_h = rect
-            # Snapshot Matemático Directo: Eliminadas compensaciones fantasma
-            win32gui.SetWindowPos(matched_hwnd, win32con.HWND_TOP, z_l, z_t, z_w, z_h, win32con.SWP_SHOWWINDOW)
+            # Snapshot Matemático Directo: con compensación de bordes invisibles DWM
+            self._apply_zone_rect_with_shadow_compensation(matched_hwnd, z_l, z_t, z_w, z_h)
             
             # Custom Runtime Engine: Registrar ventana internamente en su zona en lugar de usar FancyZones
             z_key = self._get_zone_key(intent["_d_guid"], intent["_m_dev"], intent["_l_uuid"], intent["_z_idx"])
