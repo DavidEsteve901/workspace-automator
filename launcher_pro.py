@@ -2082,13 +2082,14 @@ class DevLauncherApp(ctk.CTk):
                                     if target_key:
                                         # Buscar grupo EXISTENTE que coincida en MONITOR + ZONA
                                         # El layout UUID puede diferir entre config de usuario y applied-layouts de FZ
+                                        detected_desktop = target_key[0] # virtual desktop
                                         detected_device = target_key[1]  # monitor device
                                         detected_z_idx = target_key[3]   # zone index
                                         
-                                        # Buscar grupo existente en el mismo monitor y misma zona
+                                        # Buscar grupo existente en el mismo escritorio, monitor y misma zona
                                         existing_key = None
                                         for k in self.zone_stacks:
-                                            if len(k) >= 4 and k[1] == detected_device and k[3] == detected_z_idx:
+                                            if len(k) >= 4 and k[0] == detected_desktop and k[1] == detected_device and k[3] == detected_z_idx:
                                                 existing_key = k
                                                 break
                                         
@@ -2414,6 +2415,7 @@ class DevLauncherApp(ctk.CTk):
             desk_guids = []
             if WINDOWS_LIBS_AVAILABLE:
                 try:
+                    from pyvda import get_virtual_desktops, VirtualDesktop
                     desktops = get_virtual_desktops()
                     desk_guids = [d.id for d in desktops]
                 except: pass
@@ -2533,6 +2535,7 @@ class DevLauncherApp(ctk.CTk):
             for dguid in groups:
                 if dguid and dguid != "00000000-0000-0000-0000-000000000000" and WINDOWS_LIBS_AVAILABLE:
                     try:
+                        from pyvda import get_virtual_desktops, VirtualDesktop
                         target_d = next((d for d in get_virtual_desktops() if str(d.id).strip("{}").lower() == dguid), None)
                         if target_d:
                             target_d.go()
@@ -2630,6 +2633,27 @@ class DevLauncherApp(ctk.CTk):
         wcx, wcy = wl + (wr - wl)//2, wt + (wb - wt)//2
         ww, wh = wr - wl, wb - wt
         
+        active_fz_mons = {}
+        if WINDOWS_LIBS_AVAILABLE:
+            try:
+                i = 0
+                while True:
+                    d = win32api.EnumDisplayDevices(None, i, 0)
+                    if not d.DeviceName: break
+                    if d.StateFlags & 1:
+                        m_i = 0
+                        while True:
+                            try:
+                                m = win32api.EnumDisplayDevices(d.DeviceName, m_i, 0)
+                                if not m.DeviceID: break
+                                parts = m.DeviceID.split("\\")
+                                if len(parts) > 1 and parts[0] == "MONITOR":
+                                    active_fz_mons[parts[1]] = d.DeviceName
+                                m_i += 1
+                            except: break
+                    i += 1
+            except Exception: pass
+            
         monitors_info = []
         try:
             for idx, (hMonitor, _, pyRect) in enumerate(win32api.EnumDisplayMonitors()):
@@ -2647,8 +2671,10 @@ class DevLauncherApp(ctk.CTk):
 
         # 3. Emparejar con zonas comparando el centro de la ventana
         for entry in applied_list:
-            # Normalizar el virtual-desktop-id del entry para comparar
-            e_d_guid = _norm_id(entry.get("virtual-desktop-id", ""))
+            # Normalizar el virtual-desktop del entry para comparar
+            dev = entry.get("device", {})
+            e_d_guid = _norm_id(dev.get("virtual-desktop", ""))
+            
             if e_d_guid != "00000000-0000-0000-0000-000000000000" and e_d_guid != _norm_id(d_guid):
                 continue
             
@@ -2669,7 +2695,14 @@ class DevLauncherApp(ctk.CTk):
             else:
                 num_zones = len(layout_data.get("zones", []))
 
+            entry_target_dev_id = dev.get("monitor", "")
+            target_device = active_fz_mons.get(entry_target_dev_id)
+            if not target_device and entry_target_dev_id.startswith("Display "):
+                target_device = "\\\\.\\DISPLAY" + entry_target_dev_id.replace("Display ", "")
+                
             for mi in monitors_info:
+                if target_device and mi['device'].lower() != target_device.lower():
+                    continue
                 for z_idx in range(num_zones):
                     z_rect = self._calculate_zone_rect(layout_data, z_idx, mi['work_area'])
                     if z_rect:
