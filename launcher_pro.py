@@ -1287,10 +1287,17 @@ class HotkeysEditorDialog(ctk.CTkToplevel):
                        fg_color="#555", progress_color="#2CC985").pack(anchor="w")
         
         sw_row2 = ctk.CTkFrame(toggle_frame, fg_color="transparent")
-        sw_row2.pack(fill="x", padx=10, pady=(2, 8))
+        sw_row2.pack(fill="x", padx=10, pady=2)
         self.desktop_cycle_var = ctk.BooleanVar(value=parent.hotkeys_data.get("_desktop_cycle_enabled", True))
         ctk.CTkSwitch(sw_row2, text="Cambio de escritorios virtuales", 
                        variable=self.desktop_cycle_var, onvalue=True, offvalue=False,
+                       fg_color="#555", progress_color="#2CC985").pack(anchor="w")
+
+        sw_row3 = ctk.CTkFrame(toggle_frame, fg_color="transparent")
+        sw_row3.pack(fill="x", padx=10, pady=(2, 8))
+        self.pip_watcher_var = ctk.BooleanVar(value=parent._pip_watcher_active)
+        ctk.CTkSwitch(sw_row3, text="Auto-anclar PiP (ventana flotante) en todos los escritorios", 
+                       variable=self.pip_watcher_var, onvalue=True, offvalue=False,
                        fg_color="#555", progress_color="#2CC985").pack(anchor="w")
         
         self.scroll = ctk.CTkScrollableFrame(self, fg_color="#2B2B2B")
@@ -1327,9 +1334,17 @@ class HotkeysEditorDialog(ctk.CTkToplevel):
             self.parent_app.hotkeys_data[k] = v.get()
         self.parent_app.hotkeys_data["_zone_cycle_enabled"] = self.zone_cycle_var.get()
         self.parent_app.hotkeys_data["_desktop_cycle_enabled"] = self.desktop_cycle_var.get()
+        
+        # PiP Watcher: activar/desactivar según el switch
+        pip_desired = self.pip_watcher_var.get()
+        if pip_desired and not self.parent_app._pip_watcher_active:
+            self.parent_app._start_pip_watcher()
+        elif not pip_desired and self.parent_app._pip_watcher_active:
+            self.parent_app._stop_pip_watcher()
+        
         self.parent_app._save_data()
         
-        messagebox.showinfo("Guardado", "Atajos guardados. Por favor, reinicia el Launcher para que apliquen los nuevos Pynput Listeners.")
+        messagebox.showinfo("Guardado", "Configuración guardada ✅")
         self.destroy()
 
 class RecordHotkeyDialog(ctk.CTkToplevel):
@@ -1499,6 +1514,12 @@ class DevLauncherApp(ctk.CTk):
         self._start_global_hotkeys()
         # ----------------------------------------------------
 
+        # --- PiP WATCHER (Anclar ventana flotante a todos los escritorios) ---
+        self._pip_watcher_active = False
+        self._pip_watcher_thread = None
+        self._pip_pinned_hwnds = set()  # HWNDs ya anclados para no repetir
+        # -------------------------------------------------------------------
+
         self._load_data()
         self.load_fancyzones_layouts()
 
@@ -1588,6 +1609,11 @@ class DevLauncherApp(ctk.CTk):
                     self.current_category = self.last_saved_category
                     self.applied_mappings = data.get("applied_mappings", {})
                     
+                    # Restaurar estado del PiP watcher
+                    pip_enabled = data.get("pip_watcher_enabled", False)
+                    if pip_enabled:
+                        self.after(500, self._start_pip_watcher)
+                    
                     # Cargar Hotkeys: mezclar defaults con lo guardado para no perder nuevas claves
                     default_hotkeys = {
                         "cycle_forward": "ctrl+alt+pagedown",
@@ -1615,7 +1641,8 @@ class DevLauncherApp(ctk.CTk):
                 "apps": self.apps_data,
                 "last_category": self.current_category,
                 "applied_mappings": self.applied_mappings,
-                "hotkeys": getattr(self, "hotkeys_data", {})
+                "hotkeys": getattr(self, "hotkeys_data", {}),
+                "pip_watcher_enabled": self._pip_watcher_active
             }
             with open(self.db_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
@@ -2159,10 +2186,11 @@ class DevLauncherApp(ctk.CTk):
                         if candidates:
                             candidates.sort(key=lambda c: c[0], reverse=True)
                             _, best_key_id, best_func, best_combo = candidates[0]
-                            print(f"[Hook] MATCH btn={_btn} -> action={best_key_id} combo={best_combo}")
+                            # print(f"[Hook] MATCH btn={_btn} -> action={best_key_id} combo={best_combo}")
                             best_func()
                         else:
-                            print(f"[Hook] No match para btn={_btn} tras espera")
+                            # print(f"[Hook] No match para btn={_btn} tras espera")
+                            pass
                     
                     import threading
                     threading.Thread(target=_deferred_execute, daemon=True).start()
@@ -3152,6 +3180,91 @@ class DevLauncherApp(ctk.CTk):
             # Fallback a centrado si no hay layout (o error FZ)
             cen_x, cen_y = l + (r-l)//2, t_y + (b-t_y)//2
             win32gui.SetWindowPos(matched_hwnd, win32con.HWND_TOP, cen_x - 400, cen_y - 300, 800, 600, win32con.SWP_SHOWWINDOW)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    #  PiP WATCHER – Anclar ventanas flotantes de vídeo a todos los escritorios
+    # ─────────────────────────────────────────────────────────────────────────
+    PIP_WINDOW_TITLES = (
+        "imagen con imagen incrustada",   # Edge (español)
+        "imagen en imagen",               # Chrome (español)
+        "picture in picture",             # Chrome/Edge (inglés)
+        "picture-in-picture",             # Variante con guión
+    )
+
+    def _start_pip_watcher(self):
+        """Inicia el hilo en segundo plano que monitoriza ventanas PiP."""
+        if self._pip_watcher_active:
+            return  # Ya está corriendo
+        self._pip_watcher_active = True
+        self._pip_pinned_hwnds = set()
+        self._pip_watcher_thread = threading.Thread(
+            target=self._pip_watcher_loop, daemon=True
+        )
+        self._pip_watcher_thread.start()
+        print("[PiP Watcher] Iniciado")
+
+    def _stop_pip_watcher(self):
+        """Detiene el hilo del watcher PiP."""
+        self._pip_watcher_active = False
+        self._pip_pinned_hwnds.clear()
+        print("[PiP Watcher] Detenido")
+
+    def _pip_watcher_loop(self):
+        """Loop que comprueba cada segundo si hay nuevas ventanas PiP."""
+        while self._pip_watcher_active:
+            try:
+                self._pip_scan_and_pin()
+            except Exception as e:
+                print(f"[PiP Watcher] Error en escaneo: {e}")
+            time.sleep(1)
+
+    def _pip_scan_and_pin(self):
+        """Escanea las ventanas visibles buscando títulos PiP y las ancla."""
+        if not WINDOWS_LIBS_AVAILABLE:
+            return
+
+        pip_hwnds = []
+
+        def _enum_pip(hwnd, _):
+            """Callback de EnumWindows: recopila HWNDs de ventanas PiP."""
+            if hwnd in self._pip_pinned_hwnds:
+                return True  # Ya fue anclada, saltar
+            try:
+                if not win32gui.IsWindowVisible(hwnd):
+                    return True
+                title = win32gui.GetWindowText(hwnd)
+                if not title:
+                    return True
+                title_lower = title.strip().lower()
+                for pip_title in self.PIP_WINDOW_TITLES:
+                    if pip_title in title_lower:
+                        pip_hwnds.append(hwnd)
+                        return True
+            except Exception:
+                pass
+            return True
+
+        win32gui.EnumWindows(_enum_pip, None)
+
+        for hwnd in pip_hwnds:
+            try:
+                # Comprobar que la ventana sigue válida
+                if not win32gui.IsWindow(hwnd):
+                    continue
+                from pyvda import AppView
+                view = AppView(hwnd)
+                view.pin()
+                self._pip_pinned_hwnds.add(hwnd)
+                title = win32gui.GetWindowText(hwnd)
+                print(f"[PiP Watcher] 📌 Ventana anclada: '{title}' (HWND={hwnd})")
+            except Exception as e:
+                print(f"[PiP Watcher] Error anclando HWND={hwnd}: {e}")
+
+        # Limpiar HWNDs de ventanas que ya no existen
+        stale = {h for h in self._pip_pinned_hwnds if not win32gui.IsWindow(h)}
+        if stale:
+            self._pip_pinned_hwnds -= stale
+
 
 if __name__ == "__main__":
     app = DevLauncherApp()
