@@ -293,6 +293,9 @@ class AssignLayoutsDialog(ctk.CTkToplevel):
         self.grab_set()
 
         self.parent_app = parent
+        if hasattr(parent, "load_fancyzones_layouts"):
+            parent.load_fancyzones_layouts()
+            
         self.applied_path = os.path.join(parent.fancyzones_path, "applied-layouts.json")
         self.applied_data = None
         self.combos_map = []  # Lista de tuplas (diccionario_referencia, variable_tkinter)
@@ -346,6 +349,8 @@ class AssignLayoutsDialog(ctk.CTkToplevel):
         return active_ids
 
     def refresh_data(self):
+        if hasattr(self.parent_app, "load_fancyzones_layouts"):
+            self.parent_app.load_fancyzones_layouts()
         for w in self.scroll.winfo_children():
             w.destroy()
         self.combos_map.clear()
@@ -514,6 +519,11 @@ class AdvancedItemDialog(ctk.CTkToplevel):
         self.parent_app = parent
         self.item_type = item_type
         self.item_data = item_data or {}
+        
+        # -- Refrescar layouts para mantener los datos actualizados --
+        if hasattr(parent, "load_fancyzones_layouts"):
+            parent.load_fancyzones_layouts()
+
         
         if self.item_type in ["powershell", "url"]:
             self.geometry("850x550")
