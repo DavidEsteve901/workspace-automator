@@ -1649,6 +1649,137 @@ class RecordHotkeyDialog(ctk.CTkToplevel):
         self._stop_listening = True
         self.destroy()
 
+class RecoverySelectionDialog(ctk.CTkToplevel):
+    def __init__(self, parent, unmatched_intents, on_confirm_callback):
+        super().__init__(parent)
+        self.title("Revisar Recuperación de Entorno")
+        self.geometry("800x650")
+        self.minsize(700, 500)
+        self.transient(parent)
+        self.grab_set()
+
+        self.on_confirm_callback = on_confirm_callback
+        self.intents_data = unmatched_intents
+        
+        self.checkbox_vars = {}
+
+        self.lbl_title = ctk.CTkLabel(self, text="Ventanas detectadas para recuperar. Puedes elegir cuáles no procesar\ny también REABRIR aquellas app que hayas cerrado sin querer:", font=("Roboto", 14, "bold"))
+        self.lbl_title.pack(pady=(15, 5), padx=20, anchor="w")
+
+        self.scroll_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.scroll_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+        import win32gui
+        
+        groups = {}
+        for intent in self.intents_data:
+            hwnds = intent.get("_matched_hwnds", [])
+            z_name = intent.get("fancyzone", "Sin Zona Asignada")
+            
+            if z_name not in groups:
+                groups[z_name] = []
+                
+            has_strong_match = any(score >= 8 for h, score in hwnds) if hwnds else False
+            
+            if not has_strong_match:
+                # App is missing completely, or only has generic matches
+                import os
+                p = intent.get('path', '')
+                c = intent.get('cmd', '')
+                name = os.path.basename(p) if p else (c[:30] + '...' if c else 'App')
+                groups[z_name].append({
+                    "id": id(intent),
+                    "title": f"⚠️ [Cerrada] Reabrir: {name} ({intent.get('type', 'app')})",
+                    "intent": intent,
+                    "is_missing": True,
+                    "is_weak": False
+                })
+            
+            for hwnd, score in hwnds:
+                try: 
+                    t = win32gui.GetWindowText(hwnd)
+                    if not t: t = f"Ventana Desconocida (HWND: {hwnd})"
+                    
+                    import win32process, os, psutil
+                    try:
+                        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                        p_name = psutil.Process(pid).name().lower()
+                    except: p_name = "desconocido"
+                except: 
+                    t = f"Ventana Desconocida (HWND: {hwnd})"
+                    p_name = "desconocido"
+                
+                is_weak = score < 8
+                title_display = f"[{p_name}] {t}" if is_weak else t
+                if is_weak:
+                    title_display = f"🔍 {title_display}"
+                
+                groups[z_name].append({
+                    "id": hwnd,
+                    "title": title_display,
+                    "intent": intent,
+                    "is_missing": False,
+                    "is_weak": is_weak
+                })
+
+        if not groups:
+            ctk.CTkLabel(self.scroll_frame, text="No se encontraron aplicaciones configuradas.", font=("Roboto", 12, "italic"), text_color="gray").pack(pady=20)
+        else:
+            for g_name, items in groups.items():
+                g_frame = ctk.CTkFrame(self.scroll_frame, fg_color="#2B2B2B", corner_radius=8)
+                g_frame.pack(fill="x", pady=5, padx=5)
+                
+                ctk.CTkLabel(g_frame, text=g_name, font=("Roboto", 13, "bold"), text_color="#4da6ff").pack(anchor="w", padx=10, pady=(10, 5))
+                
+                for item in items:
+                    ident = item["id"]
+                    is_missing = item["is_missing"]
+                    is_weak = item.get("is_weak", False)
+                    
+                    # Por defecto marcamos las exactas, desmarcamos las genéricas y las desaparecidas
+                    default_check = not is_missing and not is_weak
+                    var = tk.BooleanVar(value=default_check) 
+                    
+                    self.checkbox_vars[ident] = (var, item["intent"], is_missing)
+                    
+                    color = "white"
+                    if is_missing: color = "#ffb366"
+                    elif is_weak: color = "#a6a6a6"
+                    
+                    cb = ctk.CTkCheckBox(g_frame, text=item["title"], variable=var, font=("Roboto", 12), text_color=color)
+                    cb.pack(anchor="w", padx=20, pady=2)
+                
+                ctk.CTkLabel(g_frame, text="", height=5).pack()
+
+        self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.btn_frame.pack(fill="x", padx=20, pady=15)
+        
+        self.btn_cancel = ctk.CTkButton(self.btn_frame, text="Cancelar", fg_color="#444444", hover_color="#333333", command=self.destroy, width=120)
+        self.btn_cancel.pack(side="left")
+        
+        self.btn_confirm = ctk.CTkButton(self.btn_frame, text="Confirmar Recuperación", fg_color="#2CC985", hover_color="#24A36B", command=self.confirm, width=180)
+        self.btn_confirm.pack(side="right")
+
+    def confirm(self):
+        approved_hwnds = set()
+        to_relaunch = []
+        
+        for ident, (var, intent, is_missing) in self.checkbox_vars.items():
+            if var.get():
+                if is_missing:
+                    to_relaunch.append(intent)
+                else:
+                    approved_hwnds.add(ident)
+        
+        for intent in self.intents_data:
+            if "_matched_hwnds" in intent:
+                intent["_matched_hwnds"] = [h for h, score in intent["_matched_hwnds"] if h in approved_hwnds]
+            if intent in to_relaunch:
+                intent["_relaunch"] = True
+                
+        self.on_confirm_callback(self.intents_data)
+        self.destroy()
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  APP PRINCIPAL
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3136,70 +3267,199 @@ class DevLauncherApp(ctk.CTk):
             self.zone_stacks[k] = [h for h in self.zone_stacks[k] if win32gui.IsWindow(h)]
 
     def recover_workspace(self):
-        import win32gui, win32process, threading, os
+        import win32gui, win32process, win32api, win32con, copy, threading, os
         
         # Load layouts directly before detecting anything
         self.load_fancyzones_layouts()
         self.btn_recover.configure(state="disabled")
         
         items_to_launch = self.apps_data.get(self.current_category, [])
-        valid_paths = set()
-        valid_kws = set()
-        for item in items_to_launch:
-            path = str(item.get("path", "")).lower()
-            t = item.get("type", "exe")
-            c = str(item.get('cmd', '')).lower()
+        if not items_to_launch:
+            self.btn_recover.configure(state="normal")
+            return
             
-            def _extract_domain_kw(url_str):
-                d = url_str.replace("https://", "").replace("http://", "").split("/")[0]
-                d = d.replace("www.", "")
-                return d.split(".")[0] if "." in d else d
+        def _extract_domain_kw(url_str):
+            d = url_str.replace("https://", "").replace("http://", "").split("/")[0]
+            d = d.replace("www.", "")
+            return d.split(".")[0] if "." in d else d
 
-            if path:
-                valid_paths.add(os.path.normpath(path).lower())
-                base = os.path.basename(path).lower()
-                if t in ['vscode', 'ide']:
-                    valid_kws.add(base)
-                elif t == 'obsidian':
-                    valid_kws.add(base)
-                    valid_kws.add("obsidian")
-                elif t == 'powershell':
-                    valid_kws.add(base)
-                    valid_kws.add("terminal")
-                    valid_kws.add("powershell")
-                elif t == 'url':
-                    try:
-                        valid_kws.add(_extract_domain_kw(path))
-                    except: pass
-                elif t in ['exe', 'app'] or not t:
-                    valid_kws.add(base.replace(".exe", ""))
-            
-            # Extract URLs from cmd if any
-            if c:
-                for chunk in c.split(TAB_SEPARATOR.lower()):
-                    c_clean = chunk.strip()
-                    if c_clean:
-                        if c_clean.startswith("http"):
-                            try:
-                                valid_kws.add(_extract_domain_kw(c_clean))
-                            except: pass
-                        else:
-                            valid_paths.add(c_clean)
-            
-            if t == 'url':
-                b_cmd = item.get('browser', '').lower()
-                if b_cmd and b_cmd != 'default':
-                    b_exe = os.path.basename(b_cmd).replace(".exe", "")
-                    valid_kws.add(b_exe)
-                else:
-                    valid_kws.update(["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"])
-                            
-        valid_kws = {k for k in valid_kws if len(k) > 2}
-        print(f"\n[Recover] Iniciando. Buscando estas rutinas {valid_paths}")
-        print(f"[Recover] Buscando estas Palabras Clave: {valid_kws}\n")
-        
         def _task():
             try:
+                # 1. Recopilar estado real (Monitores, Escritorios)
+                desk_guids = []
+                if WINDOWS_LIBS_AVAILABLE:
+                    try:
+                        from pyvda import get_virtual_desktops, VirtualDesktop
+                        desktops = get_virtual_desktops()
+                        desk_guids = [d.id for d in desktops]
+                    except: pass
+                    
+                active_fz_mons = {}
+                if WINDOWS_LIBS_AVAILABLE:
+                    try:
+                        i = 0
+                        while True:
+                            d = win32api.EnumDisplayDevices(None, i, 0)
+                            if not d.DeviceName: break
+                            if d.StateFlags & 1:
+                                m_i = 0
+                                while True:
+                                    try:
+                                        m = win32api.EnumDisplayDevices(d.DeviceName, m_i, 0)
+                                        if not m.DeviceID: break
+                                        parts = m.DeviceID.split("\\")
+                                        if len(parts) > 1 and parts[0] == "MONITOR":
+                                            active_fz_mons[parts[1]] = d.DeviceName
+                                        m_i += 1
+                                    except: break
+                            i += 1
+                    except Exception: pass
+
+                monitors_info = []
+                try:
+                    for idx, (hMonitor, _, pyRect) in enumerate(win32api.EnumDisplayMonitors()):
+                        minfo = win32api.GetMonitorInfo(hMonitor)
+                        monitors_info.append({
+                            "device": minfo.get("Device", f"\\\\.\\DISPLAY{idx+1}"),
+                            "work_area": minfo.get("Work"),
+                            "bounds": pyRect,
+                            "enum_idx": idx,
+                            "is_primary": minfo.get("Flags", 0) == 1
+                        })
+                except: pass
+
+                def _norm(gid):
+                    if not gid: return "00000000-0000-0000-0000-000000000000"
+                    return str(gid).strip("{}").lower()
+
+                # 2. Generar intents precalculados (igual que al lanzar, pero sin ejecutar proc)
+                unmatched_intents = []
+                for item in items_to_launch:
+                    desktop = item.get('desktop', 'Por defecto')
+                    mon = item.get('monitor', 'Por defecto')
+                    
+                    d_guid = None
+                    if desktop.startswith("Escritorio "):
+                        try: 
+                            d_idx = int(desktop.split(" ")[1]) - 1
+                            if 0 <= d_idx < len(desk_guids): d_guid = desk_guids[d_idx]
+                        except: pass
+                    
+                    if d_guid is None:
+                        try:
+                            from pyvda import VirtualDesktop
+                            d_guid = VirtualDesktop.current().id
+                        except: pass
+                        
+                    m_dev = monitors_info[0]["device"] if monitors_info else "\\\\.\\DISPLAY1"
+                    m_eidx = 0
+                    
+                    target_dev = None
+                    if "[" in mon and "]" in mon:
+                        hw_id = mon.split("[")[1].split("]")[0]
+                        target_dev = active_fz_mons.get(hw_id)
+                        if not target_dev and hw_id.startswith("Display "):
+                            target_dev = "\\\\.\\DISPLAY" + hw_id.replace("Display ", "")
+                        elif not target_dev and hw_id == "Display Principal":
+                            prim = next((m for m in monitors_info if m.get("is_primary")), None)
+                            if prim: target_dev = prim["device"]
+
+                    if target_dev:
+                        for mi in monitors_info:
+                            if mi["device"] == target_dev:
+                                m_dev = mi["device"]
+                                m_eidx = mi["enum_idx"]
+                                break
+                    elif mon.startswith("Pantalla ") or mon.startswith("Monitor "):
+                        try: 
+                            num_str = mon.replace("Monitor ", "").replace("Pantalla ", "").split(" ")[0]
+                            m_idx = int(num_str) - 1
+                            if 0 <= m_idx < len(monitors_info): 
+                                m_dev = monitors_info[m_idx]["device"]
+                                m_eidx = monitors_info[m_idx]["enum_idx"]
+                        except: pass
+                        
+                    layout_uuid = None
+                    zone_idx = 0
+                    zone_name = item.get('fancyzone', 'Ninguna')
+                    if zone_name != 'Ninguna':
+                        parts = zone_name.rsplit(" - Zona ", 1)
+                        if len(parts) == 2:
+                            lname = parts[0]
+                            try: zone_idx = int(parts[1].split()[0]) - 1
+                            except: pass
+                            
+                            li = self.available_layouts.get(lname)
+                            if li: layout_uuid = li.get("uuid")
+
+                    intent = copy.deepcopy(item)
+                    intent["_d_guid"] = _norm(d_guid)
+                    intent["_m_dev"] = str(m_dev).lower()
+                    intent["_m_eidx"] = m_eidx
+                    intent["_l_uuid"] = _norm(layout_uuid)
+                    intent["_z_idx"] = zone_idx
+                    
+                    # Generar matchers de búsqueda ponderados
+                    v_paths = set()
+                    s_kws = set()
+                    w_kws = set()
+                    
+                    path = str(item.get("path", "")).lower()
+                    t = item.get("type", "exe")
+                    c = str(item.get('cmd', '')).lower()
+                    
+                    if path:
+                        v_paths.add(os.path.normpath(path).lower())
+                        base = os.path.basename(path).lower()
+                        if t in ['vscode', 'ide']: 
+                            s_kws.add(base)
+                        elif t == 'obsidian':
+                            s_kws.add(base)
+                            w_kws.add("obsidian")
+                        elif t == 'powershell':
+                            s_kws.add(base)
+                            w_kws.update(["terminal", "powershell", "cmd.exe"])
+                        elif t == 'url':
+                            try: s_kws.add(_extract_domain_kw(path))
+                            except: pass
+                        elif t in ['exe', 'app'] or not t:
+                            s_kws.add(base.replace(".exe", ""))
+                            
+                    if c:
+                        for chunk in c.split(TAB_SEPARATOR.lower()):
+                            c_clean = chunk.strip()
+                            if c_clean:
+                                if c_clean.startswith("http"):
+                                    try: s_kws.add(_extract_domain_kw(c_clean))
+                                    except: pass
+                                else:
+                                    v_paths.add(c_clean)
+                                    
+                    if t == 'url':
+                        b_cmd = item.get('browser', '').lower()
+                        if b_cmd and b_cmd != 'default':
+                            w_kws.add(os.path.basename(b_cmd).replace(".exe", ""))
+                        else:
+                            w_kws.update(["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"])
+                            
+                    intent["_match_paths"] = {p for p in v_paths if len(p) > 2}
+                    intent["_strong_kws"] = {k for k in s_kws if len(k) > 2}
+                    intent["_weak_kws"] = {k for k in w_kws if len(k) > 2}
+                    
+                    target_proc = ""
+                    if t in ['vscode', 'ide']:
+                        if t == 'vscode': target_proc = "code"
+                        elif t == 'ide': 
+                            ide_cmd = item.get('ide_cmd', '').lower()
+                            if ide_cmd: target_proc = os.path.basename(ide_cmd).replace(".exe", "")
+                    intent["_target_proc"] = target_proc
+                    
+                    intent["_matched_hwnds"] = []
+                    
+                    unmatched_intents.append(intent)
+
+                print(f"\n[Recover] Iniciando. {len(unmatched_intents)} intents configurados.\n")
+                
                 self.zone_stacks.clear()
                 
                 def _get_process_path(hwnd):
@@ -3213,64 +3473,183 @@ class DevLauncherApp(ctk.CTk):
                     if not win32gui.IsWindowVisible(hwnd): return
                     if not win32gui.GetWindowText(hwnd): return
                     
-                    # We might skip typical overlay windows or taskbar
                     cls_name = win32gui.GetClassName(hwnd)
                     if cls_name in ["Progman", "Shell_TrayWnd", "Windows.UI.Core.CoreWindow"]: return
                     
-                    # Filter by configured paths
-                    process_path = _get_process_path(hwnd)
+                    p_path = _get_process_path(hwnd)
+                    p_name = os.path.basename(p_path).lower()
                     win_title = win32gui.GetWindowText(hwnd).lower()
+                    is_explorer = (cls_name == "CabinetWClass" or "explorer.exe" in p_name)
                     
-                    is_valid = False
-                    match_reason = ""
-                    for vp in valid_paths:
-                        if vp in process_path or vp in win_title:   
-                            is_valid = True
-                            match_reason = f"Ruta ({vp})"
-                            break
+                    best_intent = None
+                    best_reason = ""
+                    best_score = 0
                     
-                    if not is_valid:
-                        for kw in valid_kws:
-                            if kw in win_title or kw in process_path:
-                                is_valid = True
-                                match_reason = f"Keyword ({kw})"
+                    # Sistema de puntuación para evitar emparejamientos genéricos (ej: cualquier pestaña de Chrome)
+                    for intent in unmatched_intents:
+                        score = 0
+                        reason = ""
+                        
+                        target_proc = intent.get("_target_proc", "")
+                        # No omitimos el intent por proceso, pero lo usaremos para bajar la puntuación si no coincide
+                        # excepto en casos muy raros. Solo omitimos si es un proceso totalmente irrelevante como explorer para webs/code.
+                        if target_proc and "explorer" in p_name and target_proc not in ["explorer", ""]:
+                            continue 
+                        
+                        # 1. Path match (Score 10)
+                        for vp in intent["_match_paths"]:
+                            if vp in p_path:
+                                score = 10
+                                reason = f"Ruta exacta ({vp})"
                                 break
-
-                    if not is_valid: 
-                        print(f"  [IGNORADA] {win_title[:40]}... (No coincide con config)")
-                        return
-
-                    key = self._detect_zone_for_window(hwnd)
-                    if key:
-                        if key not in self.zone_stacks:
-                            self.zone_stacks[key] = []
-                        if hwnd not in self.zone_stacks[key]:
-                            self.zone_stacks[key].append(hwnd)
-                        print(f"  [RECUPERADA] -> '{win_title[:30]}...' coincidio por: {match_reason}")
+                            elif vp in win_title:   
+                                if target_proc and target_proc not in p_name:
+                                    # Si es explorer intentando entrar en VSCode/IDE -> Score 2 (Genérico)
+                                    if is_explorer and intent.get("type") in ["vscode", "ide"]:
+                                        score = 2
+                                    else:
+                                        score = 4
+                                else:
+                                    score = 9
+                                reason = f"Ruta en título ({vp})"
+                                break
+                        
+                        # 2. Strong KWs (Score 8)
+                        if score == 0:
+                            for skw in intent["_strong_kws"]:
+                                if skw in win_title:
+                                    if target_proc and target_proc not in p_name:
+                                        if is_explorer and intent.get("type") in ["vscode", "ide"]:
+                                            score = 2
+                                        else:
+                                            score = 4
+                                    else:
+                                        score = 8
+                                    reason = f"Keyword Exacta ({skw})"
+                                    break
+                                
+                                if intent.get("type", "") in ['exe', 'app'] and skw in p_path:
+                                    score = 8
+                                    reason = f"Proceso ({skw})"
+                                    break
+                                    
+                        # 3. Weak KWs (Score 3)
+                        if score == 0:
+                            for wkw in intent["_weak_kws"]:
+                                if wkw in p_path or wkw in p_name or wkw in win_title:
+                                    score = 3
+                                    reason = f"Genérico ({wkw})"
+                                    break
+                                    
+                        if score > best_score:
+                            best_score = score
+                            best_intent = intent
+                            best_reason = reason
+                        elif score > 0 and score == best_score and best_intent is None:
+                            best_intent = intent
+                            best_reason = reason
+                        elif score > 0 and score == best_score and best_intent:
+                            if len(intent["_matched_hwnds"]) < len(best_intent["_matched_hwnds"]):
+                                best_intent = intent
+                                best_reason = reason
+                            
+                    if best_intent:
+                        best_intent["_matched_hwnds"].append((hwnd, best_score))
+                        print(f"  [RECUPERADA] -> '{win_title[:30]}...' -> Zona {best_intent['_z_idx']+1} ({best_reason})")
                     else:
-                        print(f"  [SIN ZONA FZ] -> '{win_title[:30]}...' coincidio pero NO esta encajada en una zona.")
+                        print(f"  [IGNORADA] {win_title[:40]}... (No coincide con config)")
                             
                 win32gui.EnumWindows(_enum_cb, None)
                 
-                count = sum(len(v) for v in self.zone_stacks.values())
-                print(f"[Recover] Vinculadas {count} ventanas en {len(self.zone_stacks)} zonas.")
-                
-                self.after(0, lambda: self._on_recover_done(count))
+                def _show_ui():
+                    RecoverySelectionDialog(self, unmatched_intents, self._execute_recovery_snap_and_stack)
+                    self.btn_recover.configure(state="normal")
+                    
+                self.after(0, _show_ui)
             except Exception as e:
-                print(f"Error recuperando entorno: {e}")
+                import traceback
+                print(f"Error recuperando entorno (Traceback):\n{traceback.format_exc()}")
+                print(f"Error recuperando entorno (Escaneo): {e}")
                 self.after(0, lambda: self.btn_recover.configure(state="normal"))
                 
         threading.Thread(target=_task, daemon=True).start()
 
+    def _execute_recovery_snap_and_stack(self, intents_data):
+        import win32gui, win32con, threading
+        
+        def _recovery_task():
+            try:
+                monitors_info = []
+                import win32api
+                try:
+                    for idx, (hMonitor, _, pyRect) in enumerate(win32api.EnumDisplayMonitors()):
+                        minfo = win32api.GetMonitorInfo(hMonitor)
+                        monitors_info.append({
+                            "device": minfo.get("Device", f"\\\\.\\DISPLAY{idx+1}"),
+                            "work_area": minfo.get("Work"),
+                            "bounds": pyRect,
+                            "enum_idx": idx,
+                            "is_primary": minfo.get("Flags", 0) == 1
+                        })
+                except: pass
+                
+                for intent in intents_data:
+                    hwnds = intent.get("_matched_hwnds", [])
+                    relaunch = intent.get("_relaunch", False)
+
+                    if relaunch:
+                        self._launch_and_snap_intent(intent, monitors_info)
+                        continue
+
+                    for hwnd in hwnds:
+                        # Restaurar ventana de posibles minimizados o maximizados
+                        if win32gui.IsIconic(hwnd):
+                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                        placement = win32gui.GetWindowPlacement(hwnd)
+                        if placement[1] == win32con.SW_SHOWMAXIMIZED:
+                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        
+                        # Mover la ventana fisicamente si tiene zona asignada
+                        if intent["_l_uuid"] and intent["_l_uuid"] != "00000000-0000-0000-0000-000000000000":
+                            mi = next((m for m in monitors_info if m['enum_idx'] == intent["_m_eidx"]), monitors_info[0] if monitors_info else None)
+                            if not mi: continue
+                            
+                            layout_name = next((n for n, dt in self.available_layouts.items() if dt.get("uuid") == intent["_l_uuid"]), None)
+                            layout_info = self.available_layouts.get(layout_name, {}) if layout_name else {}
+                            
+                            rect = self._calculate_zone_rect(layout_info, intent["_z_idx"], mi['work_area'])
+                            if rect:
+                                z_l, z_t, z_w, z_h = rect
+                                self._apply_zone_rect_with_shadow_compensation(hwnd, z_l, z_t, z_w, z_h)
+                                
+                                # Anadirla a nuestra base de datos de zona activa
+                                z_key = self._get_zone_key(intent["_d_guid"], intent["_m_dev"], intent["_l_uuid"], intent["_z_idx"])
+                                if z_key not in self.zone_stacks:
+                                    self.zone_stacks[z_key] = []
+                                if hwnd not in self.zone_stacks[z_key]:
+                                    self.zone_stacks[z_key].append(hwnd)
+                                    
+                count = sum(len(v) for v in self.zone_stacks.values())
+                print(f"[Recover] Reorganización completada. Vinculadas {count} ventanas en {len(self.zone_stacks)} zonas.")
+                self.after(0, lambda: self._on_recover_done(count))
+            except Exception as e:
+                import traceback
+                print(f"Error ejecutando recuperación física (Traceback):\n{traceback.format_exc()}")
+                print(f"Error: {e}")
+                self.after(0, lambda: self.btn_recover.configure(state="normal"))
+                
+        self.btn_recover.configure(state="disabled")
+        threading.Thread(target=_recovery_task, daemon=True).start()
+
     def _on_recover_done(self, count):
         self.btn_recover.configure(state="normal")
-        from tkinter import messagebox
-        messagebox.showinfo("Recuperación completada", f"Se han detectado y emparejado {count} ventanas pertenecientes a tu categoría activa ('{self.current_category}').\n\nLos atajos de rotación ya vuelven a estar operativos sobre ellas.", parent=self)
 
     def show_recover_info(self):
         from tkinter import messagebox
         messagebox.showinfo("¿Qué hace Recuperar Info?", 
-                            "Si has cerrado el launcher accidentalmente, o tenías ventanas abiertas manualmente, esta función las escanea y las vincula con las zonas de la configuración activa.\n\n"
+                            "Si has cerrado el launcher accidentalmente o las ventanas se han desorganizado, esta función escanea las ventanas abiertas.\n\n"
+                            "Las ventanas que coincidan con la categoría actual serán emparejadas con sus aplicaciones y reorganizadas físicamente en sus zonas ("
+                            "FancyZones) correspondientes, restaurando los grupos.\n\n"
                             "⚠️ SOLO detectará las aplicaciones que estén registradas en la categoría que tengas seleccionada actualmente.", parent=self)
 
 
