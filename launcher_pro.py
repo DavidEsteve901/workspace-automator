@@ -4278,12 +4278,31 @@ class DevLauncherApp(ctk.CTk):
         if not WINDOWS_LIBS_AVAILABLE:
             return
 
+        # 1. Limpiar el registro de ventanas ancladas:
+        # Si una ventana ya no existe, no es visible o ha cambiado su título,
+        # la sacamos de 'pinned_hwnds' para que pueda volver a ser detectada.
+        stale = set()
+        for h in self._pip_pinned_hwnds:
+            try:
+                if not win32gui.IsWindow(h) or not win32gui.IsWindowVisible(h):
+                    stale.add(h)
+                else:
+                    title = win32gui.GetWindowText(h).lower()
+                    if not any(pt in title for pt in self.PIP_WINDOW_TITLES):
+                        stale.add(h)
+            except Exception:
+                stale.add(h)
+        
+        if stale:
+            self._pip_pinned_hwnds -= stale
+
         pip_hwnds = []
 
         def _enum_pip(hwnd, _):
             """Callback de EnumWindows: recopila HWNDs de ventanas PiP."""
+            # Si ya la tenemos anclada y registrada, saltar
             if hwnd in self._pip_pinned_hwnds:
-                return True  # Ya fue anclada, saltar
+                return True
             try:
                 if not win32gui.IsWindowVisible(hwnd):
                     return True
@@ -4303,7 +4322,6 @@ class DevLauncherApp(ctk.CTk):
 
         for hwnd in pip_hwnds:
             try:
-                # Comprobar que la ventana sigue válida
                 if not win32gui.IsWindow(hwnd):
                     continue
                 from pyvda import AppView
@@ -4314,11 +4332,6 @@ class DevLauncherApp(ctk.CTk):
                 print(f"[PiP Watcher] 📌 Ventana anclada: '{title}' (HWND={hwnd})")
             except Exception as e:
                 print(f"[PiP Watcher] Error anclando HWND={hwnd}: {e}")
-
-        # Limpiar HWNDs de ventanas que ya no existen
-        stale = {h for h in self._pip_pinned_hwnds if not win32gui.IsWindow(h)}
-        if stale:
-            self._pip_pinned_hwnds -= stale
 
 
 if __name__ == "__main__":
