@@ -834,6 +834,12 @@ class AdvancedItemDialog(ctk.CTkToplevel):
                         
     def select_zone(self, layout_name, zone_idx):
         self.selected_zone_str = f"{layout_name} - Zona {zone_idx+1}"
+        
+        # Guardar el UUID del layout seleccionado
+        self.selected_layout_uuid = ""
+        if hasattr(self.parent_app, 'available_layouts') and layout_name in self.parent_app.available_layouts:
+            self.selected_layout_uuid = self.parent_app.available_layouts[layout_name].get("uuid", "")
+            
         self.preview_lbl.configure(text=f"Actual: {self.selected_zone_str}", text_color="#2CC985")
 
     def save(self):
@@ -849,6 +855,7 @@ class AdvancedItemDialog(ctk.CTkToplevel):
             "monitor": self.monitor_var.get(),
             "desktop": self.desktop_var.get(),
             "fancyzone": self.selected_zone_str,
+            "fancyzone_uuid": getattr(self, "selected_layout_uuid", ""),
             "delay": self.delay_var.get()
         }
         
@@ -1503,6 +1510,7 @@ class DevLauncherApp(ctk.CTk):
         self.available_layouts = {}
         self.available_monitors = []
         self.applied_mappings = {}
+        self.fz_layouts_cache = {} # Cache de definiciones de layouts para portabilidad
 
         # Estado global de modificadores para Pynput
         self.kb_modifiers = {"ctrl": False, "alt": False, "shift": False, "win": False}
@@ -1626,6 +1634,7 @@ class DevLauncherApp(ctk.CTk):
                     self.last_saved_category = data.get("last_category", "Desarrollo")
                     self.current_category = self.last_saved_category
                     self.applied_mappings = data.get("applied_mappings", {})
+                    self.fz_layouts_cache = data.get("fz_layouts_cache", {})
                     
                     # Restaurar estado del PiP watcher
                     pip_enabled = data.get("pip_watcher_enabled", False)
@@ -1659,6 +1668,7 @@ class DevLauncherApp(ctk.CTk):
                 "apps": self.apps_data,
                 "last_category": self.current_category,
                 "applied_mappings": self.applied_mappings,
+                "fz_layouts_cache": self.fz_layouts_cache,
                 "hotkeys": getattr(self, "hotkeys_data", {}),
                 "pip_watcher_enabled": self._pip_watcher_active
             }
@@ -1704,6 +1714,9 @@ class DevLauncherApp(ctk.CTk):
                     info["type"] = layout.get("type", "")
                     info["uuid"] = layout_uuid
                     self.available_layouts[layout_name] = info
+                    # Actualizar caché persistente usando UUID como clave primaria (evita colisiones de nombres)
+                    if layout_uuid:
+                        self.fz_layouts_cache[layout_uuid] = layout.copy()
         except Exception as e:
             print(f"Error parseando custom-layouts JSON: {e}")
 
@@ -1897,21 +1910,14 @@ class DevLauncherApp(ctk.CTk):
         if dlg.result:
             path = dlg.result["path"]
             ide_cmd = dlg.result["ide_cmd"]
-            # Mostrar diálogo avanzado después
-            adv_dlg = AdvancedItemDialog(self, title=f"Configurar Proyecto ({ide_cmd})", path_or_url=path, item_type="ide")
+            
+            # Pasar los datos iniciales al diálogo avanzado para que no se pierda el comando IDE
+            initial_data = {"ide_cmd": ide_cmd}
+            adv_dlg = AdvancedItemDialog(self, title=f"Configurar Proyecto ({ide_cmd})", 
+                                         path_or_url=path, item_type="ide", item_data=initial_data)
             self.wait_window(adv_dlg)
-            extras = adv_dlg.result if adv_dlg.result else {}
-            
-            item_data = {
-                "type": "ide", 
-                "path": path, 
-                "ide_cmd": ide_cmd
-            }
-            item_data.update(extras)
-            
-            self.apps_data[self.current_category].append(item_data)
-            self._save_data()
-            self.refresh_apps_list()
+            if adv_dlg.result:
+                self.add_item("ide", path, extras=adv_dlg.result)
             
     def add_obsidian_vault(self):
         if p := filedialog.askdirectory(title="Vault Obsidian"):
@@ -2141,12 +2147,34 @@ class DevLauncherApp(ctk.CTk):
             if len(parts) < 2:
                 continue
             layout_name = parts[0]
+            layout_uuid = item.get("fancyzone_uuid", "")
 
-            layout_info = self.available_layouts.get(layout_name)
+            # Si el item no tiene UUID guardado (config vieja), o si ha cambiado, buscarlo
+            layout_info = None
+            if layout_uuid:
+                # Intentar buscar por UUID en el sistema actual
+                layout_info = next((dt for n, dt in self.available_layouts.items() 
+                                    if str(dt.get("uuid", "")).strip("{}").lower() == layout_uuid.strip("{}").lower()), None)
+            
+            # Si no lo encontramos por UUID, buscar por nombre (fallback)
             if not layout_info:
-                continue
-            layout_uuid = layout_info.get("uuid", "")
-            if not layout_uuid:
+                layout_info = self.available_layouts.get(layout_name)
+                if layout_info:
+                    layout_uuid = layout_info.get("uuid", "")
+
+            if not layout_info:
+                # Intentar buscar en el caché persistente (portabilidad)
+                if layout_uuid and layout_uuid in self.fz_layouts_cache:
+                    layout_info = self.fz_layouts_cache[layout_uuid].get("info", {})
+                elif layout_name:
+                    # Fallback desesperado: buscar en el caché por nombre si el UUID no coincide
+                    for luuid, ldef in self.fz_layouts_cache.items():
+                        if ldef.get("name") == layout_name:
+                            layout_info = ldef.get("info", {})
+                            layout_uuid = luuid
+                            break
+            
+            if not layout_info or not layout_uuid:
                 continue
 
             # Escritorio virtual
@@ -2167,10 +2195,38 @@ class DevLauncherApp(ctk.CTk):
             # Monitor (extraer ID hardware)
             mon = item.get('monitor', 'Por defecto')
             fz_monitor_id = None
+            
+            # --- MEJORA: Búsqueda inteligente de monitor ---
+            # 1. Intentar por ID exacto
             if "[" in mon and "]" in mon:
-                hw_id = mon.split("[")[1].split("]")[0]
-                if hw_id != "Display Principal" and not hw_id.startswith("Display "):
-                    fz_monitor_id = hw_id
+                hw_id_in_config = mon.split("[")[1].split("]")[0]
+                
+                # Comprobar si este ID existe en el sistema actual
+                found_id = None
+                active_fz_monitors = []
+                if hasattr(self, 'get_active_fz_monitors'): # Si estamos en el diálogo
+                     active_fz_monitors = self.get_active_fz_monitors()
+                else: 
+                     # Fallback: Extraer IDs de available_monitors que se cargó en el init
+                     for am in self.available_monitors:
+                         if "[" in am and "]" in am:
+                             active_fz_monitors.append(am.split("[")[1].split("]")[0])
+
+                if hw_id_in_config in active_fz_monitors:
+                    fz_monitor_id = hw_id_in_config
+                else:
+                    # 2. Si no coincide el ID exacto, intentar por índice de pantalla (P. ej: "Pantalla 2")
+                    prefix = mon.split("[")[0].strip() # "Pantalla 2"
+                    for am in self.available_monitors:
+                        if am.startswith(prefix):
+                            if "[" in am and "]" in am:
+                                fz_monitor_id = am.split("[")[1].split("]")[0]
+                                print(f"[FZ Sync] Adaptando monitor: {mon} -> Usando ID actual {fz_monitor_id}")
+                                break
+                
+                # Fallback final si es el monitor principal
+                if not fz_monitor_id and "Display Principal" in mon:
+                    fz_monitor_id = "LOCALDISPLAY" # O intentar encontrar qué monitor es el principal
 
             if not fz_monitor_id or not vd_guid:
                 continue
@@ -2281,10 +2337,44 @@ class DevLauncherApp(ctk.CTk):
 
         layouts_list = applied_data.get("applied-layouts", [])
         modified_count = 0
+        new_layouts_created = 0
         errors = []
 
         for (req_mon, req_vd), info in required.items():
+            layout_name = info["layout_name"]
             expected_uuid = str(info["layout_uuid"]).strip("{}").lower()
+            
+            # --- MEJORA: Asegurar que el layout existe en PowerToys ---
+            # Comprobamos si el UUID ya existe en el sistema actual
+            layout_exists_locally = any(str(dt.get("uuid", "")).strip("{}").lower() == expected_uuid 
+                                        for dt in self.available_layouts.values())
+            
+            if not layout_exists_locally:
+                # El layout no existe localmente, pero quizá lo tenemos en el caché por UUID
+                inject_def = self.fz_layouts_cache.get("{" + expected_uuid.upper() + "}")
+                if not inject_def:
+                    inject_def = self.fz_layouts_cache.get(expected_uuid)
+                
+                # Si no está por UUID, intentar por nombre como último recurso
+                if not inject_def:
+                    for luuid, ldef in self.fz_layouts_cache.items():
+                        if ldef.get("name") == layout_name:
+                            inject_def = ldef
+                            break
+                
+                if inject_def:
+                    success = self._inject_layout_to_powertoys(inject_def)
+                    if success:
+                        new_layouts_created += 1
+                        print(f"[FZ Sync] Layout '{layout_name}' ({expected_uuid}) recreado desde caché.")
+                        self.load_fancyzones_layouts()
+                    else:
+                        errors.append(f"❌ No se pudo crear el layout '{layout_name}' en PowerToys.")
+                        continue
+                else:
+                    errors.append(f"❌ Layout '{layout_name}' no encontrado ni en el sistema ni en el caché.")
+                    continue
+
             found = False
 
             for entry in layouts_list:
@@ -2336,7 +2426,41 @@ class DevLauncherApp(ctk.CTk):
             except Exception as e:
                 return 0, [f"Error escribiendo applied-layouts.json: {e}"]
 
-        return modified_count, errors
+        return modified_count + new_layouts_created, errors
+
+    def _inject_layout_to_powertoys(self, layout_def):
+        """Inyecta una definición de layout desde el caché al archivo custom-layouts.json de PowerToys."""
+        layout_name = layout_def.get("name", "Unnamed")
+        layout_uuid = str(layout_def.get("uuid", "")).strip("{}").upper()
+        
+        custom_path = os.path.join(self.fancyzones_path, "custom-layouts.json")
+        try:
+            data = {"custom-layouts": []}
+            if os.path.exists(custom_path):
+                with open(custom_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            
+            # Evitar duplicados por UUID (que es el ID real)
+            for l in data.get("custom-layouts", []):
+                curr_u = str(l.get("uuid", "")).strip("{}").upper()
+                if curr_u == layout_uuid:
+                    return True
+                
+            # Si el UUID es nuevo pero el nombre ya existe, modificamos el nombre para evitar confusión
+            name_exists = any(l.get("name") == layout_name for l in data.get("custom-layouts", []))
+            if name_exists:
+                layout_def = layout_def.copy()
+                layout_def["name"] = f"{layout_name} (Sincronizado)"
+            
+            data.setdefault("custom-layouts", []).append(layout_def)
+            
+            with open(custom_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=4)
+            
+            return True
+        except Exception as e:
+            print(f"Error inyectando layout: {e}")
+            return False
 
     def _force_foreground(self, hwnd):
         import win32gui, win32con, win32process, win32api, ctypes
