@@ -1562,6 +1562,22 @@ class DevLauncherApp(ctk.CTk):
         ctk.CTkButton(bot_pt_bar, text="🖥️ Asignar Distribuciones por Pantalla/Escritorio", 
                       fg_color="#4B4B4B", hover_color="#333", command=self.open_assigner).pack(side="right", padx=10)
 
+        # --- FANCY ZONES SYNC WARNING ---
+        self.fz_warning_frame = ctk.CTkFrame(self, fg_color="transparent")
+        # No empaquetar por defecto, se empaqueta si hay discrepancias en _update_fz_warning
+        
+        self.fz_warning_inner = ctk.CTkFrame(self.fz_warning_frame, fg_color="#2B2B2B", border_width=1, border_color="#E5A00D")
+        
+        self.fz_warning_label = ctk.CTkLabel(self.fz_warning_inner, text="", font=("Roboto", 12),
+                                              text_color="#FFD700", anchor="w", wraplength=700)
+        self.fz_warning_label.pack(side="left", fill="x", expand=True, padx=(10, 5), pady=8)
+        
+        self.btn_fz_sync = ctk.CTkButton(self.fz_warning_inner, text="🔄 Sincronizar Layouts", 
+                                          width=160, height=30, font=("Roboto", 11, "bold"),
+                                          fg_color="#E5A00D", hover_color="#B57B02", text_color="#000",
+                                          command=self._on_sync_fz_click)
+        self.btn_fz_sync.pack(side="right", padx=(5, 10), pady=8)
+
         # --- LANZAR Y LIMPIAR ---
         self.action_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.action_frame.pack(fill="x", padx=20, pady=10)
@@ -1597,6 +1613,8 @@ class DevLauncherApp(ctk.CTk):
         self.apps_frame.pack(side="top", fill="both", expand=True, padx=20, pady=10)
 
         self.refresh_categories()
+        # Comprobar layouts de FancyZones al iniciar
+        self.after(500, self._update_fz_warning)
 
     # --- DATOS ---
     def _load_data(self):
@@ -1763,6 +1781,8 @@ class DevLauncherApp(ctk.CTk):
         self.current_category = choice
         self._save_data()
         self.refresh_apps_list()
+        # Comprobar si los layouts de FancyZones coinciden con esta categoría
+        self.after(200, self._update_fz_warning)
 
     def add_category_dialog(self):
         if n := ctk.CTkInputDialog(text="Nombre:", title="Nueva").get_input():
@@ -1971,6 +1991,352 @@ class DevLauncherApp(ctk.CTk):
         except Exception as e:
             print("FancyZonesCLI error:", e)
             return False
+
+    def _ensure_required_virtual_desktops(self, items=None):
+        """Comprueba cuántos escritorios virtuales se necesitan para el workspace actual
+        y los crea si faltan."""
+        if not WINDOWS_LIBS_AVAILABLE: return 0, ["Librerías de Windows no disponibles."]
+        
+        if items is None:
+            items = self.apps_data.get(self.current_category, [])
+        
+        max_idx = 0 # 0 es 'Por defecto' (escritorio 1)
+        for item in items:
+            d_str = item.get('desktop', 'Por defecto')
+            if d_str.startswith("Escritorio "):
+                try:
+                    idx = int(d_str.split(" ")[1]) - 1
+                    if idx > max_idx: max_idx = idx
+                except: pass
+        
+        created_count = 0
+        errors = []
+        try:
+            from pyvda import get_virtual_desktops, VirtualDesktop
+            current_desktops = get_virtual_desktops()
+            num_needed = (max_idx + 1) - len(current_desktops)
+            
+            if num_needed > 0:
+                for i in range(num_needed):
+                    VirtualDesktop.create()
+                    created_count += 1
+                
+                print(f"[Workspace Prep] Creados {created_count} escritorios virtuales.")
+        except Exception as e:
+            errors.append(f"No se pudieron crear los escritorios virtuales: {e}")
+            
+        return created_count, errors
+
+    def _update_fz_warning(self):
+        """Comprueba si hay discrepancias entre los layouts activos en FancyZones
+        y los que espera la categoría actual. Muestra/oculta la barra de warning."""
+        try:
+            self.load_fancyzones_layouts()
+            mismatches = self._check_fz_layout_mismatches()
+            
+            if mismatches:
+                # Obtener nombres amigables de escritorios
+                desk_names = {}
+                if WINDOWS_LIBS_AVAILABLE:
+                    try:
+                        from pyvda import get_virtual_desktops
+                        for i, d in enumerate(get_virtual_desktops()):
+                            g = str(d.id).upper()
+                            if not g.startswith("{"): g = "{" + g + "}"
+                            desk_names[g] = d.name if d.name else f"Escritorio {i+1}"
+                    except: pass
+                
+                lines = [f"⚠️ Hay {len(mismatches)} layout(s) o escritorio(s) que no coinciden:"]
+                for m in mismatches:
+                    # Formatear el nombre del escritorio
+                    if m["desktop_guid"].startswith("MISSING_DESKTOP_"):
+                        d_num = m["desktop_guid"].split("_")[-1]
+                        desk = f"Escritorio {d_num}"
+                    else:
+                        desk = desk_names.get(m["desktop_guid"], m["desktop_guid"][:12] + "...")
+                        
+                    lines.append(f"  📺 {m['monitor']} / {desk}: activo=\"{m['actual_name']}\" ≠ esperado=\"{m['expected_name']}\"")
+                
+                self.fz_warning_label.configure(text="\n".join(lines))
+                # Empaquetamos todo el contenedor exterior y el interior
+                self.fz_warning_frame.pack(fill="x", padx=20, pady=(0, 5))
+                self.fz_warning_inner.pack(fill="x", pady=2)
+            else:
+                # Ocultar warning completamente para que no quite espacio
+                self.fz_warning_inner.pack_forget()
+                self.fz_warning_frame.pack_forget()
+        except Exception as e:
+            print(f"[FZ Warning] Error comprobando layouts: {e}")
+            self.fz_warning_inner.pack_forget()
+            self.fz_warning_frame.pack_forget()
+
+    def _on_sync_fz_click(self):
+        """Maneja el click en el botón de sincronizar layouts de FancyZones."""
+        self.btn_fz_sync.configure(state="disabled", text="⏳ Sincronizando...")
+        
+        def _task():
+            # 1. Asegurar escritorios virtuales necesarios
+            created_vds, vd_errors = self._ensure_required_virtual_desktops()
+            
+            # 2. Sincronizar layouts (necesita que los GUIDs de los nuevos escritorios ya existan)
+            # Pequeña espera para que Windows registre los nuevos GUIDs
+            if created_vds > 0: time.sleep(1.0) 
+            
+            count, errors = self._sync_fz_layouts_for_workspace()
+            errors.extend(vd_errors)
+            
+            def _done():
+                self.btn_fz_sync.configure(state="normal", text="🔄 Sincronizar Layouts")
+                
+                msg = ""
+                if created_vds > 0:
+                    msg += f"✅ Se han creado {created_vds} escritorio(s) virtual(es) nuevo(s).\n"
+                
+                if count > 0:
+                    msg += f"✅ Se han sincronizado {count} layout(s) en FancyZones.\n\n"
+                    msg += "Los cambios de zona se aplicarán la próxima vez que muevas una ventana con Shift "
+                    msg += "o al reiniciar FancyZones (Win+Shift+`)."
+                
+                if not msg and not errors:
+                    msg = "Todo OK: Los escritorios y layouts ya estaban correctamente sincronizados."
+                
+                if errors:
+                    msg += "\n\nAdvertencias:\n" + "\n".join(errors)
+                
+                if msg:
+                    messagebox.showinfo("Sincronización Completada", msg, parent=self)
+                
+                # Actualizar la barra de warning
+                self._update_fz_warning()
+            
+            self.after(0, _done)
+        
+        import threading
+        threading.Thread(target=_task, daemon=True).start()
+
+    def _get_workspace_required_layouts(self, items_to_launch=None):
+        """
+        Analiza los items de la categoría actual para deducir qué layout necesita cada 
+        combinación (fz_monitor_id, vd_guid). Devuelve un dict:
+           {(fz_monitor_id, vd_guid): {"layout_name": str, "layout_uuid": str}}
+        """
+        if items_to_launch is None:
+            items_to_launch = self.apps_data.get(self.current_category, [])
+        
+        desk_guids = []
+        if WINDOWS_LIBS_AVAILABLE:
+            try:
+                from pyvda import get_virtual_desktops
+                desk_guids = [d.id for d in get_virtual_desktops()]
+            except: pass
+
+        required = {}  # {(fz_monitor_id, vd_guid): {"layout_name": str, "layout_uuid": str}}
+
+        for item in items_to_launch:
+            zone_name = item.get('fancyzone', 'Ninguna')
+            if zone_name == 'Ninguna':
+                continue
+
+            parts = zone_name.rsplit(" - Zona ", 1)
+            if len(parts) < 2:
+                continue
+            layout_name = parts[0]
+
+            layout_info = self.available_layouts.get(layout_name)
+            if not layout_info:
+                continue
+            layout_uuid = layout_info.get("uuid", "")
+            if not layout_uuid:
+                continue
+
+            # Escritorio virtual
+            desktop = item.get('desktop', 'Por defecto')
+            vd_guid = None
+            if desktop.startswith("Escritorio "):
+                try:
+                    d_idx = int(desktop.split(" ")[1]) - 1
+                    if 0 <= d_idx < len(desk_guids):
+                        vd_guid = str(desk_guids[d_idx]).upper()
+                        if not vd_guid.startswith("{"): vd_guid = "{" + vd_guid + "}"
+                    else:
+                        # Si el escritorio no existe, marcamos una ID especial para avisar
+                        vd_guid = f"MISSING_DESKTOP_{d_idx+1}"
+                except:
+                    pass
+
+            # Monitor (extraer ID hardware)
+            mon = item.get('monitor', 'Por defecto')
+            fz_monitor_id = None
+            if "[" in mon and "]" in mon:
+                hw_id = mon.split("[")[1].split("]")[0]
+                if hw_id != "Display Principal" and not hw_id.startswith("Display "):
+                    fz_monitor_id = hw_id
+
+            if not fz_monitor_id or not vd_guid:
+                continue
+
+            key = (fz_monitor_id, vd_guid)
+            if key not in required:
+                required[key] = {"layout_name": layout_name, "layout_uuid": layout_uuid}
+
+        return required
+
+    def _check_fz_layout_mismatches(self, items_to_launch=None):
+        """
+        Compara los layouts requeridos por la categoría actual con los que están activos
+        en applied-layouts.json de PowerToys.
+        """
+        import os, json
+        
+        required = self._get_workspace_required_layouts(items_to_launch)
+        if not required:
+            return []
+
+        applied_path = os.path.join(self.fancyzones_path, "applied-layouts.json")
+        if not os.path.exists(applied_path):
+            return []
+
+        try:
+            with open(applied_path, 'r', encoding='utf-8') as f:
+                applied_data = json.load(f)
+        except:
+            return []
+
+        layouts_list = applied_data.get("applied-layouts", [])
+        mismatches = []
+
+        for (req_mon, req_vd), info in required.items():
+            # Caso especial: El escritorio no existe en el sistema
+            if req_vd.startswith("MISSING_DESKTOP_"):
+                d_num = req_vd.split("_")[-1]
+                mismatches.append({
+                    "monitor": req_mon,
+                    "desktop_guid": req_vd,
+                    "expected_name": info["layout_name"],
+                    "actual_name": f"❌ ¡Escritorio {d_num} NO EXISTE!",
+                    "expected_uuid": info["layout_uuid"],
+                    "actual_uuid": "",
+                })
+                continue
+
+            expected_uuid = str(info["layout_uuid"]).strip("{}").lower()
+            found = False
+
+            for entry in layouts_list:
+                dev = entry.get("device", {})
+                entry_mon = dev.get("monitor", "")
+                entry_vd = dev.get("virtual-desktop", "").upper()
+                if not entry_vd.startswith("{"): entry_vd = "{" + entry_vd + "}"
+
+                if entry_mon == req_mon and entry_vd == req_vd:
+                    found = True
+                    actual_uuid = str(entry.get("applied-layout", {}).get("uuid", "")).strip("{}").lower()
+                    if actual_uuid != expected_uuid:
+                        # Buscar nombre del layout actual
+                        actual_name = next((n for n, dt in self.available_layouts.items()
+                                          if str(dt.get("uuid", "")).strip("{}").lower() == actual_uuid), 
+                                         f"Desconocido ({actual_uuid[:8]}...)")
+                        mismatches.append({
+                            "monitor": req_mon,
+                            "desktop_guid": req_vd,
+                            "expected_name": info["layout_name"],
+                            "actual_name": actual_name,
+                            "expected_uuid": expected_uuid,
+                            "actual_uuid": actual_uuid,
+                        })
+                    break
+
+            if not found:
+                mismatches.append({
+                    "monitor": req_mon,
+                    "desktop_guid": req_vd,
+                    "expected_name": info["layout_name"],
+                    "actual_name": "Sin asignar (no existe entrada en FancyZones)",
+                    "expected_uuid": expected_uuid,
+                    "actual_uuid": "",
+                })
+
+        return mismatches
+
+    def _sync_fz_layouts_for_workspace(self, items_to_launch=None):
+        """
+        Sincroniza los layouts de FancyZones para que coincidan con lo que espera
+        la categoría actual.
+        """
+        import os, json
+
+        required = self._get_workspace_required_layouts(items_to_launch)
+        if not required:
+            return 0, ["No hay layouts de FancyZones configurados en esta categoría."]
+
+        applied_path = os.path.join(self.fancyzones_path, "applied-layouts.json")
+        if not os.path.exists(applied_path):
+            return 0, ["No se encontró applied-layouts.json de PowerToys."]
+
+        try:
+            with open(applied_path, 'r', encoding='utf-8') as f:
+                applied_data = json.load(f)
+        except Exception as e:
+            return 0, [f"Error leyendo applied-layouts.json: {e}"]
+
+        layouts_list = applied_data.get("applied-layouts", [])
+        modified_count = 0
+        errors = []
+
+        for (req_mon, req_vd), info in required.items():
+            expected_uuid = str(info["layout_uuid"]).strip("{}").lower()
+            found = False
+
+            for entry in layouts_list:
+                dev = entry.get("device", {})
+                entry_mon = dev.get("monitor", "")
+                entry_vd = dev.get("virtual-desktop", "").upper()
+                if not entry_vd.startswith("{"): entry_vd = "{" + entry_vd + "}"
+
+                if entry_mon == req_mon and entry_vd == req_vd:
+                    found = True
+                    app_lay = entry.get("applied-layout", {})
+                    current_uuid = str(app_lay.get("uuid", "")).strip("{}").lower()
+
+                    if current_uuid != expected_uuid:
+                        app_lay["uuid"] = "{" + expected_uuid.upper() + "}"
+                        app_lay["type"] = "custom"
+                        modified_count += 1
+                        print(f"[FZ Sync] Cambiado: {req_mon}/{req_vd[:12]}... "
+                              f"UUID {current_uuid[:8]}... -> {expected_uuid[:8]}... ({info['layout_name']})")
+                    break
+
+            if not found:
+                # Intentar clonar una entrada para MISMO MONITOR pero OTRO ESCRITORIO
+                ref_entry = None
+                for entry in layouts_list:
+                    if entry.get("device", {}).get("monitor") == req_mon:
+                        ref_entry = entry
+                        break
+                
+                if ref_entry:
+                    import copy
+                    new_entry = copy.deepcopy(ref_entry)
+                    # Guardar con el GUID del nuevo escritorio (en minúsculas según estándar FZ)
+                    new_entry["device"]["virtual-desktop"] = req_vd.lower().strip("{}")
+                    new_entry["applied-layout"]["uuid"] = "{" + expected_uuid.upper() + "}"
+                    new_entry["applied-layout"]["type"] = "custom"
+                    layouts_list.append(new_entry)
+                    modified_count += 1
+                    print(f"[FZ Sync] CREADO (CLON): {req_mon}/{req_vd[:12]}... -> {expected_uuid[:8]}...")
+                else:
+                    errors.append(f"⚠️ No existe entrada previa para {req_mon} en applied-layouts.json. "
+                                f"Interactúa con FancyZones en este monitor al menos una vez para que PowerToys lo registre.")
+
+        if modified_count > 0:
+            try:
+                with open(applied_path, 'w', encoding='utf-8') as f:
+                    json.dump(applied_data, f, indent=2)
+                print(f"[FZ Sync] applied-layouts.json guardado. {modified_count} entradas cambiadas.")
+            except Exception as e:
+                return 0, [f"Error escribiendo applied-layouts.json: {e}"]
+
+        return modified_count, errors
 
     def _force_foreground(self, hwnd):
         import win32gui, win32con, win32process, win32api, ctypes
@@ -2613,6 +2979,12 @@ class DevLauncherApp(ctk.CTk):
 
         def _launch_task():
             import win32api, win32gui, copy, time
+            
+            # 0. Asegurar escritorios virtuales necesarios segun la config
+            created_vds, vd_errors = self._ensure_required_virtual_desktops()
+            # Pequeña espera si se crearon para que el SO asiente los GUIDs
+            if created_vds > 0: time.sleep(1.2)
+            
             desk_guids = []
             if WINDOWS_LIBS_AVAILABLE:
                 try:
