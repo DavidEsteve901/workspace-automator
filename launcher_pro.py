@@ -19,6 +19,155 @@ try:
     from pyvda import AppView, get_virtual_desktops, VirtualDesktop
     import ctypes
     from ctypes import wintypes
+    import ctypes.wintypes as wt
+    from ctypes import windll, CFUNCTYPE, POINTER, c_int, c_uint, c_void_p
+    
+    # === CONSTANTES WIN32 HOOKS ===
+    WH_MOUSE_LL    = 14
+    WH_KEYBOARD_LL = 13
+    WM_XBUTTONDOWN = 0x020B
+    WM_XBUTTONUP   = 0x020C
+    HC_ACTION      = 0
+
+    XBUTTON1 = 0x0001
+    XBUTTON2 = 0x0002
+
+    VK_BROWSER_BACK    = 0xA6
+    VK_BROWSER_FORWARD = 0xA7
+    WM_KEYDOWN         = 0x0100
+    WM_KEYUP           = 0x0101
+    WM_SYSKEYDOWN      = 0x0104
+    WM_SYSKEYUP        = 0x0105
+
+    class MSLLHOOKSTRUCT(ctypes.Structure):
+        _fields_ = [
+            ("pt",       wt.POINT),
+            ("mouseData", wt.DWORD),
+            ("flags",    wt.DWORD),
+            ("time",     wt.DWORD),
+            ("dwExtraInfo", ctypes.POINTER(wt.ULONG)),
+        ]
+
+    class KBDLLHOOKSTRUCT(ctypes.Structure):
+        _fields_ = [
+            ("vkCode",      wt.DWORD),
+            ("scanCode",    wt.DWORD),
+            ("flags",       wt.DWORD),
+            ("time",        wt.DWORD),
+            ("dwExtraInfo", ctypes.POINTER(wt.ULONG)),
+        ]
+
+    HOOKPROC = CFUNCTYPE(ctypes.c_long, c_int, wt.WPARAM, wt.LPARAM)
+
+    class GlobalHookManager:
+        def __init__(self):
+            self._hook_mouse    = None
+            self._hook_keyboard = None
+            self._mouse_cb_ref  = None
+            self._kb_cb_ref     = None
+            self._thread        = None
+            self._thread_id     = None
+            self._running       = False
+
+            self.on_x1_down = None
+            self.on_x2_down = None
+            self.on_x1_up   = None
+            self.on_x2_up   = None
+            
+            self.check_x_mapped = None # Se usará para saber si soltar o suprimir el evento con modificadores
+
+            self._suppressed_x1 = False
+            self._suppressed_x2 = False
+
+        def _mouse_hook_proc(self, nCode, wParam, lParam):
+            if nCode == HC_ACTION:
+                if wParam == WM_XBUTTONDOWN or wParam == WM_XBUTTONUP:
+                    data = ctypes.cast(lParam, POINTER(MSLLHOOKSTRUCT)).contents
+                    button = (data.mouseData >> 16) & 0xFFFF
+                    
+                    real_alt = (windll.user32.GetAsyncKeyState(0x12) & 0x8000) != 0
+                    real_ctrl = (windll.user32.GetAsyncKeyState(0x11) & 0x8000) != 0
+                    real_shift = (windll.user32.GetAsyncKeyState(0x10) & 0x8000) != 0
+                    has_modifier = real_alt or real_ctrl or real_shift
+                    
+                    if wParam == WM_XBUTTONDOWN:
+                        if button == XBUTTON1:
+                            if has_modifier and not (self.check_x_mapped and self.check_x_mapped('x1', real_alt, real_ctrl, real_shift)):
+                                return windll.user32.CallNextHookEx(self._hook_mouse, nCode, wParam, lParam)
+                            self._suppressed_x1 = True
+                            if self.on_x1_down:
+                                threading.Thread(target=self.on_x1_down, daemon=True).start()
+                            return 1
+                        elif button == XBUTTON2:
+                            if has_modifier and not (self.check_x_mapped and self.check_x_mapped('x2', real_alt, real_ctrl, real_shift)):
+                                return windll.user32.CallNextHookEx(self._hook_mouse, nCode, wParam, lParam)
+                            self._suppressed_x2 = True
+                            if self.on_x2_down:
+                                threading.Thread(target=self.on_x2_down, daemon=True).start()
+                            return 1
+
+                    elif wParam == WM_XBUTTONUP:
+                        if button == XBUTTON1 and self._suppressed_x1:
+                            self._suppressed_x1 = False
+                            if self.on_x1_up:
+                                threading.Thread(target=self.on_x1_up, daemon=True).start()
+                            return 1
+                        elif button == XBUTTON2 and self._suppressed_x2:
+                            self._suppressed_x2 = False
+                            if self.on_x2_up:
+                                threading.Thread(target=self.on_x2_up, daemon=True).start()
+                            return 1
+
+            return windll.user32.CallNextHookEx(self._hook_mouse, nCode, wParam, lParam)
+
+        def _keyboard_hook_proc(self, nCode, wParam, lParam):
+            if nCode == HC_ACTION:
+                if wParam == WM_KEYDOWN or wParam == WM_KEYUP or wParam == WM_SYSKEYDOWN or wParam == WM_SYSKEYUP:
+                    data = ctypes.cast(lParam, POINTER(KBDLLHOOKSTRUCT)).contents
+                    if data.vkCode == VK_BROWSER_BACK or data.vkCode == VK_BROWSER_FORWARD:
+                        return 1
+            return windll.user32.CallNextHookEx(self._hook_keyboard, nCode, wParam, lParam)
+
+        def _install_hooks(self):
+            self._thread_id = windll.kernel32.GetCurrentThreadId()
+
+            self._mouse_cb_ref = HOOKPROC(self._mouse_hook_proc)
+            self._kb_cb_ref    = HOOKPROC(self._keyboard_hook_proc)
+
+            self._hook_mouse = windll.user32.SetWindowsHookExW(WH_MOUSE_LL, self._mouse_cb_ref, None, 0)
+            self._hook_keyboard = windll.user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._kb_cb_ref, None, 0)
+
+            if not self._hook_mouse or not self._hook_keyboard:
+                print(f"[HookManager] Error instalando hooks: {ctypes.GetLastError()}")
+                self._running = False
+                return
+
+            print("[HookManager] Hooks Win32 instalados correctamente (Integrado).")
+
+            msg = wt.MSG()
+            while self._running:
+                bRet = windll.user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                if bRet <= 0: break
+                windll.user32.TranslateMessage(ctypes.byref(msg))
+                windll.user32.DispatchMessageW(ctypes.byref(msg))
+
+            if self._hook_mouse: windll.user32.UnhookWindowsHookEx(self._hook_mouse)
+            if self._hook_keyboard: windll.user32.UnhookWindowsHookEx(self._hook_keyboard)
+            print("[HookManager] Hooks desinstalados.")
+
+        def start(self):
+            if self._running: return
+            self._running = True
+            self._thread = threading.Thread(target=self._install_hooks, daemon=True)
+            self._thread.start()
+
+        def stop(self):
+            self._running = False
+            if self._thread_id:
+                windll.user32.PostThreadMessageW(self._thread_id, 0x0012, 0, 0)
+            if self._thread:
+                self._thread.join(timeout=1)
+
     import sys
     WINDOWS_LIBS_AVAILABLE = True
 except ImportError:
@@ -1281,6 +1430,19 @@ class HotkeysEditorDialog(ctk.CTkToplevel):
         ctk.CTkLabel(self, text="Configuración de Atajos Personalizados", font=("Roboto", 18, "bold")).pack(pady=(15, 5))
         ctk.CTkLabel(self, text="Instrucciones: Para editar un atajo pulsa en su botón 'Cambiar' y luego realiza \nla combinación deseada en tu teclado y/o ratón.", text_color="#aaa").pack(pady=(0, 10))
         
+        # --- Nota Informativa (Bypass Navegación X1/X2) ---
+        info_frame = ctk.CTkFrame(self, fg_color="#1E3A5F", corner_radius=8, border_width=1, border_color="#3A75C4")
+        info_frame.pack(fill="x", padx=20, pady=(0, 15))
+        
+        info_text = (
+            "💡 TIP DE NAVEGACIÓN (Botones Laterales X1 / X2)\n\n"
+            "El Launcher bloquea automáticamente la navegación web ('Atrás/Adelante') al usar los botones \n"
+            "laterales de forma aislada para evitar que se te cambien las pestañas/páginas sin querer.\n\n"
+            "Si REALMENTE quieres navegar Atrás o Adelante en Chrome, VS Code, etc., simplemente\n"
+            "mantén pulsado CTRL, ALT o SHIFT + Botón Lateral. El evento pasará limpio sin lag."
+        )
+        ctk.CTkLabel(info_frame, text=info_text, font=("Roboto", 12), text_color="#E0E0E0", justify="left").pack(padx=15, pady=10)
+
         # --- Switches de activación ---
         toggle_frame = ctk.CTkFrame(self, fg_color="#2B2B2B", corner_radius=8)
         toggle_frame.pack(fill="x", padx=20, pady=(0, 10))
@@ -1519,6 +1681,11 @@ class DevLauncherApp(ctk.CTk):
         # --- MOTOR CUSTOM DE ZONAS (Sustituto de FZ Runtime) ---
         self.zone_stacks = {} # {(d_guid, m_dev, l_uuid, z_idx): [hwnd1, hwnd2]}
         self.hotkeys_active = False
+        
+        # --- NUEVO: Gestor de Hooks Win32 para supresión total de X1/X2 ---
+        self.hook_manager = GlobalHookManager()
+        self.hook_manager.start()
+        
         self._start_global_hotkeys()
         # ----------------------------------------------------
 
@@ -1527,6 +1694,8 @@ class DevLauncherApp(ctk.CTk):
         self._pip_watcher_thread = None
         self._pip_pinned_hwnds = set()  # HWNDs ya anclados para no repetir
         # -------------------------------------------------------------------
+
+        self.protocol("WM_DELETE_WINDOW", self.on_app_close)
 
         self._load_data()
         self.load_fancyzones_layouts()
@@ -1623,6 +1792,15 @@ class DevLauncherApp(ctk.CTk):
         self.refresh_categories()
         # Comprobar layouts de FancyZones al iniciar
         self.after(500, self._update_fz_warning)
+
+    def on_app_close(self):
+        """Manejador principal de cierre de la aplicación para limpiar hooks y threads."""
+        print("[App] Cerrando aplicación, deteniendo hooks...")
+        if hasattr(self, 'hook_manager'):
+            self.hook_manager.stop()
+        
+        self.hotkeys_active = False # Permitir que otros threads sepan que estamos cerrando
+        self.destroy()
 
     # --- DATOS ---
     def _load_data(self):
@@ -2612,6 +2790,53 @@ class DevLauncherApp(ctk.CTk):
 
                 suppressed_mouse_btns = set()
 
+                # --- Integración con HookManager (X1/X2 Supresión Total) ---
+                def handle_x_down(btn):
+                    # ¿Hay conflicto simple/complejo?
+                    mouse_combos = []
+                    for key_id, func in actions.items():
+                        combo = hk.get(key_id)
+                        if combo and is_mouse_combo(combo):
+                            if btn in combo.lower().split('+'):
+                                mouse_combos.append((key_id, func, combo))
+                    
+                    if not mouse_combos: return
+
+                    has_complex = any(len(c[2].split('+')) > 1 for c in mouse_combos)
+                    has_simple = any(len(c[2].split('+')) == 1 for c in mouse_combos)
+                    
+                    if has_complex and has_simple:
+                        time.sleep(0.04) # Breve espera para modificadores
+                    
+                    candidates = []
+                    for key_id, func, combo in mouse_combos:
+                        if match_mouse_hotkey(combo, btn):
+                            candidates.append((len(combo.split('+')), func))
+                    
+                    if candidates:
+                        candidates.sort(key=lambda c: c[0], reverse=True)
+                        candidates[0][1]()
+
+                if hasattr(self, 'hook_manager'):
+                    self.hook_manager.on_x1_down = lambda: handle_x_down('x1')
+                    self.hook_manager.on_x2_down = lambda: handle_x_down('x2')
+
+                    def check_x_mapped_func(btn, alt, ctrl, shift):
+                        for key_id, func in actions.items():
+                            combo = hk.get(key_id)
+                            if combo and is_mouse_combo(combo):
+                                parts = set(combo.lower().split('+'))
+                                check_btn = btn if btn in ['x1', 'x2'] else f"mouse_{btn}"
+                                if check_btn in parts:
+                                    needs_alt = "alt" in parts
+                                    needs_ctrl = "ctrl" in parts
+                                    needs_shift = "shift" in parts
+                                    if needs_alt == alt and needs_ctrl == ctrl and needs_shift == shift:
+                                        return True
+                        return False
+
+                    self.hook_manager.check_x_mapped = check_x_mapped_func
+
                 def win32_event_filter(msg, data):
                     is_down = msg in (0x0201, 0x0204, 0x0207, 0x020B)
                     is_up = msg in (0x0202, 0x0205, 0x0208, 0x020C)
@@ -2623,9 +2848,9 @@ class DevLauncherApp(ctk.CTk):
                     elif msg in (0x0204, 0x0205): btn_name = 'right'
                     elif msg in (0x0207, 0x0208): btn_name = 'middle'
                     elif msg in (0x020B, 0x020C):
-                        hiword = (getattr(data, 'mouseData', 0) >> 16) & 0xFFFF
-                        if hiword == 1: btn_name = 'x1'
-                        elif hiword == 2: btn_name = 'x2'
+                        # X1/X2 AHORA SON MANEJADOS POR GlobalHookManager
+                        # Devolvemos True para que Pynput ni se entere, ya que HookManager ya suprimió el evento
+                        return True
 
                     if not btn_name:
                         return True
@@ -2638,58 +2863,13 @@ class DevLauncherApp(ctk.CTk):
                     if not is_down:
                         return True
 
-                    # Buscar TODOS los combos registrados que usen este botón físico
-                    mouse_combos_for_btn = []
-                    for key_id, func in actions.items():
-                        combo = hk.get(key_id)
-                        if combo and is_mouse_combo(combo):
-                            check_btn = btn_name if btn_name in ['x1', 'x2'] else f"mouse_{btn_name}"
-                            if check_btn in combo.lower().split('+'):
-                                mouse_combos_for_btn.append((key_id, func, combo))
-                    
-                    if not mouse_combos_for_btn:
-                        return True  # Ningún combo usa este botón, dejar pasar
-
-                    # Marcar como suprimido y decidir acción en hilo aparte
-                    suppressed_mouse_btns.add(btn_name)
-                    
-                    # ¿Hay conflicto simple/complejo?
-                    has_complex = any(len(c[2].split('+')) > 1 for c in mouse_combos_for_btn)
-                    has_simple = any(len(c[2].split('+')) == 1 for c in mouse_combos_for_btn)
-                    
-                    # Capturar variables para el closure
-                    _btn = btn_name
-                    _combos = list(mouse_combos_for_btn)
-                    _needs_delay = has_complex and has_simple
-                    
-                    def _deferred_execute():
-                        import time
-                        if _needs_delay:
-                            time.sleep(0.06)  # 60ms para que los modificadores se asienten
-                        
-                        candidates = []
-                        for key_id, func, combo in _combos:
-                            if match_mouse_hotkey(combo, _btn):
-                                specificity = len(combo.split('+'))
-                                candidates.append((specificity, key_id, func, combo))
-                        
-                        if candidates:
-                            candidates.sort(key=lambda c: c[0], reverse=True)
-                            _, best_key_id, best_func, best_combo = candidates[0]
-                            # print(f"[Hook] MATCH btn={_btn} -> action={best_key_id} combo={best_combo}")
-                            best_func()
-                        else:
-                            # print(f"[Hook] No match para btn={_btn} tras espera")
-                            pass
-                    
-                    import threading
-                    threading.Thread(target=_deferred_execute, daemon=True).start()
-                    return False  # Suprimir el evento de Windows
-
 
                 def on_click(x, y, button, pressed):
                     if pressed:
-                        btn_name = button.name
+                        btn_name = getattr(button, 'name', str(button))
+                        if btn_name in ['x1', 'x2']:
+                            return True # Ignorar aquí, gestionado por HookManager
+                        
                         candidates = []
                         for key_id, func in actions.items():
                             combo = hk.get(key_id)

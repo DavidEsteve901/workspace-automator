@@ -9,7 +9,11 @@ Una herramienta GUI profesional en Python para automatizar la apertura de tus en
 *   **🧩 Integración Inteligente con FancyZones:**
     *   **Auto-Ajuste Dinámico:** Si mueves una ventana manualmente a otra zona usando `Shift + Drag` de FancyZones, el script lo detecta automáticamente y la une al grupo de esa zona para que puedas seguir rotando entre ellas.
     *   **Fuzzy Matching de Zonas:** El sistema identifica las zonas por posición física (Monitor + Índice de Zona), siendo inmune a cambios accidentales de Layout o UUIDs.
-*   **📚 Apilamiento (Stacking) y Rotación:** Soporte total para la rotación de ventanas en la misma zona (atajo `Win + Alt + Izquierda/Derecha`). Ideal para tener varias terminales o navegadores en el mismo hueco y saltar entre ellos con un solo clic.
+*   **📚 Apilamiento (Stacking) y Rotación:** Soporte total para la rotación de ventanas en la misma zona. Ideal para tener varias terminales o navegadores en el mismo hueco y saltar entre ellos con un solo clic de ratón.
+*   **🖱️ Hooks de Bajo Nivel Inteligentes (Zero-Lag):**
+    *   **Supresión Total de Navegación Indeseada:** Intercepta a nivel de kernel (`WH_MOUSE_LL` y `WH_KEYBOARD_LL`) los botones laterales del ratón (X1/X2). Esto previene que drivers de Razer/Logitech te hagan "Atrás/Adelante" accidentalmente en Chrome o VSCode mientras cambias de espacio de trabajo o rotas ventanas.
+    *   **Bypass de Navegación Inteligente:** Si necesitas usar los botones X1/X2 para su propósito original (Navegar Atrás/Adelante en una web o código), **solo mantén pulsado `Ctrl`, `Alt` o `Shift`** al hacer clic. El launcher soltará el evento de forma nativa a la aplicación.
+    *   **Zero-Lag Architecture:** Reescriptura total usando `GetMessageW` en hilos dedicados para que la escucha de clics no cueste ni un 1% de CPU y el ratón no sufra lag ni microtirones.
 *   **🛡️ Motores de Integridad y Foco:**
     *   **Repaso Final:** Tras lanzar todo el entorno, el script realiza un barrido final de seguridad (1.5s después) para recolocar cualquier ventana que se haya movido accidentalmente durante la carga.
     *   **Foco Forzado:** Técnicas avanzadas (`SwitchToThisWindow` + Simulación Alt) para garantizar que las ventanas carguen en primer plano y listas para usar.
