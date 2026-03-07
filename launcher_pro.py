@@ -240,6 +240,38 @@ set_win_taskbar_icon()
 # SEPARADOR MÁGICO PARA LAS PESTAÑAS
 TAB_SEPARATOR = "--- NUEVA PESTAÑA ---"
 
+# --- TEMA "DARK PRO" ---
+THEME = {
+    "bg_base": "#0A0A0A",        # Fondo principal super oscuro
+    "bg_sidebar": "#121212",     # Gris muy oscuro
+    "bg_main": "#1A1A1A",        # Fondo contenido central
+    "bg_card": "#242424",        # Tarjetas grises
+    "text_main": "#E0E0E0",      # Texto claro
+    "text_muted": "#8A8A8A",     # Texto apagado
+    "accent": "#00D2FF",         # Azul brillante acento
+    "accent_hover": "#00A8CC",   
+    "success": "#00E676",        # Verde éxito
+    "success_hover": "#00C853",  
+    "danger": "#FF1744",         # Rojo botones
+    "danger_hover": "#D50000",
+    "pink_stitch": "#00D2FF",
+    "pink_hover": "#00A8CC",
+    
+    # Nuevos colores vibrantes para Quick Add e Iconos
+    "c_exe":  "#FF5722",         # Naranja (EXE)
+    "c_exe_subtle": "#3D1B13",
+    "c_web":  "#00E676",         # Verde neón (Web)
+    "c_web_subtle": "#163827",
+    "c_ide":  "#2979FF",         # Azul eléctrico (IDE/VSCode)
+    "c_ide_subtle": "#1A2542",
+    "c_obs":  "#D500F9",         # Morado (Obsidian)
+    "c_obs_subtle": "#371540",
+    "c_term": "#FFEA00",         # Amarillo brillante (Terminal)
+    "c_term_subtle": "#3C3814",
+    "c_term_hover": "#545454",
+    "c_term_subtle_grey": "#2A2A2A",
+}
+
 
 class AddIDEDialog(ctk.CTkToplevel):
     def __init__(self, parent):
@@ -1854,10 +1886,22 @@ class DevLauncherApp(ctk.CTk):
         self.available_monitors = []
         self.applied_mappings = {}
         self.fz_layouts_cache = {} # Cache de definiciones de layouts para portabilidad
+        self.drag_cat = None # Para drag & drop de categorías
 
         # Estado global de modificadores para Pynput
         self.kb_modifiers = {"ctrl": False, "alt": False, "shift": False, "win": False}
         self.mouse_btn_states = {"left": False, "right": False, "middle": False}
+
+        self._load_data()
+        self.load_fancyzones_layouts()
+
+        # --- PiP WATCHER (Anclar ventana flotante a todos los escritorios) ---
+        self._pip_watcher_active = False
+        self._pip_watcher_thread = None
+        self._pip_pinned_hwnds = set()  # HWNDs ya anclados para no repetir
+        # -------------------------------------------------------------------
+
+        self.protocol("WM_DELETE_WINDOW", self.on_app_close)
 
         # --- MOTOR CUSTOM DE ZONAS (Sustituto de FZ Runtime) ---
         self.zone_stacks = {} # {(d_guid, m_dev, l_uuid, z_idx): [hwnd1, hwnd2]}
@@ -1870,105 +1914,129 @@ class DevLauncherApp(ctk.CTk):
         self._start_global_hotkeys()
         # ----------------------------------------------------
 
-        # --- PiP WATCHER (Anclar ventana flotante a todos los escritorios) ---
-        self._pip_watcher_active = False
-        self._pip_watcher_thread = None
-        self._pip_pinned_hwnds = set()  # HWNDs ya anclados para no repetir
-        # -------------------------------------------------------------------
+        # --- NUEVA ESTRUCTURA DE LA INTERFAZ (Stitch + PRO Layout) ---
+        self.main_container = ctk.CTkFrame(self, fg_color=THEME["bg_main"])
+        self.main_container.pack(fill="both", expand=True)
 
-        self.protocol("WM_DELETE_WINDOW", self.on_app_close)
+        # -- SIDEBAR --
+        self.sidebar = ctk.CTkFrame(self.main_container, width=240, fg_color=THEME["bg_sidebar"], corner_radius=0)
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
 
-        self._load_data()
-        self.load_fancyzones_layouts()
+        lbl_logo = ctk.CTkLabel(self.sidebar, text="PRO Workspace", font=("Roboto", 20, "bold"), text_color=THEME["accent"])
+        lbl_logo.pack(pady=(20, 0), padx=20, anchor="w")
+        lbl_sub = ctk.CTkLabel(self.sidebar, text="LAUNCHER", font=("Roboto", 10, "bold"), text_color=THEME["text_muted"])
+        lbl_sub.pack(pady=(0, 20), padx=20, anchor="w")
 
-        # --- HEADER ---
-        self.header_frame = ctk.CTkFrame(self)
-        self.header_frame.pack(fill="x", padx=20, pady=(20, 10))
+        ctk.CTkLabel(self.sidebar, text="CATEGORÍAS", font=("Roboto", 11, "bold"), text_color=THEME["text_muted"]).pack(anchor="w", padx=20, pady=(10, 5))
         
-        ctk.CTkLabel(self.header_frame, text="Pro Launcher - Modo:", font=("Roboto", 16, "bold")).pack(side="left", padx=10)
-        self.category_option = ctk.CTkOptionMenu(self.header_frame, values=[], command=self.change_category, width=200)
-        self.category_option.pack(side="left", padx=5)
-        
-        ctk.CTkButton(self.header_frame, text="Renombrar", width=80, fg_color="#555", command=self.rename_category_dialog).pack(side="left", padx=5)
-        ctk.CTkButton(self.header_frame, text="Duplicar", width=80, fg_color="#555", command=self.duplicate_category_dialog).pack(side="left", padx=5)
-        ctk.CTkButton(self.header_frame, text="🗑️", width=40, fg_color="#AA0000", hover_color="#770000", command=self.delete_category).pack(side="left", padx=5)
-        
-        self.btn_hotkeys = ctk.CTkButton(self.header_frame, text="⚙️ Atajos/ Ratón", width=120, fg_color="#444", hover_color="#555", command=self.open_hotkeys_editor)
-        self.btn_hotkeys.pack(side="right", padx=10, pady=10)
-        
-        ctk.CTkButton(self.header_frame, text="+ Nueva", width=80, command=self.add_category_dialog).pack(side="right", padx=10)
+        # Hacemos el categories container scrolleable con altura más compacta
+        self.categories_container = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent", height=200)
+        self.categories_container.pack(fill="x", padx=5, pady=(0, 5))
 
-        # --- POWERTOYS CONFIG ---
-        self.pt_frame = ctk.CTkFrame(self)
-        self.pt_frame.pack(fill="x", padx=20, pady=(0, 10))
+        cat_utils = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        cat_utils.pack(fill="x", padx=20, pady=5)
         
-        top_pt_bar = ctk.CTkFrame(self.pt_frame, fg_color="transparent")
-        top_pt_bar.pack(fill="x", pady=(5, 0))
+        def make_cat_btn(parent, txt, txt_col, cmd, tip_text, is_right=False):
+            btn = ctk.CTkButton(parent, text=txt, font=("Segoe UI", 16), width=32, height=32, 
+                                fg_color="transparent", text_color=txt_col, hover_color=THEME["bg_card"], 
+                                corner_radius=6, command=cmd)
+            btn.pack(side="right" if is_right else "left", padx=2)
+            # Simple Tooltip usando bind (no requiere clase externa compleja)
+            def show_tip(e, t=tip_text): self.title(f"PRO Launcher - {t}")
+            def hide_tip(e): self.title("PRO Launcher")
+            btn.bind("<Enter>", show_tip)
+            btn.bind("<Leave>", hide_tip)
+            
+        make_cat_btn(cat_utils, "＋", THEME["text_muted"], self.add_category_dialog, "Añadir categoría")
+        make_cat_btn(cat_utils, "✎", THEME["text_muted"], self.rename_category_dialog, "Renombrar actual")
+        make_cat_btn(cat_utils, "📄", THEME["text_muted"], self.duplicate_category_dialog, "Duplicar actual")
+        make_cat_btn(cat_utils, "🗑", THEME["danger"], self.delete_category, "Borrar actual", is_right=True)
+
+        ctk.CTkLabel(self.sidebar, text="QUICK ADD", font=("Roboto", 11, "bold"), text_color=THEME["text_muted"]).pack(anchor="w", padx=20, pady=(20, 10))
         
-        ctk.CTkLabel(top_pt_bar, text="FancyZones Base:", font=("Roboto", 14, "bold"), width=120, anchor="w").pack(side="left", padx=(10, 5))
+        def make_quick_btn(parent, txt, col, subtle_col, hover_col, cmd):
+            btn = ctk.CTkButton(parent, text=f"+ {txt}", font=("Roboto", 13, "bold"),
+                                fg_color=subtle_col, text_color=col, hover_color=hover_col,
+                                anchor="center", height=32, corner_radius=6, command=cmd)
+            btn.pack(fill="x", padx=15, pady=4)
+            
+            def on_enter(e): btn.configure(fg_color=hover_col, text_color=col)
+            def on_leave(e): btn.configure(fg_color=subtle_col)
+                
+            btn.bind("<Enter>", on_enter)
+            btn.bind("<Leave>", on_leave)
+                
+        # Calculamos hover "un poco más opaco"
+        def hover_c(col):
+            # Hex to RGB to darken it or lighten it slightly to make it an opaque hover but not 100% full bright
+            return THEME["bg_card"] # default hover
+
+        make_quick_btn(self.sidebar, "EXE", THEME["c_exe"], THEME["c_exe_subtle"], "#522519", self.add_exe)
+        make_quick_btn(self.sidebar, "Web", THEME["c_web"], THEME["c_web_subtle"], "#1E4F36", self.add_url)
+        make_quick_btn(self.sidebar, "IDE", THEME["c_ide"], THEME["c_ide_subtle"], "#213159", self.add_ide_project)
+        make_quick_btn(self.sidebar, "Obs", THEME["c_obs"], THEME["c_obs_subtle"], "#511D5E", self.add_obsidian_vault)
+        # Terminal usa grises en Quick Add
+        make_quick_btn(self.sidebar, "Shell", THEME["text_main"], THEME["c_term_subtle_grey"], THEME["c_term_hover"], self.add_powershell)
+
+        ctk.CTkButton(self.sidebar, text="⚙️ Ajustes / Atajos", fg_color=THEME["bg_card"], hover_color=THEME["accent_hover"], text_color=THEME["text_main"], command=self.open_hotkeys_editor).pack(side="bottom", fill="x", padx=20, pady=20)
+
+        # -- CONTENIDO PRINCIPAL --
+        self.content_area = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.content_area.pack(side="right", fill="both", expand=True, padx=30, pady=30)
+
+        self.content_header = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        self.content_header.pack(fill="x", pady=(0, 20))
+        
+        info_header = ctk.CTkFrame(self.content_header, fg_color="transparent")
+        info_header.pack(side="left")
+        self.lbl_env_name = ctk.CTkLabel(info_header, text="Environment: Development", font=("Roboto", 24, "bold"), text_color=THEME["text_main"])
+        self.lbl_env_name.pack(anchor="w")
+        self.lbl_env_stats = ctk.CTkLabel(info_header, text="0 aplicaciones", font=("Roboto", 12), text_color=THEME["text_muted"])
+        self.lbl_env_stats.pack(anchor="w")
+
+        actions_header = ctk.CTkFrame(self.content_header, fg_color="transparent")
+        actions_header.pack(side="right", anchor="ne")
+        self.btn_launch = ctk.CTkButton(actions_header, text="🚀 Launch", font=("Roboto", 16, "bold"), fg_color=THEME["success"], hover_color=THEME["success_hover"], text_color="#000", width=170, height=52, corner_radius=10, command=self.launch_workspace)
+        self.btn_launch.pack(side="left", padx=2)
+        self.btn_recover = ctk.CTkButton(actions_header, text="↺ Recov.", font=("Roboto", 12, "bold"), fg_color=THEME["accent"], hover_color=THEME["accent_hover"], text_color="#000", width=90, height=52, corner_radius=10, command=self.recover_workspace)
+        self.btn_recover.pack(side="left", padx=2)
+        self.btn_clean_bottom = ctk.CTkButton(actions_header, text="🗑 Clear", font=("Roboto", 16, "bold"), fg_color=THEME["danger"], hover_color=THEME["danger_hover"], text_color="#FFF", width=170, height=52, corner_radius=10, command=self.open_cleaner)
+        self.btn_clean_bottom.pack(side="left", padx=2)
+
+        self.pt_frame = ctk.CTkFrame(self.content_area, fg_color=THEME["bg_card"], corner_radius=10)
+        self.pt_frame.pack(fill="x", pady=(0, 20), ipadx=10, ipady=10)
+        
+        icon_pt = ctk.CTkLabel(self.pt_frame, text="🪟", font=("Segoe UI Emoji", 24))
+        icon_pt.pack(side="left", padx=15)
+        
+        pt_texts = ctk.CTkFrame(self.pt_frame, fg_color="transparent")
+        pt_texts.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(pt_texts, text="FANCYZONES PATH", font=("Roboto", 11, "bold"), text_color=THEME["text_muted"]).pack(anchor="w")
+        
+        pt_input_row = ctk.CTkFrame(pt_texts, fg_color="transparent")
+        pt_input_row.pack(fill="x", pady=(2,0))
         self.fz_path_var = ctk.StringVar(value=self.fancyzones_path)
-        self.fz_path_entry = ctk.CTkEntry(top_pt_bar, textvariable=self.fz_path_var)
-        self.fz_path_entry.pack(side="left", padx=5, fill="x", expand=True)
+        self.fz_path_entry = ctk.CTkEntry(pt_input_row, textvariable=self.fz_path_var, fg_color=THEME["bg_base"], border_color=THEME["bg_card"], text_color=THEME["text_main"], height=28)
+        self.fz_path_entry.pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(pt_input_row, text="💾", width=30, height=28, fg_color="transparent", text_color=THEME["accent"], hover_color=THEME["bg_sidebar"], command=self.save_fz_path).pack(side="left", padx=5)
         
-        btn_info = ctk.CTkButton(top_pt_bar, text="?", width=30, fg_color="#444", hover_color="#666", command=self.show_fz_info)
-        btn_info.pack(side="left", padx=5)
-        
-        ctk.CTkButton(top_pt_bar, text="Guardar/Recargar", width=120, fg_color="#007ACC", hover_color="#005A9E", command=self.save_fz_path).pack(side="right", padx=10)
-        
-        bot_pt_bar = ctk.CTkFrame(self.pt_frame, fg_color="transparent")
-        bot_pt_bar.pack(fill="x", pady=(5, 5))
-        ctk.CTkButton(bot_pt_bar, text="🖥️ Asignar Distribuciones por Pantalla/Escritorio", 
-                      fg_color="#4B4B4B", hover_color="#333", command=self.open_assigner).pack(side="right", padx=10)
+        ctk.CTkButton(self.pt_frame, text="Distribute", font=("Roboto", 12, "bold"), fg_color=THEME["bg_sidebar"], hover_color=THEME["accent_hover"], text_color=THEME["accent"], command=self.open_assigner).pack(side="right", padx=15)
 
-        # --- FANCY ZONES SYNC WARNING ---
-        self.fz_warning_frame = ctk.CTkFrame(self, fg_color="transparent")
-        # No empaquetar por defecto, se empaqueta si hay discrepancias en _update_fz_warning
-        
-        self.fz_warning_inner = ctk.CTkFrame(self.fz_warning_frame, fg_color="#2B2B2B", border_width=1, border_color="#E5A00D")
-        
-        self.fz_warning_label = ctk.CTkLabel(self.fz_warning_inner, text="", font=("Roboto", 12),
-                                              text_color="#FFD700", anchor="w", wraplength=700)
-        self.fz_warning_label.pack(side="left", fill="x", expand=True, padx=(10, 5), pady=8)
-        
-        self.btn_fz_sync = ctk.CTkButton(self.fz_warning_inner, text="🔄 Sincronizar Layouts", 
-                                          width=160, height=30, font=("Roboto", 11, "bold"),
-                                          fg_color="#E5A00D", hover_color="#B57B02", text_color="#000",
-                                          command=self._on_sync_fz_click)
-        self.btn_fz_sync.pack(side="right", padx=(5, 10), pady=8)
+        self.fz_warning_frame = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        self.fz_warning_inner = ctk.CTkFrame(self.fz_warning_frame, fg_color=THEME["bg_sidebar"], border_width=1, border_color="#E5A00D", corner_radius=10)
+        self.fz_warning_label = ctk.CTkLabel(self.fz_warning_inner, text="", font=("Roboto", 12), text_color="#E5A00D", anchor="w", wraplength=700)
+        self.fz_warning_label.pack(side="left", fill="x", expand=True, padx=(15, 5), pady=10)
+        self.btn_fz_sync = ctk.CTkButton(self.fz_warning_inner, text="🔄 Sync", width=100, font=("Roboto", 12, "bold"), fg_color="#E5A00D", hover_color="#B57B02", text_color="#000", command=self._on_sync_fz_click)
+        self.btn_fz_sync.pack(side="right", padx=(5, 15), pady=10)
 
-        # --- LANZAR Y LIMPIAR ---
-        self.action_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.action_frame.pack(fill="x", padx=20, pady=10)
-        
-        self.btn_launch = ctk.CTkButton(self.action_frame, text="🚀 LANZAR ENTORNO", height=50, font=("Roboto", 14, "bold"), 
-                                        fg_color="#2CC985", hover_color="#24A36B", command=self.launch_workspace)
-        self.btn_launch.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        list_header_frame = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        list_header_frame.pack(fill="x", pady=(10, 5))
+        self.lbl_apps_count = ctk.CTkLabel(list_header_frame, text="CONFIGURED APPS (0)", font=("Roboto", 12, "bold"), text_color=THEME["text_muted"])
+        self.lbl_apps_count.pack(side="left")
 
-        self.btn_recover = ctk.CTkButton(self.action_frame, text="🔄", height=50, width=50, font=("Roboto", 18, "bold"), 
-                                        fg_color="#007ACC", hover_color="#005A9E", command=self.recover_workspace)
-        self.btn_recover.pack(side="left", padx=(5, 0))
-        
-        self.btn_recover_info = ctk.CTkButton(self.action_frame, text="?", height=50, width=30, font=("Roboto", 14, "bold"), 
-                                        fg_color="#444", hover_color="#666", command=self.show_recover_info)
-        self.btn_recover_info.pack(side="left", padx=(5, 5))
-        
-        self.btn_clean_bottom = ctk.CTkButton(self.action_frame, text="🧹 LIMPIAR ENTORNO", height=50, font=("Roboto", 14, "bold"), 
-                                       fg_color="#AA0000", hover_color="#770000", command=self.open_cleaner)
-        self.btn_clean_bottom.pack(side="left", fill="x", expand=True, padx=(5, 0))
-
-        # --- FOOTER ---
-        self.footer_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.footer_frame.pack(side="bottom", fill="x", padx=20, pady=20)
-        
-        ctk.CTkButton(self.footer_frame, text="Añadir .EXE", width=90, command=self.add_exe).pack(side="left", padx=5, expand=True, fill="x")
-        ctk.CTkButton(self.footer_frame, text="Web", width=70, fg_color="#E5A00D", hover_color="#B57B02", command=self.add_url).pack(side="left", padx=5, expand=True, fill="x")
-        ctk.CTkButton(self.footer_frame, text="IDE", width=90, fg_color="#007ACC", hover_color="#005A9E", command=self.add_ide_project).pack(side="left", padx=5, expand=True, fill="x")
-        ctk.CTkButton(self.footer_frame, text="Obsidian", width=90, fg_color="#7A3EE8", hover_color="#5D24B8", command=self.add_obsidian_vault).pack(side="left", padx=5, expand=True, fill="x")
-        ctk.CTkButton(self.footer_frame, text="Terminal (Tabs)", width=110, fg_color="#5A5A5A", hover_color="#333", command=self.add_powershell).pack(side="left", padx=5, expand=True, fill="x")
-
-        # --- LISTA ---
-        self.apps_frame = ctk.CTkScrollableFrame(self, label_text="Elementos configurados")
-        self.apps_frame.pack(side="top", fill="both", expand=True, padx=20, pady=10)
+        self.apps_frame = ctk.CTkScrollableFrame(self.content_area, fg_color="transparent")
+        self.apps_frame.pack(fill="both", expand=True)
 
         self.refresh_categories()
         # Comprobar layouts de FancyZones al iniciar
@@ -2138,7 +2206,6 @@ class DevLauncherApp(ctk.CTk):
             cats = ["General"]
             self._save_data()
         
-        self.category_option.configure(values=cats)
         target = cats[0]
         if self.current_category in cats: target = self.current_category
         elif self.last_saved_category in cats:
@@ -2146,15 +2213,134 @@ class DevLauncherApp(ctk.CTk):
             self.last_saved_category = None
             
         self.current_category = target
-        self.category_option.set(target)
+        
+        # Actualizar lista de categorías en el sidebar
+        if hasattr(self, 'categories_container'):
+            num_cats = len(cats)
+            # Altura máxima de 220px, o lo justo para las que haya
+            target_h = min(220, (num_cats * 32) + 10) if num_cats > 0 else 10
+            self.categories_container.configure(height=target_h)
+            
+            # Función para controlar la visibilidad real (por color) del scrollbar
+            def update_scrollbar_visibility(event=None):
+                is_scroll_needed = num_cats > 6
+                if not is_scroll_needed:
+                    self.categories_container.configure(scrollbar_button_color=THEME["bg_sidebar"], 
+                                                       scrollbar_button_hover_color=THEME["bg_sidebar"])
+                    return
+
+                # Comprobar si el mouse está realmente fuera del área global del contenedor
+                x, y = self.winfo_pointerxy()
+                widget_under_mouse = self.winfo_containing(x, y)
+                
+                # Si el widget bajo el mouse es el contenedor o cualquier hijo suyo, lo mantenemos visible
+                is_inside = False
+                w = widget_under_mouse
+                while w:
+                    if w == self.categories_container:
+                        is_inside = True
+                        break
+                    w = w.master if hasattr(w, "master") else None
+                
+                if is_inside:
+                    self.categories_container.configure(scrollbar_button_color="#333333", 
+                                                       scrollbar_button_hover_color="#444444")
+                else:
+                    self.categories_container.configure(scrollbar_button_color=THEME["bg_sidebar"], 
+                                                       scrollbar_button_hover_color=THEME["bg_sidebar"])
+
+            # Inicialmente oculta
+            self.categories_container.after(100, update_scrollbar_visibility)
+            
+            # Bindings estables: Usamos Enter y Leave pero con verificación de widget real
+            self.categories_container.bind("<Enter>", update_scrollbar_visibility, add="+")
+            self.categories_container.bind("<Leave>", update_scrollbar_visibility, add="+")
+
+            for w in self.categories_container.winfo_children(): w.destroy()
+            for cat in cats:
+                is_active = (cat == self.current_category)
+                bg_color = THEME["bg_card"] if is_active else "transparent"
+                text_color = THEME["text_main"] if is_active else THEME["text_muted"]
+                font_weight = "bold" if is_active else "normal"
+                
+                # Contenedor para fila de categoría + flechas
+                row = ctk.CTkFrame(self.categories_container, fg_color="transparent")
+                row.pack(fill="x", pady=1)
+                
+                # Flechas de ordenación con espacio RESERVADO (evita que el botón se mueva)
+                arr_frame = ctk.CTkFrame(row, fg_color="transparent", width=24, height=28)
+                arr_frame.pack_propagate(False) 
+                arr_frame.pack(side="right", padx=2)
+                
+                # Botón de categoría (con control de texto largo)
+                display_name = cat if len(cat) < 22 else cat[:19] + "..."
+                btn = ctk.CTkButton(row, text=f"📂  {display_name}", fg_color=bg_color, 
+                                    text_color=text_color, hover_color=THEME["bg_card"], 
+                                    anchor="w", font=("Roboto", 13, font_weight), corner_radius=6,
+                                    height=28,
+                                    command=lambda c=cat: self.change_category(c))
+                btn.pack(side="left", fill="x", expand=True)
+                
+                if is_active:
+                    arrow_btns = []
+                    # Para la activa, las flechas son grises y blancas al hover
+                    def make_arrow(parent, txt, cmd):
+                        b = ctk.CTkButton(parent, text=txt, width=20, height=12, font=("Segoe UI", 8),
+                                          fg_color="transparent", text_color=THEME["text_muted"], 
+                                          hover_color=THEME["bg_card"], corner_radius=2, command=cmd)
+                        b.pack(side="top" if txt=="▲" else "bottom", pady=0)
+                        
+                        # Hover directo sobre la flecha para ponerla en BLANCO
+                        def arrow_enter(e, btn=b): btn.configure(text_color="#FFFFFF")
+                        def arrow_leave(e, btn=b): btn.configure(text_color=THEME["text_muted"])
+                        b.bind("<Enter>", arrow_enter)
+                        b.bind("<Leave>", arrow_leave)
+                        arrow_btns.append(b)
+
+                    make_arrow(arr_frame, "▲", lambda c=cat: self._move_cat(c, -1))
+                    make_arrow(arr_frame, "▼", lambda c=cat: self._move_cat(c, 1))
+                
+                # Ya no usamos bindings de hover en la fila o el botón principal para las flechas
+                
+        if hasattr(self, 'lbl_env_name'):
+            self.lbl_env_name.configure(text=f"Environment: {self.current_category}")
+            
         self.refresh_apps_list()
 
     def change_category(self, choice):
         self.current_category = choice
         self._save_data()
-        self.refresh_apps_list()
-        # Comprobar si los layouts de FancyZones coinciden con esta categoría
+        self.refresh_categories()  # Importante: refrescar para cambiar el botón activo en el sidebar
         self.after(200, self._update_fz_warning)
+
+    # --- REORDENACIÓN DE CATEGORÍAS (Flechas) ---
+    def _move_cat(self, cat, direction):
+        keys = list(self.apps_data.keys())
+        idx = keys.index(cat)
+        new_idx = idx + direction
+        
+        if 0 <= new_idx < len(keys):
+            keys.pop(idx)
+            keys.insert(new_idx, cat)
+            self.apps_data = {k: self.apps_data[k] for k in keys}
+            self._save_data()
+            self.refresh_categories()
+
+    def _reorder_categories(self, source, target):
+        keys = list(self.apps_data.keys())
+        try:
+            idx_s = keys.index(source)
+            idx_t = keys.index(target)
+            keys.pop(idx_s)
+            keys.insert(idx_t, source)
+            
+            # Reconstruir dict manteniendo el nuevo orden
+            new_data = {k: self.apps_data[k] for k in keys}
+            self.apps_data = new_data
+            self._save_data()
+            self.refresh_categories()
+        except ValueError:
+            pass
 
     def add_category_dialog(self):
         if n := ctk.CTkInputDialog(text="Nombre:", title="Nueva").get_input():
@@ -2197,41 +2383,75 @@ class DevLauncherApp(ctk.CTk):
     def refresh_apps_list(self):
         for w in self.apps_frame.winfo_children(): w.destroy()
         items = self.apps_data.get(self.current_category, [])
+        
+        if hasattr(self, 'lbl_env_stats'):
+            self.lbl_env_stats.configure(text=f"Total: {len(items)} aplicaciones")
+        if hasattr(self, 'lbl_apps_count'):
+            self.lbl_apps_count.configure(text=f"CONFIGURED APPS ({len(items)})")
+
         if not items:
-            ctk.CTkLabel(self.apps_frame, text="Lista vacía.", text_color="gray").pack(pady=20)
+            ctk.CTkLabel(self.apps_frame, text="No hay aplicaciones configuradas en este entorno.", font=("Roboto", 13, "italic"), text_color=THEME["text_muted"]).pack(pady=40)
             return
 
         for idx, item in enumerate(items):
-            row = ctk.CTkFrame(self.apps_frame)
-            row.pack(fill="x", pady=5, padx=5)
+            row = ctk.CTkFrame(self.apps_frame, fg_color=THEME["bg_card"], corner_radius=10)
+            row.pack(fill="x", pady=(0, 10), padx=2)
             
             t = item.get('type')
             p = item.get('path', '')
             cmd = item.get('cmd', '')
 
+            # Estilos y colores vivos de la paleta Dark Pro con bloques avatar
             if t == 'url': 
                 num_tabs = cmd.count(TAB_SEPARATOR) + 1 if cmd else 1
-                browser_display = item.get('browser_display', 'Edge')
-                if browser_display.startswith("🖥️"): browser_display = "Default"
-                elif browser_display.startswith("✏️"): browser_display = item.get('browser', 'Custom')
-                tag, col, txt = "[WEB]", "#E5A00D", f"Web [{browser_display}] ({num_tabs} pest.): {p}"
-            elif t == 'vscode': tag, col, txt = "[CODE]", "#007ACC", f"Proyecto: {os.path.basename(p)}"
-            elif t == 'ide': 
-                ide_cmd = str(item.get('ide_cmd', 'IDE')).upper()[:6]
-                tag, col, txt = f"[{ide_cmd}]", "#007ACC", f"Proyecto: {os.path.basename(p)} ({item.get('ide_cmd')})"
-            elif t == 'obsidian': tag, col, txt = "[OBS]", "#7A3EE8", f"Vault: {os.path.basename(p)}"
+                browser_display = item.get('browser_display', 'Edge').replace("🖥️", "").replace("✏️", "").strip()
+                tag, col, subcol, txt = " WEB ", THEME["c_web"], THEME["c_web_subtle"], f"Web [{browser_display}] ({num_tabs} pest.)"
+                subtxt = p
+                icon_char = "Wb"
+            elif t == 'vscode' or t == 'ide': 
+                ide_cmd = str(item.get('ide_cmd', 'CODE')) if t == 'ide' else "VS Code"
+                tag, col, subcol, txt = f" {ide_cmd[:6].upper()} ", THEME["c_ide"], THEME["c_ide_subtle"], f"Proyecto: {os.path.basename(p)}"
+                subtxt = p
+                icon_char = "</>"
+            elif t == 'obsidian': 
+                tag, col, subcol, txt = " OBS ", THEME["c_obs"], THEME["c_obs_subtle"], f"Vault: {os.path.basename(p)}"
+                subtxt = p
+                icon_char = "Ob"
             elif t == 'powershell':
-                # Contar pestañas
                 num_tabs = cmd.count(TAB_SEPARATOR) + 1
-                tag, col, txt = "[TERM]", "#5A5A5A", f"Terminal ({num_tabs} pestañas) en: {os.path.basename(p)}"
-            else: tag, col, txt = "[APP]", "gray", os.path.basename(p)
+                tag, col, subcol, txt = " TERM ", THEME["c_term"], THEME["c_term_subtle"], f"Terminal ({num_tabs} pest.)"
+                subtxt = os.path.basename(p)
+                icon_char = ">_"
+            else: 
+                tag, col, subcol, txt = " EXE ", THEME["c_exe"], THEME["c_exe_subtle"], os.path.basename(p)
+                subtxt = os.path.dirname(p)
+                icon_char = "Ex"
 
-            ctk.CTkLabel(row, text=tag, text_color=col, width=60, font=("Consolas", 12, "bold")).pack(side="left", padx=5)
-            ctk.CTkLabel(row, text=txt, anchor="w").pack(side="left", padx=10, fill="x", expand=True)
+            # Icon block con color de la categoría insted of text emojis
+            icon_frame = ctk.CTkFrame(row, width=44, height=44, fg_color=col, corner_radius=10)
+            icon_frame.pack(side="left", padx=10, pady=10)
+            icon_frame.pack_propagate(False)
+            ctk.CTkLabel(icon_frame, text=icon_char, font=("Consolas", 18, "bold"), text_color="#000000").place(relx=0.5, rely=0.5, anchor="center")
+
+            # Text block (middle)
+            text_frame = ctk.CTkFrame(row, fg_color="transparent")
+            text_frame.pack(side="left", fill="x", expand=True, padx=5, pady=10)
             
-            ctk.CTkButton(row, text="✏️", width=30, fg_color="#E5A00D", hover_color="#B57B02", command=lambda i=idx: self.edit_app_item(i)).pack(side="right", padx=2)
+            title_row = ctk.CTkFrame(text_frame, fg_color="transparent")
+            title_row.pack(fill="x")
             
-            ctk.CTkButton(row, text="X", width=30, fg_color="#FF5555", command=lambda i=idx: self.remove_item(i)).pack(side="right", padx=5)
+            # Titulo principal de la fila
+            ctk.CTkLabel(title_row, text=txt, font=("Roboto", 14, "bold"), text_color=THEME["text_main"]).pack(side="left")
+            # Etiqueta (Tag) pequeña a color
+            ctk.CTkLabel(title_row, text=tag, font=("Consolas", 10, "bold"), fg_color=subcol, text_color=col, corner_radius=4).pack(side="left", padx=10)
+            
+            ctk.CTkLabel(text_frame, text=subtxt, font=("Roboto", 11), text_color=THEME["text_muted"], anchor="w").pack(fill="x")
+
+            # Actions block (right)
+            act_frame = ctk.CTkFrame(row, fg_color="transparent")
+            act_frame.pack(side="right", padx=10)
+            ctk.CTkButton(act_frame, text="✏️", width=30, height=30, fg_color="transparent", text_color=THEME["accent"], hover_color=THEME["bg_sidebar"], command=lambda i=idx: self.edit_app_item(i)).pack(side="left", padx=2)
+            ctk.CTkButton(act_frame, text="🗑️", width=30, height=30, fg_color="transparent", text_color=THEME["danger"], hover_color=THEME["bg_sidebar"], command=lambda i=idx: self.remove_item(i)).pack(side="left", padx=2)
 
     def edit_app_item(self, idx):
         item = self.apps_data[self.current_category][idx]
