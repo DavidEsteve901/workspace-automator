@@ -2384,6 +2384,32 @@ class DevLauncherApp(ctk.CTk):
         for w in self.apps_frame.winfo_children(): w.destroy()
         items = self.apps_data.get(self.current_category, [])
         
+        # --- Scrollbar Auto-hide para Apps ---
+        # --- Scrollbar Auto-hide para Apps ---
+        def update_apps_scrollbar_visibility(event=None):
+            # Mostramos scroll solo si hay más de 6 items
+            is_scroll_needed = len(items) > 6
+            
+            x, y = self.winfo_pointerxy()
+            target = self.winfo_containing(x, y)
+            is_inside = False
+            curr = target
+            while curr:
+                if curr == self.apps_frame:
+                    is_inside = True
+                    break
+                try: curr = curr.master
+                except: break
+            
+            if is_scroll_needed and is_inside:
+                self.apps_frame.configure(scrollbar_button_color="#333333", scrollbar_button_hover_color="#444444")
+            else:
+                self.apps_frame.configure(scrollbar_button_color=THEME["bg_main"], scrollbar_button_hover_color=THEME["bg_main"])
+
+        self.apps_frame.bind("<Enter>", update_apps_scrollbar_visibility, add="+")
+        self.apps_frame.bind("<Leave>", update_apps_scrollbar_visibility, add="+")
+        self.apps_frame.after(100, update_apps_scrollbar_visibility)
+
         if hasattr(self, 'lbl_env_stats'):
             self.lbl_env_stats.configure(text=f"Total: {len(items)} aplicaciones")
         if hasattr(self, 'lbl_apps_count'):
@@ -2450,8 +2476,64 @@ class DevLauncherApp(ctk.CTk):
             # Actions block (right)
             act_frame = ctk.CTkFrame(row, fg_color="transparent")
             act_frame.pack(side="right", padx=10)
+            
+            # Flechas de reordenación de apps (visibilidad dinámica)
+            arr_apps = ctk.CTkFrame(act_frame, fg_color="transparent", width=20)
+            arr_apps.pack(side="left", padx=5)
+            
+            def make_app_arrow(parent, txt, cmd):
+                b = ctk.CTkButton(parent, text=txt, width=16, height=12, font=("Segoe UI", 9),
+                                  fg_color="transparent", text_color=THEME["bg_card"], # Invisible on card
+                                  hover_color=THEME["bg_sidebar"], corner_radius=2, command=cmd)
+                b.pack(side="top" if txt=="▲" else "bottom", pady=1)
+                return b
+
+            up_b = make_app_arrow(arr_apps, "▲", lambda i=idx: self._move_app(i, -1))
+            dw_b = make_app_arrow(arr_apps, "▼", lambda i=idx: self._move_app(i, 1))
+
+            # --- Lógica de Hover Independiente por Fila ---
+            def on_item_sync(e, r_ref=row, u_ref=up_b, d_ref=dw_b):
+                x, y = self.winfo_pointerxy()
+                target = self.winfo_containing(x, y)
+                is_here = False
+                curr = target
+                while curr:
+                    if curr == r_ref: is_here = True; break
+                    try: curr = curr.master
+                    except: break
+                
+                if is_here:
+                    # Mostrar gris si el mouse está dentro
+                    if u_ref.cget("text_color") != "#FFFFFF": u_ref.configure(text_color=THEME["text_muted"])
+                    if d_ref.cget("text_color") != "#FFFFFF": d_ref.configure(text_color=THEME["text_muted"])
+                else:
+                    # Ocultar (color del fondo)
+                    u_ref.configure(text_color=THEME["bg_card"])
+                    d_ref.configure(text_color=THEME["bg_card"])
+
+            def set_w(e, b): b.configure(text_color="#FFFFFF")
+            def set_g(e, b): b.configure(text_color=THEME["text_muted"])
+            
+            # Bindings con captura explícita para evitar el bug del scope
+            row.bind("<Enter>", lambda e, r=row, u=up_b, d=dw_b: on_item_sync(e, r, u, d), add="+")
+            row.bind("<Leave>", lambda e, r=row, u=up_b, d=dw_b: on_item_sync(e, r, u, d), add="+")
+            row.bind("<Motion>", lambda e, r=row, u=up_b, d=dw_b: on_item_sync(e, r, u, d), add="+")
+            
+            up_b.bind("<Enter>", lambda e, b=up_b: set_w(e, b), add="+")
+            up_b.bind("<Leave>", lambda e, b=up_b: set_g(e, b), add="+")
+            dw_b.bind("<Enter>", lambda e, b=dw_b: set_w(e, b), add="+")
+            dw_b.bind("<Leave>", lambda e, b=dw_b: set_g(e, b), add="+")
+
             ctk.CTkButton(act_frame, text="✏️", width=30, height=30, fg_color="transparent", text_color=THEME["accent"], hover_color=THEME["bg_sidebar"], command=lambda i=idx: self.edit_app_item(i)).pack(side="left", padx=2)
             ctk.CTkButton(act_frame, text="🗑️", width=30, height=30, fg_color="transparent", text_color=THEME["danger"], hover_color=THEME["bg_sidebar"], command=lambda i=idx: self.remove_item(i)).pack(side="left", padx=2)
+
+    def _move_app(self, idx, direction):
+        items = self.apps_data.get(self.current_category, [])
+        new_idx = idx + direction
+        if 0 <= new_idx < len(items):
+            items[idx], items[new_idx] = items[new_idx], items[idx]
+            self._save_data()
+            self.refresh_apps_list()
 
     def edit_app_item(self, idx):
         item = self.apps_data[self.current_category][idx]
