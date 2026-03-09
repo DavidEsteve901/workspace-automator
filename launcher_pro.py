@@ -711,7 +711,7 @@ class AdvancedItemDialog(ctk.CTkToplevel):
             self.ide_cmd_entry.pack(side="left", fill="x", expand=True, padx=5)
 
         # Monitor
-        monitors = parent.available_monitors if hasattr(parent, 'available_monitors') and parent.available_monitors else ["Por defecto"]
+        monitors = list(parent.available_monitors) if hasattr(parent, 'available_monitors') and parent.available_monitors else ["Por defecto"]
         if WINDOWS_LIBS_AVAILABLE and len(monitors) == 1:
             try:
                 for i, m in enumerate(win32api.EnumDisplayMonitors()):
@@ -2040,25 +2040,26 @@ class DevLauncherApp(ctk.CTk):
                         al = app_layout.get("applied-layout", {})
                         uuid = str(al.get("uuid", "")).strip("{}").lower()
                         
+                        dev = app_layout.get("device", {})
+                        mon_str = dev.get("monitor", "")
+                        mon_num = dev.get("monitor-number", "?")
+                        mon_friendly = None
+                        
+                        if mon_str:
+                            clean_mon = mon_str.replace("\\\\.\\", "").replace("DISPLAY", "Display ")
+                            if clean_mon == mon_str and "LOCALDISPLAY" in mon_str: clean_mon = "Display Principal"
+                            mon_friendly = f"Pantalla {mon_num} [{clean_mon}]"
+                            
+                            if mon_friendly not in self.available_monitors and mon_friendly != "Pantalla ? []":
+                                self.available_monitors.append(mon_friendly)
+                        
                         if uuid and uuid != "00000000-0000-0000-0000-000000000000":
                             default_uuid = uuid
-                            
-                            # Enlace para autodetectar qué escritorio usa qué layout:
-                            dev = app_layout.get("device", {})
                             vd_guid = dev.get("virtual-desktop", "").upper()
                             
-                            if vd_guid:
+                            if vd_guid and mon_friendly:
                                 lname = next((n for n, dt in self.available_layouts.items() if dt.get("uuid") == uuid), None)
                                 if lname:
-                                    mon_str = dev.get("monitor", "")
-                                    mon_num = dev.get("monitor-number", "?")
-                                    clean_mon = mon_str.replace("\\\\.\\", "").replace("DISPLAY", "Display ")
-                                    if clean_mon == mon_str and "LOCALDISPLAY" in mon_str: clean_mon = "Display Principal"
-                                    
-                                    mon_friendly = f"Pantalla {mon_num} [{clean_mon}]"
-                                    if mon_friendly not in self.available_monitors and mon_friendly != "Pantalla ? []":
-                                        self.available_monitors.append(mon_friendly)
-                                        
                                     self.applied_mappings[f"{vd_guid}_{mon_friendly}"] = lname
                                     
             except Exception as e: print("No se pudo leer applied-layouts:", e)
