@@ -22,17 +22,23 @@ public sealed class GlobalHookManager : IDisposable
     private bool _suppressedX1;
     private bool _suppressedX2;
 
-    // ── Public callbacks ───────────────────────────────────────────────────
-    public Action? OnX1Down { get; set; }
-    public Action? OnX2Down { get; set; }
-    public Action? OnX1Up   { get; set; }
-    public Action? OnX2Up   { get; set; }
+    // ── Public events ──────────────────────────────────────────────────────
+    public event Action? OnX1Down;
+    public event Action? OnX2Down;
+    public event Action? OnX1Up;
+    public event Action? OnX2Up;
+    public event Action<int, bool, bool, bool, bool>? OnKeyDown; // vkCode, alt, ctrl, shift, win
 
     /// <summary>
     /// Optional predicate: given (button="x1"|"x2", alt, ctrl, shift) → true if the combo is mapped.
     /// If mapped, the button is always suppressed. If not mapped, pass-through when modifier held.
     /// </summary>
     public Func<string, bool, bool, bool, bool>? CheckXMapped { get; set; }
+    
+    /// <summary>
+    /// Optional predicate for keyboard: (vkCode, alt, ctrl, shift, win) → true to suppress
+    /// </summary>
+    public Func<int, bool, bool, bool, bool, bool>? CheckKeyMapped { get; set; }
 
     public void Start()
     {
@@ -137,13 +143,24 @@ public sealed class GlobalHookManager : IDisposable
     // ── Keyboard hook callback ─────────────────────────────────────────────
     private nint KeyboardHookProc(int nCode, nuint wParam, nint lParam)
     {
-        if (nCode == User32.HC_ACTION &&
-            (wParam == User32.WM_KEYDOWN || wParam == User32.WM_KEYUP ||
-             wParam == User32.WM_SYSKEYDOWN || wParam == User32.WM_SYSKEYUP))
+        if (nCode == User32.HC_ACTION && (wParam == User32.WM_KEYDOWN || wParam == User32.WM_SYSKEYDOWN))
         {
             var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
-            if (data.vkCode == User32.VK_BROWSER_BACK || data.vkCode == User32.VK_BROWSER_FORWARD)
+            int vk   = (int)data.vkCode;
+
+            if (vk == User32.VK_BROWSER_BACK || vk == User32.VK_BROWSER_FORWARD)
                 return 1; // Suppress browser nav keys
+
+            bool alt   = (User32.GetAsyncKeyState(User32.VK_ALT)   & 0x8000) != 0 || wParam == User32.WM_SYSKEYDOWN;
+            bool ctrl  = (User32.GetAsyncKeyState(User32.VK_CTRL)  & 0x8000) != 0;
+            bool shift = (User32.GetAsyncKeyState(User32.VK_SHIFT) & 0x8000) != 0;
+            bool win   = (User32.GetAsyncKeyState(User32.VK_LWIN)  & 0x8000) != 0 || (User32.GetAsyncKeyState(User32.VK_RWIN) & 0x8000) != 0;
+
+            if (CheckKeyMapped?.Invoke(vk, alt, ctrl, shift, win) ?? false)
+            {
+                Task.Run(() => OnKeyDown?.Invoke(vk, alt, ctrl, shift, win));
+                return 1; // Suppress
+            }
         }
         return User32.CallNextHookEx(_hookKeyboard, nCode, wParam, lParam);
     }

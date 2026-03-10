@@ -22,6 +22,9 @@ public class AppConfig
 
     [JsonPropertyName("pip_watcher_enabled")]
     public bool PipWatcherEnabled { get; set; } = true;
+
+    [JsonPropertyName("fz_custom_path")]
+    public string? FzCustomPath { get; set; }
 }
 
 public class AppItem

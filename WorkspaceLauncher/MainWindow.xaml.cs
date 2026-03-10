@@ -23,9 +23,13 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        // Load configuration
+        ConfigManager.Instance.Load();
+
         await InitializeWebView();
         InitializeTray();
         InitializeHooks();
+        PipWatcher.Instance.Start();
     }
 
     private async Task InitializeWebView()
@@ -41,18 +45,29 @@ public partial class MainWindow : Window
         _bridge = new WebBridge(webView.CoreWebView2, this);
         _bridge.Initialize();
 
-        // Load embedded frontend or dev server
+        // Dev mode: load from Vite dev server
+        string? devUrl = Environment.GetEnvironmentVariable("WL_DEV_URL");
+        if (!string.IsNullOrEmpty(devUrl))
+        {
+            Console.WriteLine($"[MainWindow] DEV MODE: Loading {devUrl}");
+            webView.CoreWebView2.Navigate(devUrl);
+            return;
+        }
+
+        // Production: load embedded frontend
         string frontendPath = GetFrontendPath();
         if (frontendPath != null)
-            webView.CoreWebView2.SetVirtualHostNameToFolderMapping("launcher.local", frontendPath, CoreWebView2HostResourceAccessKind.Allow);
-
-        webView.CoreWebView2.Navigate("https://launcher.local/index.html");
+        {
+            webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                "launcher.local", frontendPath, CoreWebView2HostResourceAccessKind.Allow);
+            webView.CoreWebView2.Navigate("https://launcher.local/index.html");
+        }
     }
 
     private string GetFrontendPath()
     {
-        // In development, use the dist folder relative to the exe
-        string baseDir = AppContext.BaseDirectory;
+        // Check for dist folder next to the exe
+        string baseDir  = AppContext.BaseDirectory;
         string distPath = Path.Combine(baseDir, "frontend", "dist");
         if (Directory.Exists(distPath))
             return distPath;
@@ -70,11 +85,9 @@ public partial class MainWindow : Window
         foreach (var name in assembly.GetManifestResourceNames())
         {
             if (!name.Contains("frontend") || !name.Contains("dist")) continue;
-            // Convert resource name to relative path
             string relativePath = name
                 .Replace("WorkspaceLauncher.frontend.dist.", "")
                 .Replace('.', Path.DirectorySeparatorChar);
-            // Fix known extensions
             foreach (var ext in new[] { "html", "js", "css", "json", "ico", "png", "svg", "woff", "woff2", "ttf" })
             {
                 if (relativePath.EndsWith("." + ext)) break;
@@ -103,8 +116,14 @@ public partial class MainWindow : Window
     private void InitializeHooks()
     {
         _hookManager = new GlobalHookManager();
-        _hookManager.OnX1Down = () => _bridge?.SendEvent("hotkey", new { action = "x1_down" });
-        _hookManager.OnX2Down = () => _bridge?.SendEvent("hotkey", new { action = "x2_down" });
+        
+        // Connect UI bridge first for telemetry/UI updates
+        _hookManager.OnX1Down += () => _bridge?.SendEvent("hotkey", new { action = "x1_down" });
+        _hookManager.OnX2Down += () => _bridge?.SendEvent("hotkey", new { action = "x2_down" });
+        
+        // Connect HotkeyProcessor for actual logic execution
+        HotkeyProcessor.Instance.Initialize(_hookManager);
+        
         _hookManager.Start();
     }
 

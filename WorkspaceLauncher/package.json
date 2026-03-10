@@ -1,44 +1,15 @@
 {
   "name": "workspace-launcher",
   "version": "1.0.0",
-  "description": "Workspace Launcher — native desktop app",
-  "main": "electron/main.js",
+  "description": "Workspace Launcher — native C#/.NET + React app",
   "private": true,
   "scripts": {
-    "dev":       "concurrently -k \"npm run dev:react\" \"wait-on tcp:5173 && cross-env ELECTRON_DEV=1 electron .\"",
-    "dev:react": "cd frontend && npm run dev",
-    "build":     "npm run build:react && npm run package",
-    "build:react": "cd frontend && npm run build",
-    "package":   "electron-packager . WorkspaceLauncher --platform=win32 --arch=x64 --out=dist-exe --overwrite --asar --ignore=\"node_modules\" --ignore=\"dist-exe\" --ignore=\"dist-builder\" --ignore=\"frontend[\\\\/]node_modules\" --ignore=\"frontend[\\\\/]src\" --ignore=\"dotnet\" --ignore=\"Core\" --ignore=\"Bridge\" --ignore=\"\\.xaml\"",
-    "dist:portable": "npm run build:react && electron-builder --win portable"
+    "dev": "cd frontend && npm run dev",
+    "build:frontend": "cd frontend && npm run build",
+    "dotnet:run": "dotnet run",
+    "dotnet:build": "dotnet build"
   },
   "devDependencies": {
-    "concurrently":       "^8.2.2",
-    "cross-env":          "^7.0.3",
-    "electron":           "^33.4.0",
-    "@electron/packager": "^18.3.6",
-    "electron-builder":   "^25.1.8",
-    "wait-on":            "^7.2.0"
-  },
-  "build": {
-    "appId":         "com.workspacelauncher.app",
-    "productName":   "WorkspaceLauncher",
-    "directories": {
-      "output": "dist-builder"
-    },
-    "files": ["electron/**/*", "frontend/dist/**/*", "!node_modules/**/*"],
-    "extraResources": [
-      { "from": "../mis_apps_config_v2.json", "to": "mis_apps_config_v2.json" },
-      { "from": "../launcher_icon1.ico",      "to": "launcher_icon1.ico" }
-    ],
-    "electronFuseOptions": {
-      "enableEmbeddedAsarIntegrityValidation": false
-    },
-    "win": {
-      "icon": "../launcher_icon1.ico",
-      "forceCodeSigning": false,
-      "sign": null,
-      "target": [{ "target": "portable", "arch": ["x64"] }]
-    }
+    "cross-env": "^7.0.3"
   }
 }

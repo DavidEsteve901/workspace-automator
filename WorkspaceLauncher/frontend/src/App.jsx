@@ -1,15 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
-import { bridge, onEvent, offEvent, MOCK_STATE } from './api/bridge.js'
+import { bridge, onEvent, offEvent } from './api/bridge.js'
 import Sidebar from './components/Sidebar/Sidebar.jsx'
 import AppList from './components/AppList/AppList.jsx'
 import ItemDialog from './components/AppList/ItemDialog.jsx'
 import ConfigPanel from './components/ConfigPanel/ConfigPanel.jsx'
 import TitleBar from './components/TitleBar/TitleBar.jsx'
+import LogConsole from './components/LogConsole/LogConsole.jsx'
 import './App.css'
-
-const IS_ELECTRON = typeof window !== 'undefined' && !!window.electronAPI;
-// Legacy WebView2 compat (WPF version)
-const IS_WEBVIEW2 = !IS_ELECTRON && typeof window.chrome !== 'undefined' && window.chrome?.webview;
 
 export default function App() {
   const [state, setState]               = useState(null)
@@ -20,19 +17,13 @@ export default function App() {
 
   // ── Bootstrap ────────────────────────────────────────────────────────
   useEffect(() => {
-    if (IS_ELECTRON || IS_WEBVIEW2) {
-      const handler = (data) => {
-        setState(data)
-        if (!activeCategory) setActiveCategory(data.lastCategory || Object.keys(data.categories)[0])
-      }
-      onEvent('state_update', handler)
-      bridge.getState()
-      return () => offEvent('state_update', handler)
-    } else {
-      // Dev mode: use mock data
-      setState(MOCK_STATE)
-      setActiveCategory(MOCK_STATE.lastCategory)
+    const handler = (data) => {
+      setState(data)
+      if (!activeCategory) setActiveCategory(data.lastCategory || Object.keys(data.categories)[0])
     }
+    onEvent('state_update', handler)
+    bridge.getState()
+    return () => offEvent('state_update', handler)
   }, [])
 
   // ── Launch progress listener ─────────────────────────────────────────
@@ -64,29 +55,24 @@ export default function App() {
   const handleSaveItem = useCallback((category, index, item) => {
     bridge.saveItem(category, index, item)
     setItemDialog(null)
-    if (IS_WEBVIEW2) bridge.getState()
-    else {
-      setState(prev => {
-        const apps = { ...prev.categories }
-        const list = [...(apps[category] || [])]
-        if (index >= 0 && index < list.length) list[index] = item
-        else list.push(item)
-        apps[category] = list
-        return { ...prev, categories: apps }
-      })
-    }
+    // Optimistic local update; backend will also send state_update
+    setState(prev => {
+      const apps = { ...prev.categories }
+      const list = [...(apps[category] || [])]
+      if (index >= 0 && index < list.length) list[index] = item
+      else list.push(item)
+      apps[category] = list
+      return { ...prev, categories: apps }
+    })
   }, [])
 
   const handleDeleteItem = useCallback((category, index) => {
     bridge.deleteItem(category, index)
-    if (IS_WEBVIEW2) bridge.getState()
-    else {
-      setState(prev => {
-        const apps = { ...prev.categories }
-        apps[category] = apps[category].filter((_, i) => i !== index)
-        return { ...prev, categories: apps }
-      })
-    }
+    setState(prev => {
+      const apps = { ...prev.categories }
+      apps[category] = apps[category].filter((_, i) => i !== index)
+      return { ...prev, categories: apps }
+    })
   }, [])
 
   const handleMoveItem = useCallback((category, from, to) => {
@@ -122,6 +108,9 @@ export default function App() {
 
   const handleSaveConfig = useCallback((config) => {
     bridge.saveConfig(config)
+    if (config.fzCustomPath !== undefined) {
+      bridge.saveFzPath(config.fzCustomPath)
+    }
     setState(prev => ({ ...prev, ...config }))
   }, [])
 
@@ -137,7 +126,7 @@ export default function App() {
 
   return (
     <div className="app-layout" style={{ flexDirection: 'column' }}>
-      {IS_ELECTRON && <TitleBar />}
+      <TitleBar />
       <div className="app-body">
       <Sidebar
         categories={Object.keys(state.categories)}
@@ -154,6 +143,8 @@ export default function App() {
           <ConfigPanel
             hotkeys={state.hotkeys}
             pipWatcher={state.pipWatcher}
+            fzCustomPath={state.fzCustomPath}
+            fzDetectedPath={state.fzDetectedPath}
             onSave={handleSaveConfig}
           />
         ) : (
@@ -179,6 +170,8 @@ export default function App() {
           onClose={() => setItemDialog(null)}
         />
       )}
+      
+      <LogConsole />
     </div>
     </div>
   )

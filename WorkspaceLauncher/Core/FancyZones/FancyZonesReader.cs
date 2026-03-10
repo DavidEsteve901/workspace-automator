@@ -9,9 +9,11 @@ namespace WorkspaceLauncher.Core.FancyZones;
 /// </summary>
 public static class FancyZonesReader
 {
-    private static string FzBasePath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                     "Microsoft", "PowerToys", "FancyZones");
+    public static string FzBasePath =>
+        !string.IsNullOrEmpty(ConfigManager.Instance.Config.FzCustomPath) 
+            ? ConfigManager.Instance.Config.FzCustomPath 
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                         "Microsoft", "PowerToys", "FancyZones");
 
     public static string AppliedLayoutsPath => Path.Combine(FzBasePath, "applied-layouts.json");
     public static string CustomLayoutsPath  => Path.Combine(FzBasePath, "custom-layouts.json");
@@ -116,6 +118,57 @@ public static class FancyZonesReader
         catch (Exception ex)
         {
             Console.WriteLine($"[FancyZonesReader] InjectLayout error: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Update or insert a custom layout definition in custom-layouts.json.
+    /// This allows absolute portability of workspaces.
+    /// </summary>
+    public static bool UpsertCustomLayout(string uuid, string name, JsonElement info)
+    {
+        if (!File.Exists(CustomLayoutsPath)) return false;
+
+        try
+        {
+            string json = File.ReadAllText(CustomLayoutsPath);
+            var    root = JsonNode.Parse(json);
+            var    arr  = root?["custom-layouts"]?.AsArray();
+            if (arr == null) return false;
+
+            string wrappedUuid = $"{{{uuid.ToUpperInvariant()}}}";
+            bool found = false;
+            foreach (var entry in arr)
+            {
+                if (entry is not JsonObject obj) continue;
+                if (obj["uuid"]?.GetValue<string>()?.Trim('{', '}').Equals(uuid, StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    obj["name"] = name;
+                    obj["info"] = JsonNode.Parse(info.GetRawText());
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found)
+            {
+                var newLayout = new JsonObject
+                {
+                    ["uuid"] = wrappedUuid,
+                    ["name"] = name,
+                    ["type"] = info.TryGetProperty("type", out var t) ? t.GetString() : "grid",
+                    ["info"] = JsonNode.Parse(info.GetRawText())
+                };
+                arr.Add(newLayout);
+            }
+
+            File.WriteAllText(CustomLayoutsPath, root!.ToJsonString(JsonOpts));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FancyZonesReader] UpsertCustomLayout error: {ex.Message}");
             return false;
         }
     }

@@ -2,8 +2,8 @@
 .dialog-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(6px);
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -17,7 +17,7 @@
   background: var(--bg-main);
   border: 1px solid var(--border-accent);
   border-radius: var(--radius-lg);
-  width: 580px;
+  width: 600px;
   max-width: 95vw;
   max-height: 90vh;
   display: flex;
@@ -41,20 +41,10 @@
 }
 
 .dialog-header h2 {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
   color: var(--text-primary);
   flex: 1;
-}
-
-.dialog-category {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--accent);
-  background: var(--accent-dim);
-  padding: 3px 10px;
-  border-radius: 99px;
-  letter-spacing: 0.5px;
 }
 
 .dialog-close {
@@ -62,7 +52,7 @@
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
-  padding: 4px;
+  padding: 6px;
   border-radius: var(--radius-sm);
   transition: all var(--transition);
 }
@@ -72,14 +62,63 @@
   color: var(--danger);
 }
 
-/* ── Body ─────────────────────────────────────────────────────────────── */
+/* ── Step 1: Type Selector Grid ───────────────────────────────────────── */
+.type-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  padding: 20px;
+}
+
+.type-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.type-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--card-color);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--card-color) 15%, transparent);
+}
+
+.type-card-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--card-color) 15%, transparent);
+  color: var(--card-color);
+}
+
+.type-card-text h3 {
+  font-size: 15px;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.type-card-text p {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── Step 2: Form Body ────────────────────────────────────────────────── */
 .dialog-body {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 20px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .dialog-field {
@@ -90,7 +129,7 @@
 
 .dialog-label {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.8px;
@@ -102,54 +141,115 @@
   width: 100%;
   font-size: 13px;
   border-radius: var(--radius-sm);
-  padding: 8px 12px;
+  padding: 10px 12px;
+  background: var(--bg-active);
 }
-
-.dialog-field textarea { resize: vertical; }
 
 .field-row {
   display: flex;
-  gap: 12px;
+  gap: 16px;
 }
-
 .field-row .dialog-field { flex: 1; }
 
-/* ── Path field with browse button ────────────────────────────────────── */
 .field-with-btn {
   display: flex;
   gap: 8px;
-  align-items: stretch;
-}
-
-.field-with-btn input {
-  flex: 1;
 }
 
 .btn-browse {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 14px;
+  padding: 0 16px;
   border-radius: var(--radius-sm);
   background: var(--bg-card);
   color: var(--accent);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   border: 1px solid var(--border-accent);
-  white-space: nowrap;
   transition: all var(--transition);
 }
 
 .btn-browse:hover {
   background: var(--accent-dim);
-  border-color: var(--accent);
+}
+
+/* ── FancyZones Visualizer ────────────────────────────────────────────── */
+.fz-visualizer {
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fz-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.fz-status {
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 600;
+  background: var(--accent-dim);
+  padding: 4px 10px;
+  border-radius: 99px;
+}
+
+.fz-grid-container {
+  width: 100%;
+  height: 200px;
+  background: #000;
+  border-radius: 6px;
+  display: grid;
+  padding: 4px;
+  gap: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+.fz-zone-btn {
+  background: #1E3A5F;
+  border: 2px solid #29558C;
+  border-radius: 4px;
+  color: #fff;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.fz-zone-btn:hover {
+  background: #2A5A99;
+  transform: scale(0.98);
+}
+
+.fz-zone-btn.selected {
+  background: var(--success);
+  border-color: #fff;
+  color: #000;
+  box-shadow: 0 0 15px var(--success-dim);
+  transform: scale(0.95);
 }
 
 /* ── Footer ───────────────────────────────────────────────────────────── */
 .dialog-footer {
   display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 14px 20px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
   border-top: 1px solid var(--border);
+  background: var(--bg-sidebar);
+  border-bottom-left-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
+}
+
+.footer-right {
+  display: flex;
+  gap: 10px;
 }

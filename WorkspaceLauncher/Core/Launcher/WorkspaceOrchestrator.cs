@@ -37,27 +37,68 @@ public sealed class WorkspaceOrchestrator
         await EnsureVirtualDesktopsAsync(items);
 
         // 3. Launch items
-        int total   = items.Count;
-        var beforeAll = new HashSet<nint>(WindowManager.GetVisibleWindows());
+        var allLaunched = new List<(AppItem Item, nint Hwnd)>();
+        int total = items.Count;
 
         for (int i = 0; i < total; i++)
         {
-            var item    = items[i];
+            var item = items[i];
             int percent = 15 + (int)((double)(i + 1) / total * 70);
             Report($"Lanzando: {GetItemDisplayName(item)}", percent);
 
             if (int.TryParse(item.Delay, out int delayMs) && delayMs > 0)
                 await Task.Delay(delayMs);
 
-            await LaunchAndSnapAsync(item, config);
+            nint hwnd = await LaunchAndSnapAsync(item, config);
+            if (hwnd != 0) allLaunched.Add((item, hwnd));
         }
 
         // 4. Final integrity sweep
         Report("Barrido de integridad final...", 90);
-        await Task.Delay(1500);
-        // (Re-snap any drifted windows — future enhancement)
+        await Task.Delay(2000); // Wait for slow windows
+
+        var currentWindows = WindowManager.GetVisibleWindows();
+        foreach (var item in items)
+        {
+            // Skip items with no zone
+            if (item.Fancyzone == "Ninguna" || string.IsNullOrEmpty(item.FancyzoneUuid)) continue;
+
+            // Try to find the window again if it's not already in our tracked list or if we need to verify
+            nint hwnd = FindWindowForItem(item, currentWindows);
+            if (hwnd != 0)
+            {
+                RECT? zoneRect = ResolveZoneRect(item, config);
+                if (zoneRect.HasValue)
+                {
+                    await DwmHelper.ApplyZoneRect(hwnd, zoneRect.Value);
+                }
+            }
+        }
 
         Report("Workspace lanzado correctamente.", 100);
+    }
+
+    private nint FindWindowForItem(AppItem item, List<nint> windows)
+    {
+        string targetMatch = Path.GetFileName(item.Path).ToLowerInvariant();
+        
+        foreach (var hwnd in windows)
+        {
+            string title = WindowManager.GetWindowTitle(hwnd).ToLowerInvariant();
+            if (string.IsNullOrEmpty(title)) continue;
+
+            // For URLs, try to match by part of the URL in title (if browser shows it)
+            if (item.Type == "url" && title.Contains(new Uri(item.Path).Host.ToLowerInvariant())) return hwnd;
+
+            // For Obsidian
+            if (item.Type == "obsidian" && title.Contains("obsidian") && title.Contains(targetMatch)) return hwnd;
+
+            // General match by filename or cmd name
+            if (title.Contains(targetMatch)) return hwnd;
+            
+            if (item.Type == "powershell" && (title.Contains("terminal") || title.Contains("powershell"))) return hwnd;
+        }
+        return 0;
     }
 
     private async Task EnsureVirtualDesktopsAsync(List<AppItem> items)
@@ -85,7 +126,7 @@ public sealed class WorkspaceOrchestrator
         }
     }
 
-    private async Task LaunchAndSnapAsync(AppItem item, AppConfig config)
+    private async Task<nint> LaunchAndSnapAsync(AppItem item, AppConfig config)
     {
         var vdm      = VirtualDesktopManager.Instance;
         var desktops = vdm.GetDesktops();
@@ -116,7 +157,7 @@ public sealed class WorkspaceOrchestrator
         if (hwnd == 0)
         {
             Console.WriteLine($"[Orchestrator] Could not find window for {item.Path}");
-            return;
+            return 0;
         }
 
         // Snap to zone
@@ -125,6 +166,8 @@ public sealed class WorkspaceOrchestrator
         {
             await DwmHelper.ApplyZoneRect(hwnd, zoneRect.Value);
         }
+        
+        return hwnd;
     }
 
     private RECT? ResolveZoneRect(AppItem item, AppConfig config)
@@ -158,13 +201,28 @@ public sealed class WorkspaceOrchestrator
         return 0;
     }
 
-    private static RECT? GetMonitorWorkArea(string monitorName)
+    private static RECT? GetMonitorWorkArea(string monitorLabel)
     {
         var monitors = WindowManager.GetMonitors();
-        // Simple heuristic: match by index or name
-        if (monitorName.Contains("1") && monitors.Count >= 1) return monitors[0].WorkArea;
-        if (monitorName.Contains("2") && monitors.Count >= 2) return monitors[1].WorkArea;
-        return monitors.Count > 0 ? monitors[0].WorkArea : null;
+        if (monitors.Count == 0) return null;
+
+        // Frontend labels are "Pantalla N [Name]"
+        // We try to extract N-1 index
+        var match = System.Text.RegularExpressions.Regex.Match(monitorLabel, @"Pantalla\s+(\d+)");
+        if (match.Success && int.TryParse(match.Groups[1].Value, out int idx))
+        {
+            if (idx >= 1 && idx <= monitors.Count)
+                return monitors[idx - 1].WorkArea;
+        }
+
+        // Fallback: match by the bracketed name [AUS2723]
+        foreach (var m in monitors)
+        {
+            if (monitorLabel.Contains($"[{m.Name}]", StringComparison.OrdinalIgnoreCase))
+                return m.WorkArea;
+        }
+
+        return monitors[0].WorkArea;
     }
 
     private static LayoutInfo? ParseLayoutInfo(Config.LayoutCacheEntry entry)

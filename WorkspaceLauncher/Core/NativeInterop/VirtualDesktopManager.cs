@@ -13,6 +13,7 @@ namespace WorkspaceLauncher.Core.NativeInterop;
 public sealed class VirtualDesktopManager : IDisposable
 {
     private IVirtualDesktopManagerInternal? _manager;
+    private IVirtualDesktopPinnedView? _pinManager;
     private IVirtualDesktopNotificationService? _notifService;
     private bool _initialized;
 
@@ -30,6 +31,11 @@ public sealed class VirtualDesktopManager : IDisposable
             var guid  = typeof(IVirtualDesktopManagerInternal).GUID;
             shell.QueryService(ref guid, ref guid, out object obj);
             _manager = (IVirtualDesktopManagerInternal)obj;
+            
+            var pinGuid = typeof(IVirtualDesktopPinnedView).GUID;
+            shell.QueryService(ref pinGuid, ref pinGuid, out object pinObj);
+            _pinManager = (IVirtualDesktopPinnedView)pinObj;
+
             _initialized = true;
         }
         catch (Exception ex)
@@ -96,6 +102,28 @@ public sealed class VirtualDesktopManager : IDisposable
         }
     }
 
+    public bool SwitchNextDesktop()
+    {
+        var desktops = GetDesktops();
+        var current = GetCurrentDesktopId();
+        if (desktops.Count <= 1 || !current.HasValue) return false;
+
+        int idx = desktops.IndexOf(current.Value);
+        int next = (idx + 1) % desktops.Count;
+        return SwitchToDesktop(desktops[next]);
+    }
+
+    public bool SwitchPreviousDesktop()
+    {
+        var desktops = GetDesktops();
+        var current = GetCurrentDesktopId();
+        if (desktops.Count <= 1 || !current.HasValue) return false;
+
+        int idx = desktops.IndexOf(current.Value);
+        int prev = (idx - 1 + desktops.Count) % desktops.Count;
+        return SwitchToDesktop(desktops[prev]);
+    }
+
     public Guid? CreateDesktop()
     {
         EnsureInitialized();
@@ -111,6 +139,35 @@ public sealed class VirtualDesktopManager : IDisposable
             Console.WriteLine($"[VirtualDesktopManager] CreateDesktop failed: {ex.Message}");
             return null;
         }
+    }
+
+    public bool IsWindowPinned(nint hwnd)
+    {
+        EnsureInitialized();
+        if (_pinManager == null) return false;
+        try
+        {
+            // First we need to get the view for the hwnd
+            // This is complex in native COM. For now, we'll try to find if there is an alternative.
+            // Actually, the simpler way is to check if it's visible on all desktops.
+            _pinManager.IsViewPinned(hwnd, out bool pinned);
+            return pinned;
+        }
+        catch { return false; }
+    }
+
+    public void PinWindow(nint hwnd)
+    {
+        EnsureInitialized();
+        if (_pinManager == null) return;
+        try { _pinManager.PinView(hwnd); } catch { }
+    }
+
+    public void UnpinWindow(nint hwnd)
+    {
+        EnsureInitialized();
+        if (_pinManager == null) return;
+        try { _pinManager.UnpinView(hwnd); } catch { }
     }
 
     private IVirtualDesktop? FindDesktopById(Guid id)
@@ -174,5 +231,16 @@ public sealed class VirtualDesktopManager : IDisposable
     {
         [PreserveSig] int Register([MarshalAs(UnmanagedType.IUnknown)] object pNotification, out uint pdwCookie);
         [PreserveSig] int Unregister(uint dwCookie);
+    }
+
+    [ComImport, Guid("4ce81583-1e40-4632-af57-54916c8e4f8a"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IVirtualDesktopPinnedView
+    {
+        [PreserveSig] int IsViewPinned(nint hWnd, out bool pinned);
+        [PreserveSig] int PinView(nint hWnd);
+        [PreserveSig] int UnpinView(nint hWnd);
+        [PreserveSig] int IsAppIdPinned([MarshalAs(UnmanagedType.LPWStr)] string appId, out bool pinned);
+        [PreserveSig] int PinAppId([MarshalAs(UnmanagedType.LPWStr)] string appId);
+        [PreserveSig] int UnpinAppId([MarshalAs(UnmanagedType.LPWStr)] string appId);
     }
 }

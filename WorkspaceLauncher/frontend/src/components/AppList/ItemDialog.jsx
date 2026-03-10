@@ -1,15 +1,15 @@
-import { useState, useEffect, useCallback } from 'react'
-import { FolderOpen, X, Globe, Terminal, Code2, FileCode, MonitorSmartphone, Cog } from 'lucide-react'
-import { bridge } from '../../api/bridge.js'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { FolderOpen, X, Globe, Terminal, Code2, FileCode, MonitorSmartphone, Cog, ArrowLeft } from 'lucide-react'
+import { bridge, onEvent, offEvent } from '../../api/bridge.js'
 import './ItemDialog.css'
 
 const ITEM_TYPES = [
-  { value: 'exe',        label: 'Ejecutable (.exe)',         icon: Cog },
-  { value: 'url',        label: 'URL / Navegador',           icon: Globe },
-  { value: 'ide',        label: 'IDE',                       icon: Code2 },
-  { value: 'vscode',     label: 'VS Code',                   icon: FileCode },
-  { value: 'powershell', label: 'Terminal (PowerShell/WT)',   icon: Terminal },
-  { value: 'obsidian',   label: 'Obsidian',                  icon: MonitorSmartphone },
+  { value: 'exe',        label: 'Ejecutable (.exe)',         desc: 'Aplicación nativa de Windows', icon: Cog, color: 'var(--cat-exe)' },
+  { value: 'url',        label: 'Web / URL',                 desc: 'Páginas web en el navegador',  icon: Globe, color: 'var(--cat-web)' },
+  { value: 'ide',        label: 'IDE Personalizado',         desc: 'IntelliJ, Cursor, Android Studio...', icon: Code2, color: 'var(--cat-ide)' },
+  { value: 'vscode',     label: 'VS Code',                   desc: 'Abre un proyecto en VS Code',  icon: FileCode, color: 'var(--cat-ide)' },
+  { value: 'powershell', label: 'Terminal',                  desc: 'PowerShell o Windows Terminal',icon: Terminal, color: 'var(--cat-terminal)' },
+  { value: 'obsidian',   label: 'Obsidian',                  desc: 'Abre un vault específico',     icon: MonitorSmartphone, color: 'var(--cat-obsidian)' },
 ]
 
 const BROWSERS = [
@@ -21,7 +21,7 @@ const BROWSERS = [
 ]
 
 const DEFAULT_ITEM = {
-  type: 'exe',
+  type: '',
   path: '',
   cmd: '',
   ide_cmd: '',
@@ -30,33 +30,38 @@ const DEFAULT_ITEM = {
   monitor: 'Por defecto',
   desktop: 'Por defecto',
   fancyzone: 'Ninguna',
-  delay: '0',
   fancyzone_uuid: '',
+  delay: '0'
 }
 
 export default function ItemDialog({ category, index, item, onSave, onClose }) {
+  // Wizard state: 1 = Type selection, 2 = Form details
+  const [step, setStep] = useState(item ? 2 : 1) 
   const [form, setForm] = useState({ ...DEFAULT_ITEM, ...(item || {}) })
+  
+  // Data states
   const [desktops, setDesktops] = useState([])
-  const [windows, setWindows] = useState([])
-  const [loadingDesktops, setLoadingDesktops] = useState(false)
-  const [loadingWindows, setLoadingWindows] = useState(false)
-
-  // Load available desktops and windows on dialog open
+  const [monitors, setMonitors] = useState([])
+  const [layoutsCache, setLayoutsCache] = useState({}) // Datos de FancyZones
+  
+  // Load initial environment data
   useEffect(() => {
     async function loadData() {
-      setLoadingDesktops(true)
-      setLoadingWindows(true)
       try {
         const dkList = await bridge.listDesktops()
         setDesktops(dkList || [])
-      } catch { setDesktops([]) }
-      setLoadingDesktops(false)
-
+        const mList = await bridge.listMonitors()
+        setMonitors(mList || [])
+      } catch {}
+      
       try {
-        const winList = await bridge.listWindows()
-        setWindows(winList || [])
-      } catch { setWindows([]) }
-      setLoadingWindows(false)
+        const handleUpdate = (data) => {
+          if (data && data.fzLayoutsCache) setLayoutsCache(data.fzLayoutsCache);
+        };
+        onEvent('state_update', handleUpdate);
+        bridge.getState(); // Trigger state update to get cache
+        return () => offEvent('state_update', handleUpdate);
+      } catch (e) {}
     }
     loadData()
   }, [])
@@ -66,193 +71,153 @@ export default function ItemDialog({ category, index, item, onSave, onClose }) {
   }
 
   const handleBrowsePath = useCallback(async () => {
-    const isExe = form.type === 'exe'
-    const filters = isExe
-      ? [{ name: 'Ejecutables', extensions: ['exe'] }, { name: 'Todos', extensions: ['*'] }]
-      : [{ name: 'Todos', extensions: ['*'] }]
+    const isFolder = ['ide', 'vscode', 'powershell', 'obsidian'].includes(form.type)
+    const filters = form.type === 'exe' 
+        ? [{ name: 'Ejecutables', extensions: ['exe'] }] 
+        : [{ name: 'Todos', extensions: ['*'] }]
+        
     try {
-      const result = await bridge.openFileDialog({
-        filters,
-        isFolder: form.type === 'ide' || form.type === 'vscode' || form.type === 'powershell' || form.type === 'obsidian',
-      })
+      const result = await bridge.openFileDialog({ filters, isFolder })
       if (result) set('path', result)
-    } catch (err) {
-      console.warn('[ItemDialog] File dialog error:', err)
-    }
+    } catch (err) {}
   }, [form.type])
 
   function handleSave() {
-    if (!form.path.trim()) return
+    if (!form.path.trim() && form.type !== 'url') return
     const out = { ...form }
-    if (form.type !== 'url') { delete out.cmd; delete out.browser; delete out.browser_display }
-    if (form.type !== 'ide') delete out.ide_cmd
-    if (form.type !== 'powershell') { if (!out.cmd) delete out.cmd }
+    // Clean up irrelevant fields
+    if (out.type !== 'url') { delete out.cmd; delete out.browser; delete out.browser_display }
+    if (out.type !== 'ide') delete out.ide_cmd
+    if (out.type !== 'powershell') { if (!out.cmd) delete out.cmd }
     onSave(out)
   }
+
+  // Render Step 1: Type Selection (Visual Grid)
+  if (step === 1) {
+    return (
+      <div className="dialog-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+        <div className="dialog">
+          <div className="dialog-header">
+            <h2>¿Qué tipo de aplicación quieres añadir?</h2>
+            <button className="dialog-close" onClick={onClose}><X size={20} /></button>
+          </div>
+          <div className="type-grid">
+            {ITEM_TYPES.map(t => {
+              const Icon = t.icon
+              return (
+                <div key={t.value} className="type-card" style={{'--card-color': t.color}} 
+                     onClick={() => { set('type', t.value); setStep(2); }}>
+                  <div className="type-card-icon"><Icon size={24} /></div>
+                  <div className="type-card-text">
+                    <h3>{t.label}</h3>
+                    <p>{t.desc}</p>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Render Step 2: Details Form
+  const selectedTypeConfig = ITEM_TYPES.find(t => t.value === form.type) || ITEM_TYPES[0]
+  const TypeIcon = selectedTypeConfig.icon
 
   return (
     <div className="dialog-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="dialog">
         <div className="dialog-header">
-          <h2>{index >= 0 ? 'Editar app' : 'Añadir app'}</h2>
-          <span className="dialog-category">{category}</span>
-          <button className="dialog-close" onClick={onClose}><X size={16} /></button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: selectedTypeConfig.color }}>
+             <TypeIcon size={20} />
+             <h2>Configurar {selectedTypeConfig.label}</h2>
+          </div>
+          <button className="dialog-close" onClick={onClose}><X size={20} /></button>
         </div>
 
         <div className="dialog-body">
-          {/* Type */}
-          <Field label="Tipo">
-            <select value={form.type} onChange={e => set('type', e.target.value)}>
-              {ITEM_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select>
-          </Field>
-
           {/* Path with file picker */}
-          <Field label={form.type === 'url' ? 'URL principal' : 'Ruta'}>
+          <Field label={form.type === 'url' ? 'URL principal' : 'Ruta / Directorio'}>
             <div className="field-with-btn">
               <input
                 value={form.path}
                 onChange={e => set('path', e.target.value)}
-                placeholder={form.type === 'url' ? 'https://...' : 'Selecciona con Examinar...'}
+                placeholder={form.type === 'url' ? 'https://...' : 'Selecciona o pega la ruta...'}
+                autoFocus
               />
               {form.type !== 'url' && (
                 <button className="btn-browse" onClick={handleBrowsePath} type="button">
-                  <FolderOpen size={14} /> Examinar...
+                  <FolderOpen size={16} /> Examinar
                 </button>
               )}
             </div>
           </Field>
 
-          {/* URL: multi-tab cmd */}
-          {form.type === 'url' && (
-            <Field label="URLs adicionales (separadas por  --- NUEVA PESTAÑA ---)">
-              <textarea
-                rows={3}
-                value={form.cmd || form.path}
-                onChange={e => set('cmd', e.target.value)}
-                placeholder="url1 --- NUEVA PESTAÑA --- url2"
-              />
+          {/* IDE command */}
+          {form.type === 'ide' && (
+            <Field label="Comando de Terminal para el IDE (Ej: cursor, webstorm, phpstorm)">
+              <input value={form.ide_cmd || ''} onChange={e => set('ide_cmd', e.target.value)} placeholder="Ej: cursor" />
+            </Field>
+          )}
+
+          {/* PowerShell / URL Tabs */}
+          {(form.type === 'url' || form.type === 'powershell') && (
+            <Field label={form.type === 'url' ? "URLs adicionales (separadas por  --- NUEVA PESTAÑA ---)" : "Comandos en pestañas (separadas por  --- NUEVA PESTAÑA ---)"}>
+              <textarea rows={2} value={form.cmd || ''} onChange={e => set('cmd', e.target.value)} />
             </Field>
           )}
 
           {/* URL: browser */}
           {form.type === 'url' && (
-            <Field label="Navegador">
-              <select
-                value={form.browser || 'default'}
-                onChange={e => {
+            <Field label="Navegador preferido">
+              <select value={form.browser || 'default'} onChange={e => {
                   const b = BROWSERS.find(br => br.value === e.target.value)
-                  set('browser', e.target.value)
-                  set('browser_display', b?.label || e.target.value)
-                }}
-              >
+                  set('browser', e.target.value); set('browser_display', b?.label || e.target.value)
+                }}>
                 {BROWSERS.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
               </select>
             </Field>
           )}
 
-          {/* IDE command */}
-          {form.type === 'ide' && (
-            <Field label="Comando IDE">
-              <input
-                value={form.ide_cmd || ''}
-                onChange={e => set('ide_cmd', e.target.value)}
-                placeholder="antigravity / cursor / etc."
-              />
-            </Field>
-          )}
-
-          {/* PowerShell: cmd */}
-          {form.type === 'powershell' && (
-            <Field label="Comandos (separados por  --- NUEVA PESTAÑA ---)">
-              <textarea
-                rows={3}
-                value={form.cmd || ''}
-                onChange={e => set('cmd', e.target.value)}
-                placeholder="npm run dev --- NUEVA PESTAÑA --- npm run db:migrate"
-              />
-            </Field>
-          )}
-
-          {/* Monitor (from open windows list) + Desktop row */}
+          {/* Monitor & Desktop */}
           <div className="field-row">
             <Field label="Monitor">
-              <input
-                value={form.monitor}
-                onChange={e => set('monitor', e.target.value)}
-                placeholder="Pantalla 1 [SDC41B6] / Por defecto"
-              />
-            </Field>
-            <Field label="Escritorio virtual">
-              <select
-                value={form.desktop}
-                onChange={e => set('desktop', e.target.value)}
-              >
+              <select value={form.monitor} onChange={e => set('monitor', e.target.value)}>
                 <option value="Por defecto">Por defecto</option>
-                {loadingDesktops ? (
-                  <option disabled>Cargando escritorios...</option>
-                ) : (
-                  desktops.map((dk, i) => (
-                    <option key={dk.id || i} value={dk.name}>{dk.name}</option>
-                  ))
-                )}
+                {monitors.map(m => <option key={m.id} value={m.label}>{m.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Escritorio Virtual">
+              <select value={form.desktop} onChange={e => set('desktop', e.target.value)}>
+                <option value="Por defecto">Por defecto</option>
+                {desktops.map((dk, i) => <option key={dk.id || i} value={dk.name}>{dk.name}</option>)}
               </select>
             </Field>
           </div>
 
-          {/* FancyZone + UUID row */}
-          <div className="field-row">
-            <Field label="FancyZone">
-              <input
-                value={form.fancyzone}
-                onChange={e => set('fancyzone', e.target.value)}
-                placeholder="Entera - Zona 1 / Ninguna"
-              />
-            </Field>
-            <Field label="UUID de layout">
-              <input
-                value={form.fancyzone_uuid || ''}
-                onChange={e => set('fancyzone_uuid', e.target.value)}
-                placeholder="a01ecfa2-3683-47fb-..."
-                className="mono"
-              />
-            </Field>
-          </div>
-
-          {/* PiP Window Selector */}
-          <Field label="Ventana para PiP / Anclar (opcional)">
-            <select
-              value={form.pip_window || ''}
-              onChange={e => set('pip_window', e.target.value)}
-            >
-              <option value="">Ninguna</option>
-              {loadingWindows ? (
-                <option disabled>Cargando ventanas...</option>
-              ) : (
-                windows.map((w, i) => (
-                  <option key={w.hwnd || i} value={w.title}>{w.title}{w.processName ? ` (${w.processName})` : ''}</option>
-                ))
-              )}
-            </select>
-          </Field>
+          {/* FancyZones Interactive Render */}
+          <FancyZonesVisualizer form={form} set={set} layoutsCache={layoutsCache} />
 
           {/* Delay */}
-          <Field label="Retardo de lanzamiento (ms)">
-            <input
-              type="number"
-              min="0"
-              value={form.delay}
-              onChange={e => set('delay', e.target.value)}
-              style={{ maxWidth: 140 }}
-            />
+          <Field label="Retardo antes de lanzar (Milisegundos)">
+            <input type="number" min="0" value={form.delay} onChange={e => set('delay', e.target.value)} style={{ maxWidth: 150 }} />
           </Field>
         </div>
 
         <div className="dialog-footer">
-          <button className="btn-secondary" onClick={onClose}>Cancelar</button>
-          <button className="btn-launch" onClick={handleSave} disabled={!form.path.trim()}>
-            {index >= 0 ? 'Guardar cambios' : 'Añadir app'}
-          </button>
+          {!item ? (
+            <button className="btn-secondary" onClick={() => setStep(1)}>
+               <ArrowLeft size={16}/> Volver
+            </button>
+          ) : <div></div>}
+          
+          <div className="footer-right">
+            <button className="btn-secondary" onClick={onClose} style={{border: 'none', background: 'transparent'}}>Cancelar</button>
+            <button className="btn-launch" onClick={handleSave} disabled={!form.path.trim() && form.type !== 'url'}>
+              {index >= 0 ? 'Guardar cambios' : 'Añadir al Workspace'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -266,4 +231,157 @@ function Field({ label, children }) {
       {children}
     </div>
   )
+}
+
+// ── Mini-Motor Renderizador de FancyZones ──────────────────────────────────
+function FancyZonesVisualizer({ form, set, layoutsCache }) {
+  // Convierte el diccionario de PowerToys a una lista para el selector
+  const availableLayouts = useMemo(() => {
+    return Object.values(layoutsCache || {}).map(l => ({
+      uuid: l.uuid,
+      name: l.name,
+      info: l.info
+    }))
+  }, [layoutsCache])
+
+  // Obtener el layout actual
+  const currentLayout = availableLayouts.find(l => l.uuid === form.fancyzone_uuid) || availableLayouts[0]
+
+  const handleZoneClick = (idx) => {
+    if (!currentLayout) return;
+    set('fancyzone', `${currentLayout.name} - Zona ${idx + 1}`);
+    set('fancyzone_uuid', currentLayout.uuid);
+  }
+
+  const handleLayoutChange = (uuid) => {
+     if(uuid === "Ninguna") {
+         set('fancyzone', "Ninguna");
+         set('fancyzone_uuid', "");
+         return;
+     }
+     const layout = availableLayouts.find(l => l.uuid === uuid);
+     if(layout) {
+         set('fancyzone_uuid', layout.uuid);
+         // Resetea a la zona 1 por defecto al cambiar de layout
+         set('fancyzone', `${layout.name} - Zona 1`);
+     }
+  }
+
+  // Parsear el número de zona actual del string "Nombre Layout - Zona X"
+  const activeZoneIdx = useMemo(() => {
+    if(form.fancyzone === "Ninguna" || !form.fancyzone) return -1;
+    const parts = form.fancyzone.split("Zona ");
+    if(parts.length > 1) return parseInt(parts[1]) - 1;
+    return -1;
+  }, [form.fancyzone])
+
+  return (
+    <div className="fz-visualizer">
+      <div className="fz-header">
+         <Field label="Layout de FancyZones">
+            <select value={form.fancyzone_uuid || "Ninguna"} onChange={e => handleLayoutChange(e.target.value)} style={{width: '250px'}}>
+              <option value="Ninguna">Ninguno / Libre</option>
+              {availableLayouts.map(l => <option key={l.uuid} value={l.uuid}>{l.name}</option>)}
+            </select>
+         </Field>
+         {form.fancyzone && form.fancyzone !== "Ninguna" && (
+             <span className="fz-status">📍 Asignado: {form.fancyzone}</span>
+         )}
+      </div>
+
+      {currentLayout && form.fancyzone_uuid && (
+        <div className="fz-grid-container">
+           {renderZones(currentLayout.info, activeZoneIdx, handleZoneClick)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Lógica para dibujar CSS Grid basado en la configuración real de PowerToys
+function renderZones(info, activeIdx, onClick) {
+  if (!info) return null;
+  const type = info.type || "grid";
+
+  if (type === "grid") {
+    // PowerToys guarda la estructura en cell-child-map
+    const rowsMap = info["cell-child-map"] || [[0]];
+    const rowsPerc = info["rows-percentage"] || [10000];
+    const colsPerc = info["columns-percentage"] || [10000];
+
+    // Encontrar posiciones min/max para cada zona (para hacer Grid Spans)
+    const zones = {};
+    rowsMap.forEach((row, rIdx) => {
+       row.forEach((zId, cIdx) => {
+          if (!zones[zId]) zones[zId] = { minR: rIdx, maxR: rIdx, minC: cIdx, maxC: cIdx };
+          else {
+            zones[zId].minR = Math.min(zones[zId].minR, rIdx);
+            zones[zId].maxR = Math.max(zones[zId].maxR, rIdx);
+            zones[zId].minC = Math.min(zones[zId].minC, cIdx);
+            zones[zId].maxC = Math.max(zones[zId].maxC, cIdx);
+          }
+       })
+    });
+
+    const gridStyle = {
+      gridTemplateRows: rowsPerc.map(p => `${p}fr`).join(' '),
+      gridTemplateColumns: colsPerc.map(p => `${p}fr`).join(' ')
+    };
+
+    return (
+      <div style={{...gridStyle, width: '100%', height: '100%', display: 'grid', gap: info.spacing ? '4px' : '0px'}}>
+         {Object.entries(zones).map(([zId, span]) => {
+            const id = parseInt(zId);
+            const isSelected = activeIdx === id;
+            return (
+              <button 
+                key={id}
+                className={`fz-zone-btn ${isSelected ? 'selected' : ''}`}
+                style={{
+                   gridRow: `${span.minR + 1} / ${span.maxR + 2}`,
+                   gridColumn: `${span.minC + 1} / ${span.maxC + 2}`
+                }}
+                onClick={() => onClick(id)}
+              >
+                {id + 1}
+              </button>
+            )
+         })}
+      </div>
+    )
+  }
+
+  if (type === "canvas") {
+    const zones = info.zones || [];
+    return (
+      <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+         {zones.map((z, idx) => {
+            const isSelected = activeIdx === idx;
+            // Canvas values are usually based on a reference width/height
+            const refW = info["ref-width"] || 10000;
+            const refH = info["ref-height"] || 10000;
+            const x = (z.X / refW) * 100;
+            const y = (z.Y / refH) * 100;
+            const w = (z.width / refW) * 100;
+            const h = (z.height / refH) * 100;
+
+            return (
+              <button
+                key={idx}
+                className={`fz-zone-btn ${isSelected ? 'selected' : ''}`}
+                style={{
+                   position: 'absolute',
+                   left: `${x}%`, top: `${y}%`, width: `${w}%`, height: `${h}%`,
+                   opacity: 0.8
+                }}
+                onClick={() => onClick(idx)}
+              >
+                {idx + 1}
+              </button>
+            )
+         })}
+      </div>
+    )
+  }
+  return null;
 }

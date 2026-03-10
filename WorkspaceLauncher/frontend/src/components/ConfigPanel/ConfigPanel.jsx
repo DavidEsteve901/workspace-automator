@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Settings, Keyboard, Monitor, Save, Check } from 'lucide-react'
+import { Settings, Keyboard, Monitor, Save, Check, Folder } from 'lucide-react'
+import { bridge } from '../../api/bridge.js'
 import './ConfigPanel.css'
 
 const HOTKEY_LABELS = {
@@ -12,15 +13,21 @@ const HOTKEY_LABELS = {
   util_reload_layouts:'Recargar layouts FancyZones',
 }
 
-export default function ConfigPanel({ hotkeys, pipWatcher, onSave }) {
-  const [hk, setHk]     = useState({ ...hotkeys })
-  const [pip, setPip]   = useState(pipWatcher)
+export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetectedPath, onSave }) {
+  const [hk, setHk] = useState({ ...hotkeys })
+  const [pip, setPip] = useState(pipWatcher)
+  const [fzPath, setFzPath] = useState(fzCustomPath || '')
   const [saved, setSaved] = useState(false)
 
   function handleSave() {
-    onSave({ hotkeys: hk, pipWatcherEnabled: pip })
+    onSave({ hotkeys: hk, pipWatcherEnabled: pip, fzCustomPath: fzPath })
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
+  }
+
+  async function handlePickPath() {
+    const res = await bridge.openFileDialog({ isFolder: true })
+    if (res) setFzPath(res)
   }
 
   function setHotkey(key, value) {
@@ -47,6 +54,30 @@ export default function ConfigPanel({ hotkeys, pipWatcher, onSave }) {
             value={hk._desktop_cycle_enabled}
             onChange={v => setHotkey('_desktop_cycle_enabled', v)}
           />
+        </Section>
+
+        {/* PowerToys path overrides */}
+        <Section title="PowerToys / FancyZones Path" icon={<Folder size={14} />}>
+          <div className="fz-path-row">
+            <input
+              className="fz-path-input"
+              type="text"
+              placeholder="Por defecto: Autodetección"
+              value={fzPath}
+              onChange={e => setFzPath(e.target.value)}
+            />
+            <button className="fz-path-btn" onClick={handlePickPath} title="Seleccionar">
+              <Folder size={14} />
+            </button>
+          </div>
+          <p className="fz-path-help">
+            Modifica esta ruta solo si PowerToys está instalado en una ubicación no estándar.
+          </p>
+          {fzDetectedPath && (
+            <div className="fz-detected-path">
+               <span>Detectado:</span> <code>{fzDetectedPath}</code>
+            </div>
+          )}
         </Section>
 
         {/* PiP watcher */}

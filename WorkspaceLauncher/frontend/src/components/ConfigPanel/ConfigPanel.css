@@ -182,3 +182,36 @@
   color: var(--success);
   font-weight: 500;
 }
+
+.fz-path-help {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.fz-detected-path {
+  margin-top: 6px;
+  padding: 8px 12px;
+  background: var(--bg-sidebar);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--accent);
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fz-detected-path span {
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+
+.fz-detected-path code {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--accent);
+  opacity: 0.9;
+}

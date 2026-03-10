@@ -26,6 +26,18 @@ public static class LayoutSyncer
             string monitorId = NormalizeMonitorId(item.Monitor);
             if (string.IsNullOrEmpty(monitorId)) continue;
 
+            // Ensure layout exists in PowerToys (Portability)
+            string normalizedUuid = item.FancyzoneUuid.Trim('{', '}').ToLowerInvariant();
+            if (!customLayouts.ContainsKey(normalizedUuid))
+            {
+                var config = ConfigManager.Instance.Config;
+                if (config.FzLayoutsCache.TryGetValue(normalizedUuid, out var entry))
+                {
+                    Console.WriteLine($"[LayoutSyncer] Injecting portable layout: {entry.Name}");
+                    FancyZonesReader.UpsertCustomLayout(normalizedUuid, entry.Name, entry.Info);
+                }
+            }
+
             FancyZonesReader.InjectLayoutAssignment(monitorId, item.FancyzoneUuid);
         }
 
