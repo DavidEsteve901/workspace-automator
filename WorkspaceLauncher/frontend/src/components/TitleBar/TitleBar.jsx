@@ -1,13 +1,21 @@
-import { Zap, Minus, Square, X } from 'lucide-react'
+import { Minus, Square, X } from 'lucide-react'
 import { bridge } from '../../api/bridge.js'
+import logo from '../../assets/logo.ico'
 import './TitleBar.css'
 
 export default function TitleBar({ title = 'Workspace Launcher' }) {
+  const handleMouseDown = (e) => {
+    // We can drag from the titlebar-drag container
+    if (e.target.closest('.titlebar-drag')) {
+      bridge.startDrag()
+    }
+  }
+
   return (
-    <div className="titlebar">
+    <div className="titlebar" onMouseDown={handleMouseDown}>
       {/* Drag region — covers most of the bar */}
       <div className="titlebar-drag">
-        <Zap size={16} className="titlebar-icon" />
+        <img src={logo} className="titlebar-logo-img" alt="" />
         <span className="titlebar-title">{title}</span>
       </div>
 

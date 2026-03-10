@@ -19,14 +19,16 @@
   gap: 8px;
   flex: 1;
   padding: 0 14px;
-  -webkit-app-region: drag;
-  app-region: drag;
+  /* Use bridge-based dragging instead of CSS to avoid issues with WebView2 */
+  /* -webkit-app-region: drag; */
+  /* app-region: drag; */
   height: 100%;
 }
 
-.titlebar-icon {
-  color: var(--accent);
-  filter: drop-shadow(0 0 6px var(--accent-glow));
+.titlebar-logo-img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
 }
 
 .titlebar-title {
@@ -39,8 +41,8 @@
 /* ── Window control buttons ───────────────────────────────────────────── */
 .titlebar-controls {
   display: flex;
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
+  /* -webkit-app-region: no-drag; */
+  /* app-region: no-drag; */
 }
 
 .wc-btn {
@@ -54,5 +56,12 @@
   border-radius: 0;
 }
 
-.wc-btn:hover    { background: var(--bg-hover); color: var(--text-primary); }
-.wc-btn.close:hover { background: #c42b1c; color: #fff; }
+.wc-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.wc-btn.close:hover {
+  background: #c42b1c;
+  color: #fff;
+}

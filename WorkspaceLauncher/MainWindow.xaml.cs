@@ -7,6 +7,7 @@ using System.Windows;
 using Microsoft.Web.WebView2.Core;
 using WorkspaceLauncher.Bridge;
 using WorkspaceLauncher.Core.Config;
+using WorkspaceLauncher.Core.FancyZones;
 using WorkspaceLauncher.Core.NativeInterop;
 using WorkspaceLauncher.Core.SystemTray;
 
@@ -30,16 +31,36 @@ public partial class MainWindow : Window
         // Load configuration
         ConfigManager.Instance.Load();
 
+        // Sync FancyZones layouts from PowerToys into our cache
+        FancyZonesReader.SyncCacheFromDisk();
+        await ConfigManager.Instance.SaveAsync();
+
+        // Trigger Virtual Desktop COM initialization
+        VirtualDesktopManager.Instance.ReportStatus();
+
         await InitializeWebView();
         InitializeTray();
         InitializeHooks();
         PipWatcher.Instance.Start();
+
+        // Check virtual desktop COM availability and surface any errors
+        if (!VirtualDesktopManager.Instance.IsAvailable)
+        {
+            string error = VirtualDesktopManager.Instance.InitError ?? "Virtual desktop COM unavailable";
+            Console.WriteLine($"[MainWindow] WARNING: {error}");
+            // Error will be surfaced to UI once bridge is ready
+            _ = Task.Delay(2000).ContinueWith(_ =>
+                Dispatcher.Invoke(() => _bridge?.SendEvent("error", new { message = $"⚠ {error}" })));
+        }
     }
 
     private async Task InitializeWebView()
     {
         var env = await CoreWebView2Environment.CreateAsync();
         await webView.EnsureCoreWebView2Async(env);
+        
+        // Hide the white flash during loading
+        webView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 10, 10, 10);
 
         webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
         webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;

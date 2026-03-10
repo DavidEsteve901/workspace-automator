@@ -76,11 +76,6 @@ public class HotkeyConfig
     [JsonPropertyName("cycle_backward")]
     public string CycleBackward { get; set; } = "ctrl+alt+pageup";
 
-    [JsonPropertyName("mouse_cycle_fwd")]
-    public string MouseCycleFwd { get; set; } = "alt+x1";
-
-    [JsonPropertyName("mouse_cycle_bwd")]
-    public string MouseCycleBwd { get; set; } = "alt+x2";
 
     [JsonPropertyName("desktop_cycle_fwd")]
     public string DesktopCycleFwd { get; set; } = "x1";
@@ -96,6 +91,9 @@ public class HotkeyConfig
 
     [JsonPropertyName("_desktop_cycle_enabled")]
     public bool DesktopCycleEnabled { get; set; } = true;
+
+    [JsonPropertyName("show_system_console")]
+    public bool ShowSystemConsole { get; set; } = false;
 }
 
 public class LayoutCacheEntry

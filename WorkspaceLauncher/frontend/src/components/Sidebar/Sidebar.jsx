@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Zap, FolderOpen, Plus, Trash2, Settings } from 'lucide-react'
+import { FolderOpen, Plus, Trash2, Settings } from 'lucide-react'
+import logo from '../../assets/logo.ico'
 import './Sidebar.css'
 
 export default function Sidebar({ categories, activeCategory, onSelect, onAddCategory, onDeleteCategory, onOpenConfig, configActive }) {
@@ -25,7 +26,7 @@ export default function Sidebar({ categories, activeCategory, onSelect, onAddCat
       {/* Header */}
       <div className="sidebar-header">
         <div className="sidebar-logo-wrap">
-          <Zap size={20} className="sidebar-logo-icon" />
+          <img src={logo} className="sidebar-logo-img" alt="Logo" />
         </div>
         <span className="sidebar-title">Workspace</span>
       </div>

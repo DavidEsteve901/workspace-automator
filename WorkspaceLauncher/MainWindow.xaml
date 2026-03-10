@@ -11,7 +11,18 @@
         Background="#0A0A0A"
         ResizeMode="CanResize"
         Closing="Window_Closing">
-  <Grid>
-    <wv2:WebView2 x:Name="webView" />
-  </Grid>
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome 
+            CaptionHeight="0" 
+            GlassFrameThickness="1" 
+            CornerRadius="0" 
+            ResizeBorderThickness="8" 
+            UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+
+    <Grid Background="#0A0A0A">
+        <!-- The Margin="1" is CRITICAL: it prevents WebView2 from covering the small edge where Windows detects resize handles -->
+        <wv2:WebView2 x:Name="webView" Margin="1" />
+    </Grid>
 </Window>

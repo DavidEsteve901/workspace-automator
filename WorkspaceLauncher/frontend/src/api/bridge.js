@@ -44,6 +44,8 @@ async function invoke(channel, payload = {}) {
 export const bridge = {
   getState: () => postMessage("get_state"),
   launchWorkspace: (category) => postMessage("launch_workspace", { category }),
+  restoreWorkspace: (category) => postMessage("restore_workspace", { category }),
+  cleanWorkspace: (category) => postMessage("clean_workspace", { category }),
   setLastCategory: (category) => postMessage("set_last_category", { category }),
   saveItem: (category, index, item) =>
     postMessage("save_item", { category, index, payload: item }),
@@ -55,6 +57,8 @@ export const bridge = {
   deleteCategory: (name) => postMessage("delete_category", { name }),
   saveConfig: (config) => postMessage("save_config", config),
   saveFzPath: (path) => postMessage("save_fz_path", { path }),
+  setHotkeysEnabled: (enabled) => postMessage("set_hotkeys_enabled", { enabled }),
+  startDrag: () => postMessage("window_drag"),
 
   listWindows: () => invoke("list_windows"),
   listDesktops: () => invoke("list_desktops"),

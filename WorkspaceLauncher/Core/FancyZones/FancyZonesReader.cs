@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.IO;
 using WorkspaceLauncher.Core.Config;
-using WorkspaceLauncher.Core.SystemTray;
 
 namespace WorkspaceLauncher.Core.FancyZones;
 
@@ -12,6 +11,39 @@ namespace WorkspaceLauncher.Core.FancyZones;
 /// </summary>
 public static class FancyZonesReader
 {
+    /// <summary>
+    /// Sync FancyZones custom layouts from PowerToys disk files into the app's config cache.
+    /// This ensures the zone picker always has layout data available.
+    /// </summary>
+    public static void SyncCacheFromDisk()
+    {
+        try
+        {
+            var layouts = ReadCustomLayouts();
+            var config = ConfigManager.Instance.Config;
+            foreach (var (uuid, obj) in layouts)
+            {
+                string name = obj["name"]?.GetValue<string>() ?? "Unknown";
+                string type = obj["type"]?.GetValue<string>() ?? "grid";
+                var infoNode = obj["info"];
+                if (infoNode == null) continue;
+
+                config.FzLayoutsCache[uuid] = new LayoutCacheEntry
+                {
+                    Uuid = uuid,
+                    Name = name,
+                    Type = type,
+                    Info = JsonSerializer.Deserialize<JsonElement>(infoNode.ToJsonString())
+                };
+            }
+            Console.WriteLine($"[FancyZonesReader] Synced {layouts.Count} layouts from PowerToys to cache.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FancyZonesReader] SyncCacheFromDisk error: {ex.Message}");
+        }
+    }
+
     public static string FzBasePath =>
         !string.IsNullOrEmpty(ConfigManager.Instance.Config.FzCustomPath) 
             ? ConfigManager.Instance.Config.FzCustomPath 

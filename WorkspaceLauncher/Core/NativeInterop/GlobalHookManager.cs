@@ -29,11 +29,10 @@ public sealed class GlobalHookManager : IDisposable
     public event Action? OnX2Up;
     public event Action<int, bool, bool, bool, bool>? OnKeyDown; // vkCode, alt, ctrl, shift, win
 
-    /// <summary>
-    /// Optional predicate: given (button="x1"|"x2", alt, ctrl, shift) → true if the combo is mapped.
+    /// Optional predicate: given (button="x1"|"x2", alt, ctrl, shift, win) → true if the combo is mapped.
     /// If mapped, the button is always suppressed. If not mapped, pass-through when modifier held.
     /// </summary>
-    public Func<string, bool, bool, bool, bool>? CheckXMapped { get; set; }
+    public Func<string, bool, bool, bool, bool, bool>? CheckXMapped { get; set; }
     
     /// <summary>
     /// Optional predicate for keyboard: (vkCode, alt, ctrl, shift, win) → true to suppress
@@ -100,13 +99,14 @@ public sealed class GlobalHookManager : IDisposable
             bool alt   = (User32.GetAsyncKeyState(User32.VK_ALT)   & 0x8000) != 0;
             bool ctrl  = (User32.GetAsyncKeyState(User32.VK_CTRL)  & 0x8000) != 0;
             bool shift = (User32.GetAsyncKeyState(User32.VK_SHIFT) & 0x8000) != 0;
-            bool hasMod = alt || ctrl || shift;
+            bool win   = (User32.GetAsyncKeyState(User32.VK_LWIN)  & 0x8000) != 0 || (User32.GetAsyncKeyState(User32.VK_RWIN) & 0x8000) != 0;
+            bool hasMod = alt || ctrl || shift || win;
 
             if (wParam == User32.WM_XBUTTONDOWN)
             {
                 if (button == User32.XBUTTON1)
                 {
-                    if (hasMod && !(CheckXMapped?.Invoke("x1", alt, ctrl, shift) ?? false))
+                    if (hasMod && !(CheckXMapped?.Invoke("x1", alt, ctrl, shift, win) ?? false))
                         return User32.CallNextHookEx(_hookMouse, nCode, wParam, lParam);
                     _suppressedX1 = true;
                     Task.Run(() => OnX1Down?.Invoke());
@@ -114,7 +114,7 @@ public sealed class GlobalHookManager : IDisposable
                 }
                 if (button == User32.XBUTTON2)
                 {
-                    if (hasMod && !(CheckXMapped?.Invoke("x2", alt, ctrl, shift) ?? false))
+                    if (hasMod && !(CheckXMapped?.Invoke("x2", alt, ctrl, shift, win) ?? false))
                         return User32.CallNextHookEx(_hookMouse, nCode, wParam, lParam);
                     _suppressedX2 = true;
                     Task.Run(() => OnX2Down?.Invoke());

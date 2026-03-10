@@ -9,10 +9,10 @@ import LogConsole from './components/LogConsole/LogConsole.jsx'
 import './App.css'
 
 export default function App() {
-  const [state, setState]               = useState(null)
+  const [state, setState] = useState(null)
   const [activeCategory, setActiveCategory] = useState(null)
-  const [view, setView]                 = useState('main') // 'main' | 'config'
-  const [itemDialog, setItemDialog]     = useState(null)   // { category, index, item } | null
+  const [view, setView] = useState('main') // 'main' | 'config'
+  const [itemDialog, setItemDialog] = useState(null)   // { category, index, item } | null
   const [launchStatus, setLaunchStatus] = useState(null)   // { message, progress } | null
 
   // ── Bootstrap ────────────────────────────────────────────────────────
@@ -114,6 +114,18 @@ export default function App() {
     setState(prev => ({ ...prev, ...config }))
   }, [])
 
+  const handleRestore = useCallback(() => {
+    if (!activeCategory) return
+    bridge.restoreWorkspace(activeCategory)
+  }, [activeCategory])
+
+  const handleClean = useCallback(() => {
+    if (!activeCategory) return
+    if (window.confirm(`¿Estás seguro de cerrar todas las ventanas del workspace '${activeCategory}'?`)) {
+      bridge.cleanWorkspace(activeCategory)
+    }
+  }, [activeCategory])
+
   if (!state) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
@@ -128,51 +140,53 @@ export default function App() {
     <div className="app-layout" style={{ flexDirection: 'column' }}>
       <TitleBar />
       <div className="app-body">
-      <Sidebar
-        categories={Object.keys(state.categories)}
-        activeCategory={activeCategory}
-        onSelect={handleCategorySelect}
-        onAddCategory={handleAddCategory}
-        onDeleteCategory={handleDeleteCategory}
-        onOpenConfig={() => setView(v => v === 'config' ? 'main' : 'config')}
-        configActive={view === 'config'}
-      />
+        <Sidebar
+          categories={Object.keys(state.categories)}
+          activeCategory={activeCategory}
+          onSelect={handleCategorySelect}
+          onAddCategory={handleAddCategory}
+          onDeleteCategory={handleDeleteCategory}
+          onOpenConfig={() => setView(v => v === 'config' ? 'main' : 'config')}
+          configActive={view === 'config'}
+        />
 
-      <div className="main-content">
-        {view === 'config' ? (
-          <ConfigPanel
-            hotkeys={state.hotkeys}
-            pipWatcher={state.pipWatcher}
-            fzCustomPath={state.fzCustomPath}
-            fzDetectedPath={state.fzDetectedPath}
-            onSave={handleSaveConfig}
-          />
-        ) : (
-          <AppList
-            category={activeCategory}
-            items={currentItems}
-            onAddItem={() => setItemDialog({ category: activeCategory, index: -1, item: null })}
-            onEditItem={(idx) => setItemDialog({ category: activeCategory, index: idx, item: currentItems[idx] })}
-            onDeleteItem={(idx) => handleDeleteItem(activeCategory, idx)}
-            onMoveItem={(from, to) => handleMoveItem(activeCategory, from, to)}
-            onLaunch={handleLaunch}
-            launchStatus={launchStatus}
+        <div className="main-content">
+          {view === 'config' ? (
+            <ConfigPanel
+              hotkeys={state.hotkeys}
+              pipWatcher={state.pipWatcher}
+              fzCustomPath={state.fzCustomPath}
+              fzDetectedPath={state.fzDetectedPath}
+              onSave={handleSaveConfig}
+            />
+          ) : (
+            <AppList
+              category={activeCategory}
+              items={currentItems}
+              onAddItem={() => setItemDialog({ category: activeCategory, index: -1, item: null })}
+              onEditItem={(idx) => setItemDialog({ category: activeCategory, index: idx, item: currentItems[idx] })}
+              onDeleteItem={(idx) => handleDeleteItem(activeCategory, idx)}
+              onMoveItem={(from, to) => handleMoveItem(activeCategory, from, to)}
+              onLaunch={handleLaunch}
+              onRestore={handleRestore}
+              onClean={handleClean}
+              launchStatus={launchStatus}
+            />
+          )}
+        </div>
+
+        {itemDialog && (
+          <ItemDialog
+            category={itemDialog.category}
+            index={itemDialog.index}
+            item={itemDialog.item}
+            onSave={(item) => handleSaveItem(itemDialog.category, itemDialog.index, item)}
+            onClose={() => setItemDialog(null)}
           />
         )}
-      </div>
 
-      {itemDialog && (
-        <ItemDialog
-          category={itemDialog.category}
-          index={itemDialog.index}
-          item={itemDialog.item}
-          onSave={(item) => handleSaveItem(itemDialog.category, itemDialog.index, item)}
-          onClose={() => setItemDialog(null)}
-        />
-      )}
-      
-      <LogConsole />
-    </div>
+        {state.hotkeys?.show_system_console && <LogConsole />}
+      </div>
     </div>
   )
 }

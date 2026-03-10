@@ -4,13 +4,11 @@ import { bridge } from '../../api/bridge.js'
 import './ConfigPanel.css'
 
 const HOTKEY_LABELS = {
-  cycle_forward:      'Ciclar zona → (adelante)',
-  cycle_backward:     'Ciclar zona ← (atrás)',
-  mouse_cycle_fwd:    'Ratón: ciclar zona adelante',
-  mouse_cycle_bwd:    'Ratón: ciclar zona atrás',
-  desktop_cycle_fwd:  'Cambiar escritorio →',
-  desktop_cycle_bwd:  'Cambiar escritorio ←',
-  util_reload_layouts:'Recargar layouts FancyZones',
+  cycle_forward: 'Ciclar zona →',
+  cycle_backward: 'Ciclar zona ←',
+  desktop_cycle_fwd: 'Cambiar escritorio →',
+  desktop_cycle_bwd: 'Cambiar escritorio ←',
+  util_reload_layouts: 'Recargar layouts FancyZones',
 }
 
 export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetectedPath, onSave }) {
@@ -75,17 +73,21 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
           </p>
           {fzDetectedPath && (
             <div className="fz-detected-path">
-               <span>Detectado:</span> <code>{fzDetectedPath}</code>
+              <span>Detectado:</span> <code>{fzDetectedPath}</code>
             </div>
           )}
         </Section>
 
-        {/* PiP watcher */}
-        <Section title="PiP Watcher" icon={<Monitor size={14} />}>
+        <Section title="Sistema" icon={<Monitor size={14} />}>
           <Toggle
             label="Anclar ventanas Picture-in-Picture a todos los escritorios"
             value={pip}
             onChange={setPip}
+          />
+          <Toggle
+            label="Mostrar consola de depuración"
+            value={hk.show_system_console}
+            onChange={v => setHotkey('show_system_console', v)}
           />
         </Section>
 
@@ -163,10 +165,16 @@ function KeybindRecorder({ value, onChange }) {
     e.stopPropagation()
 
     const parts = []
-    if (e.ctrlKey)  parts.push('Ctrl')
-    if (e.altKey)   parts.push('Alt')
+    if (e.ctrlKey) parts.push('Ctrl')
+    if (e.altKey) parts.push('Alt')
     if (e.shiftKey) parts.push('Shift')
-    if (e.metaKey)  parts.push('Win')
+    if (e.metaKey) parts.push('Win')
+
+    if (e.key === 'Escape') {
+      setRecording(false)
+      setDisplay(value)
+      return
+    }
 
     // Ignore if only modifier keys are pressed
     const ignoredKeys = ['Control', 'Alt', 'Shift', 'Meta']
@@ -191,14 +199,18 @@ function KeybindRecorder({ value, onChange }) {
 
   const handleMouseDown = useCallback((e) => {
     if (!recording) return
-    // Capture mouse X buttons (button 3 = X1, button 4 = X2)
+    // Capture mouse X buttons (button 3 = X1/Back, button 4 = X2/Forward)
     if (e.button === 3 || e.button === 4) {
       e.preventDefault()
+      e.stopPropagation()
+
       const parts = []
-      if (e.ctrlKey)  parts.push('Ctrl')
-      if (e.altKey)   parts.push('Alt')
+      if (e.ctrlKey) parts.push('Ctrl')
+      if (e.altKey) parts.push('Alt')
       if (e.shiftKey) parts.push('Shift')
-      parts.push(e.button === 3 ? 'Mouse4' : 'Mouse5')
+      if (e.metaKey) parts.push('Win')
+
+      parts.push(e.button === 3 ? 'x1' : 'x2')
 
       const combo = parts.join('+')
       setDisplay(combo)
@@ -209,8 +221,14 @@ function KeybindRecorder({ value, onChange }) {
 
   useEffect(() => {
     if (recording) {
-      window.addEventListener('mousedown', handleMouseDown)
-      return () => window.removeEventListener('mousedown', handleMouseDown)
+      bridge.setHotkeysEnabled(false)
+      window.addEventListener('mousedown', handleMouseDown, true)
+      window.addEventListener('auxclick', handleMouseDown, true)
+      return () => {
+        bridge.setHotkeysEnabled(true)
+        window.removeEventListener('mousedown', handleMouseDown, true)
+        window.removeEventListener('auxclick', handleMouseDown, true)
+      }
     }
   }, [recording, handleMouseDown])
 
@@ -220,10 +238,9 @@ function KeybindRecorder({ value, onChange }) {
       className={`keybind-btn ${recording ? 'recording' : ''}`}
       onClick={() => setRecording(true)}
       onKeyDown={recording ? handleKeyDown : undefined}
-      onBlur={() => setRecording(false)}
     >
       {recording ? (
-        <span className="keybind-recording">Presiona la combinación...</span>
+        <span className="keybind-recording">Presiona la combinación (Esc para cancelar)...</span>
       ) : (
         <span className="keybind-value">{display || '—'}</span>
       )}

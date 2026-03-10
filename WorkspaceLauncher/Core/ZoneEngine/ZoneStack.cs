@@ -1,5 +1,3 @@
-using WorkspaceLauncher.Core.NativeInterop;
-
 namespace WorkspaceLauncher.Core.ZoneEngine;
 
 /// <summary>
@@ -10,7 +8,6 @@ public sealed class ZoneStack
 {
     public static readonly ZoneStack Instance = new();
 
-    // Key: (desktopGuid, monitorDevice, layoutUuid, zoneIndex) → ordered list of HWNDs
     private readonly Dictionary<ZoneKey, List<nint>> _stacks = [];
     private readonly object _lock = new();
 
@@ -47,5 +44,24 @@ public sealed class ZoneStack
         }
     }
 
-    public void Clear() { lock (_lock) { _stacks.Clear(); } }
+    /// <summary>
+    /// Find the ZoneKey that contains the given hwnd.
+    /// Returns null if the hwnd is not registered in any zone.
+    /// </summary>
+    public ZoneKey? FindKeyForHwnd(nint hwnd)
+    {
+        lock (_lock)
+        {
+            foreach (var (key, list) in _stacks)
+            {
+                if (list.Contains(hwnd)) return key;
+            }
+            return null;
+        }
+    }
+
+    public void Clear()
+    {
+        lock (_lock) { _stacks.Clear(); }
+    }
 }

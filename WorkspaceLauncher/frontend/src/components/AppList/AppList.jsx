@@ -1,8 +1,8 @@
-import { Plus, Play, Inbox } from 'lucide-react'
+import { Plus, Play, Inbox, RotateCcw, Trash2 } from 'lucide-react'
 import AppCard from './AppCard.jsx'
 import './AppList.css'
 
-export default function AppList({ category, items, onAddItem, onEditItem, onDeleteItem, onMoveItem, onLaunch, launchStatus }) {
+export default function AppList({ category, items, onAddItem, onEditItem, onDeleteItem, onMoveItem, onLaunch, onRestore, onClean, launchStatus }) {
   const launching = launchStatus && launchStatus.progress < 100
 
   return (
@@ -17,6 +17,22 @@ export default function AppList({ category, items, onAddItem, onEditItem, onDele
         <div className="applist-actions">
           <button className="btn-secondary" onClick={onAddItem}>
             <Plus size={14} /> Añadir app
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={onRestore}
+            disabled={launching || items.length === 0}
+            title="Reposicionar ventanas ya abiertas en sus zonas configuradas"
+          >
+            <RotateCcw size={14} /> Restaurar
+          </button>
+          <button
+            className="btn-secondary btn-danger"
+            onClick={onClean}
+            disabled={launching || items.length === 0}
+            title="Cerrar ventanas del workspace"
+          >
+            <Trash2 size={14} /> Limpiar
           </button>
           <button
             className="btn-launch"

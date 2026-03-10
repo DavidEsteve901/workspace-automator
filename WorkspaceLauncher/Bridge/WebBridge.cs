@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Windows.Interop;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using WorkspaceLauncher.Core.Config;
@@ -81,6 +82,14 @@ public sealed class WebBridge
                     await HandleLaunchWorkspace(payload);
                     break;
 
+                case "restore_workspace":
+                    await HandleRestoreWorkspace(payload);
+                    break;
+
+                case "clean_workspace":
+                    await HandleCleanWorkspace(payload);
+                    break;
+
                 case "save_item":
                     await HandleSaveItem(payload);
                     break;
@@ -108,6 +117,10 @@ public sealed class WebBridge
                 case "set_last_category":
                     HandleSetLastCategory(payload);
                     break;
+                
+                case "set_hotkeys_enabled":
+                    HotkeyProcessor.Instance.Enabled = payload.TryGetProperty("enabled", out var enabled) && enabled.GetBoolean();
+                    break;
 
                 case "save_fz_path":
                     await HandleSaveFzPath(payload);
@@ -128,6 +141,19 @@ public sealed class WebBridge
 
                 case "window_close":
                     _window.Dispatcher.Invoke(() => _window.Hide());
+                    break;
+                
+                case "window_drag":
+                    Logger.Info("[WebBridge] Handling window drag request");
+                    _window.Dispatcher.Invoke(() => {
+                        try 
+                        { 
+                            User32.ReleaseCapture();
+                            var handle = new WindowInteropHelper(_window).Handle;
+                            User32.SendMessage(handle, 0xA1 /* WM_NCLBUTTONDOWN */, (nint)0x2 /* HT_CAPTION */, 0);
+                        } 
+                        catch (Exception ex) { Logger.Error($"[WebBridge] Drag failed: {ex.Message}"); }
+                    });
                     break;
 
                 // ── Request/Response (invoke) actions ────────────────────
@@ -194,6 +220,26 @@ public sealed class WebBridge
         ConfigManager.Instance.Config.LastCategory = category;
         await ConfigManager.Instance.SaveAsync();
         await WorkspaceOrchestrator.Instance.LaunchWorkspaceAsync(category);
+    }
+
+    private async Task HandleRestoreWorkspace(JsonElement payload)
+    {
+        string category = payload.TryGetProperty("category", out var c) ? c.GetString() ?? "" : "";
+        if (string.IsNullOrEmpty(category))
+            category = ConfigManager.Instance.Config.LastCategory;
+        if (string.IsNullOrEmpty(category)) return;
+
+        await WorkspaceOrchestrator.Instance.RestoreWorkspaceAsync(category);
+    }
+
+    private async Task HandleCleanWorkspace(JsonElement payload)
+    {
+        string category = payload.TryGetProperty("category", out var c) ? c.GetString() ?? "" : "";
+        if (string.IsNullOrEmpty(category))
+            category = ConfigManager.Instance.Config.LastCategory;
+        if (string.IsNullOrEmpty(category)) return;
+
+        await WorkspaceOrchestrator.Instance.CleanWorkspaceAsync(category);
     }
 
     private async Task HandleSaveItem(JsonElement payload)
