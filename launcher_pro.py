@@ -3951,7 +3951,10 @@ class DevLauncherApp(ctk.CTk):
                     relaunch = intent.get("_relaunch", False)
 
                     if relaunch:
-                        self._launch_and_snap_intent(intent, monitors_info)
+                        try:
+                            self._launch_and_snap_intent(intent, monitors_info)
+                        except Exception as e:
+                            print(f"[RECOVERY] Fallo relanzando: {e}")
                         continue
 
                     for hwnd in hwnds:
@@ -4164,7 +4167,12 @@ class DevLauncherApp(ctk.CTk):
 
                     # Lanzar ventanas secuencialmente (el paralelo confunde detección de hwnds)
                     for intt in cur_items:
-                        self._launch_and_snap_intent(intt, monitors_info)
+                        try:
+                            self._launch_and_snap_intent(intt, monitors_info)
+                        except Exception as e:
+                            import traceback
+                            print(f"[ERROR DURO] Excepción crítica lanzando {intt.get('path', 'Unknown')}:")
+                            print(traceback.format_exc())
 
             # === REPASO FINAL: Re-posicionar todas las ventanas que se hayan movido ===
             time.sleep(1.5)  # Esperar a que todo se asiente
@@ -4417,13 +4425,26 @@ class DevLauncherApp(ctk.CTk):
                 new_w = z_w + offset_l + offset_r
                 new_h = z_h + offset_t + offset_b
 
-                win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, new_l, new_t, new_w, new_h, win32con.SWP_SHOWWINDOW)
-                return True
+                try:
+                    win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, new_l, new_t, new_w, new_h, win32con.SWP_SHOWWINDOW)
+                    return True
+                except Exception as e:
+                    if "denegado" in str(e).lower() or (hasattr(e, 'winerror') and e.winerror == 5):
+                        print(f"[ERROR] Acceso denegado al mover ventana {hwnd}. ¿Está ejecutándose como Administrador?")
+                    else:
+                        print(f"[ERROR] Error al mover ventana {hwnd}: {e}")
+                    return False
         except Exception as e:
             pass
 
-        win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, z_l, z_t, z_w, z_h, win32con.SWP_SHOWWINDOW)
-        return False
+        try:
+            win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, z_l, z_t, z_w, z_h, win32con.SWP_SHOWWINDOW)
+            return True
+        except Exception as e:
+            if "denegado" in str(e).lower() or (hasattr(e, 'winerror') and e.winerror == 5):
+                # Solo loguear esto si no es una ventana de sistema conocida
+                pass
+            return False
 
     def _launch_and_snap_intent(self, intent, monitors_info):
         import win32gui, win32con, os, subprocess, time, shutil, webbrowser, urllib.parse
