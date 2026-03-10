@@ -124,115 +124,117 @@ public sealed class VirtualDesktopManager : IDisposable
     public List<Guid> GetDesktops()
     {
         EnsureInitialized();
-        if (_manager == null) return [];
+        var result = new List<Guid>();
         try
         {
-            IObjectArray? arr = null;
-            if (_variant == BuildVariant.Build24H2)
+            if (_manager != null)
             {
-                int hr = ((IVirtualDesktopManagerInternal_24H2)_manager).GetDesktops(out arr);
-                if (hr != 0 || arr == null)
+                IObjectArray? arr = null;
+                if (_variant == BuildVariant.Build24H2)
                 {
-                    Logger.Warn($"[VirtualDesktopManager] GetDesktops failed (HR: 0x{hr:X}). Trying GetAllCurrentDesktops...");
-                    hr = ((IVirtualDesktopManagerInternal_24H2)_manager).GetAllCurrentDesktops(out arr);
-                }
-                
-                if (hr != 0) Logger.Error($"[VirtualDesktopManager] GetDesktops/GetAll COM returned HR: 0x{hr:X}");
-            }
-            else
-            {
-                int hr = ((IVirtualDesktopManagerInternal_22H2)_manager).GetDesktops(out arr);
-                if (hr != 0) Logger.Error($"[VirtualDesktopManager] GetDesktops COM returned HR: 0x{hr:X}");
-            }
-
-            if (arr == null)
-            {
-                Logger.Error("[VirtualDesktopManager] GetDesktops: COM returned null array.");
-                return [];
-            }
-
-            arr.GetCount(out uint count);
-            var result = new List<Guid>();
-            var iidDesktop = GetDesktopIID();
-            for (uint i = 0; i < count; i++)
-            {
-                arr.GetAt(i, ref iidDesktop, out object obj);
-                if (obj == null) continue;
-                GetDesktopId(obj, out Guid id);
-                result.Add(id);
-            }
-
-            if (result.Count == 0)
-            {
-                int regCount = GetDesktopCountFromRegistry();
-                if (regCount > 0)
-                {
-                    if (_cachedDesktops.Count != regCount)
+                    int hr = ((IVirtualDesktopManagerInternal_24H2)_manager).GetDesktops(out arr);
+                    if (hr != 0 || arr == null)
                     {
-                        _cachedDesktops = Enumerable.Range(0, regCount).Select(_ => Guid.NewGuid()).ToList();
+                        Logger.Warn($"[VirtualDesktopManager] GetDesktops failed (HR: 0x{hr:X}). Trying GetAllCurrentDesktops...");
+                        hr = ((IVirtualDesktopManagerInternal_24H2)_manager).GetAllCurrentDesktops(out arr);
                     }
-                    result = _cachedDesktops;
+                    
+                    if (hr != 0) Logger.Error($"[VirtualDesktopManager] GetDesktops/GetAll COM returned HR: 0x{hr:X}");
+                }
+                else
+                {
+                    int hr = ((IVirtualDesktopManagerInternal_22H2)_manager).GetDesktops(out arr);
+                    if (hr != 0) Logger.Error($"[VirtualDesktopManager] GetDesktops COM returned HR: 0x{hr:X}");
+                }
+
+                if (arr != null)
+                {
+                    arr.GetCount(out uint count);
+                    var iidDesktop = GetDesktopIID();
+                    for (uint i = 0; i < count; i++)
+                    {
+                        arr.GetAt(i, ref iidDesktop, out object obj);
+                        if (obj == null) continue;
+                        GetDesktopId(obj, out Guid id);
+                        result.Add(id);
+                    }
                 }
             }
-            else
-            {
-                _cachedDesktops = result;
-            }
-            Logger.Info($"[VirtualDesktopManager] Found {result.Count} desktops.");
-            return result;
         }
         catch (Exception ex)
         {
-            Logger.Error($"[VirtualDesktopManager] GetDesktops failed: {ex.Message}");
-            return [];
+            Logger.Error($"[VirtualDesktopManager] GetDesktops COM path failed: {ex.Message}");
         }
+
+        // Registry fallback
+        var regDesktops = GetDesktopIDsFromRegistry();
+        if (regDesktops.Count > result.Count)
+        {
+            if (result.Count > 0)
+                Logger.Info($"[VirtualDesktopManager] Registry has more desktops ({regDesktops.Count}) than COM ({result.Count}). Using Registry.");
+            result = regDesktops;
+        }
+        
+        if (result.Count == 0) result = regDesktops;
+
+        _cachedDesktops = result;
+        Logger.Info($"[VirtualDesktopManager] Found {result.Count} desktops total.");
+        return result;
     }
 
     public Guid? GetCurrentDesktopId()
     {
         EnsureInitialized();
-        if (_manager == null) return null;
-        try
+        Guid? id = null;
+        if (_manager != null)
         {
-            object desktop;
-            if (_variant == BuildVariant.Build24H2)
+            try
             {
-                int hr = ((IVirtualDesktopManagerInternal_24H2)_manager).GetCurrentDesktop(out var d);
-                if (hr != 0) Logger.Error($"[VirtualDesktopManager] GetCurrentDesktop COM returned HR: 0x{hr:X}");
-                desktop = d;
+                object? desktop = null;
+                if (_variant == BuildVariant.Build24H2)
+                {
+                    ((IVirtualDesktopManagerInternal_24H2)_manager).GetCurrentDesktop(out var d);
+                    desktop = d;
+                }
+                else
+                {
+                    ((IVirtualDesktopManagerInternal_22H2)_manager).GetCurrentDesktop(out var d);
+                    desktop = d;
+                }
+                
+                if (desktop != null)
+                {
+                    GetDesktopId(desktop, out Guid g);
+                    id = g;
+                    Logger.Info($"[VirtualDesktopManager] Current (COM): {id}");
+                }
             }
-            else
-            {
-                int hr = ((IVirtualDesktopManagerInternal_22H2)_manager).GetCurrentDesktop(out var d);
-                if (hr != 0) Logger.Error($"[VirtualDesktopManager] GetCurrentDesktop COM returned HR: 0x{hr:X}");
-                desktop = d;
-            }
-            
-            if (desktop == null) 
-            {
-                Logger.Error("[VirtualDesktopManager] GetCurrentDesktop returned null.");
-                return null;
-            }
+            catch { }
+        }
 
-            GetDesktopId(desktop, out Guid id);
-            Logger.Info($"[VirtualDesktopManager] Current desktop: {id}");
-            return id;
+        if (id == null)
+        {
+            id = GetCurrentDesktopIdFromRegistry();
+            Logger.Info($"[VirtualDesktopManager] Current (Reg): {id}");
         }
-        catch (Exception ex) 
-        { 
-            Logger.Warn($"[VirtualDesktopManager] GetCurrentDesktopId COM failed: {ex.Message}. Trying Registry...");
-            return GetCurrentDesktopIdFromRegistry();
-        }
+        return id;
     }
 
     private Guid? GetCurrentDesktopIdFromRegistry()
     {
         try
         {
-            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops");
-            if (key?.GetValue("CurrentVirtualDesktop") is byte[] guidBytes)
+            string sessionId = System.Diagnostics.Process.GetCurrentProcess().SessionId.ToString();
+            string[] paths = {
+                $@"Software\Microsoft\Windows\CurrentVersion\Explorer\SessionInfo\{sessionId}\VirtualDesktops",
+                @"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops"
+            };
+
+            foreach (var path in paths)
             {
-                return new Guid(guidBytes);
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(path);
+                var val = key?.GetValue("CurrentVirtualDesktop");
+                if (val is byte[] b && b.Length == 16) return new Guid(b);
             }
         }
         catch { }
@@ -247,7 +249,11 @@ public sealed class VirtualDesktopManager : IDisposable
         try
         {
             var desktop = FindDesktopById(desktopId);
-            if (desktop == null) return false;
+            if (desktop == null || _manager == null) 
+            {
+                Logger.Info($"[VirtualDesktopManager] No COM desktop object for {desktopId}. Using keyboard fallback.");
+                return FallbackSwitch(desktopId);
+            }
 
             try
             {
@@ -422,18 +428,35 @@ public sealed class VirtualDesktopManager : IDisposable
         return null;
     }
 
-    private int GetDesktopCountFromRegistry()
+    private List<Guid> GetDesktopIDsFromRegistry()
     {
+        var result = new List<Guid>();
         try
         {
-            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops");
-            if (key?.GetValue("VirtualDesktopIDs") is byte[] ids)
+            string sessionId = System.Diagnostics.Process.GetCurrentProcess().SessionId.ToString();
+            string[] paths = {
+                $@"Software\Microsoft\Windows\CurrentVersion\Explorer\SessionInfo\{sessionId}\VirtualDesktops",
+                @"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops"
+            };
+
+            foreach (var path in paths)
             {
-                return ids.Length / 16;
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(path);
+                if (key?.GetValue("VirtualDesktopIDs") is byte[] ids && ids.Length >= 16)
+                {
+                    for (int i = 0; i < ids.Length; i += 16)
+                    {
+                        if (i + 16 > ids.Length) break;
+                        byte[] guidBytes = new byte[16];
+                        Array.Copy(ids, i, guidBytes, 0, 16);
+                        result.Add(new Guid(guidBytes));
+                    }
+                    if (result.Count > 0) break;
+                }
             }
         }
         catch { }
-        return 0;
+        return result;
     }
 
     // ── Keyboard simulation fallback ─────────────────────────────────────────

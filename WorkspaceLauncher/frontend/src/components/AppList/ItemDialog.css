@@ -11,7 +11,15 @@
   animation: fadeIn 0.15s ease;
 }
 
-@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes fadeIn {
+  from {
+    opacity: 0
+  }
+
+  to {
+    opacity: 1
+  }
+}
 
 .dialog {
   background: var(--bg-main);
@@ -27,8 +35,15 @@
 }
 
 @keyframes slideUp {
-  from { transform: translateY(20px); opacity: 0 }
-  to   { transform: translateY(0);    opacity: 1 }
+  from {
+    transform: translateY(20px);
+    opacity: 0
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1
+  }
 }
 
 /* ── Header ───────────────────────────────────────────────────────────── */
@@ -149,7 +164,10 @@
   display: flex;
   gap: 16px;
 }
-.field-row .dialog-field { flex: 1; }
+
+.field-row .dialog-field {
+  flex: 1;
+}
 
 .field-with-btn {
   display: flex;
@@ -252,4 +270,136 @@
 .footer-right {
   display: flex;
   gap: 10px;
+}
+
+/* ── Active Layout Indicator ─────────────────────────────────────────── */
+.fz-active-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: rgba(0, 230, 118, 0.06);
+  border: 1px solid rgba(0, 230, 118, 0.15);
+  border-radius: var(--radius-md);
+  gap: 10px;
+}
+
+.fz-active-indicator-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.fz-indicator-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.fz-indicator-text strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.fz-indicator-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+.fz-refresh-btn {
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  flex-shrink: 0;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.fz-refresh-btn:hover {
+  background: rgba(0, 210, 255, 0.1);
+  border-color: rgba(0, 210, 255, 0.3);
+}
+
+@keyframes fz-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.fz-spin {
+  animation: fz-spin 1s linear infinite;
+  color: var(--accent);
+}
+
+/* ── Active badge ────────────────────────────────────────────────────── */
+.fz-active-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #000;
+  background: var(--success);
+  border-radius: 99px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.fz-select-active {
+  border-color: rgba(0, 230, 118, 0.4) !important;
+}
+
+/* ── Warning bar ─────────────────────────────────────────────────────── */
+.fz-warning-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(255, 234, 0, 0.06);
+  border: 1px solid rgba(255, 234, 0, 0.15);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.fz-warning-bar strong {
+  color: var(--warning);
+}
+
+.fz-warning-bar svg {
+  color: var(--warning);
+  flex-shrink: 0;
+}
+
+.fz-warning-btn {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--warning);
+  background: rgba(255, 234, 0, 0.1);
+  border: 1px solid rgba(255, 234, 0, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.fz-warning-btn:hover {
+  background: rgba(255, 234, 0, 0.2);
 }

@@ -29,59 +29,86 @@ public static class ZoneCalculator
         int rows    = layout.Rows;
         int cols    = layout.Columns;
         int spacing = layout.ShowSpacing ? layout.Spacing : 0;
-        int w       = workArea.Width;
-        int h       = workArea.Height;
 
-        // Compute row heights
+        int totalW = workArea.Width;
+        int totalH = workArea.Height;
+
+        // Compute usable area (total minus all gaps between cells)
+        int usableW = totalW - (cols - 1) * spacing;
+        int usableH = totalH - (rows - 1) * spacing;
+
         double totalRowPct = layout.RowsPercentage.Sum();
-        var rowHeights = layout.RowsPercentage
-            .Select(p => (int)Math.Round(p / totalRowPct * h))
-            .ToArray();
-
-        // Compute col widths
         double totalColPct = layout.ColumnsPercentage.Sum();
-        var colWidths = layout.ColumnsPercentage
-            .Select(p => (int)Math.Round(p / totalColPct * w))
-            .ToArray();
 
-        // Build zone rects by scanning cell-child-map
-        var zoneRects = new Dictionary<int, RECT>();
+        // Calculate absolute grid lines for cell boundaries
+        // Each cell i occupies space between line i and line i+1
+        int[] colLines = new int[cols + 1];
+        int[] rowLines = new int[rows + 1];
+
+        colLines[0] = 0;
+        int currentW = 0;
+        for (int i = 0; i < cols - 1; i++)
+        {
+            currentW += (int)Math.Round((double)layout.ColumnsPercentage[i] / totalColPct * usableW);
+            colLines[i + 1] = currentW;
+            currentW += spacing; // Jump over spacing for next cell start
+        }
+        colLines[cols] = totalW; // Last line is always the edge
+
+        rowLines[0] = 0;
+        int currentH = 0;
+        for (int i = 0; i < rows - 1; i++)
+        {
+            currentH += (int)Math.Round((double)layout.RowsPercentage[i] / totalRowPct * usableH);
+            rowLines[i + 1] = currentH;
+            currentH += spacing;
+        }
+        rowLines[rows] = totalH;
+
+        // Find the bounding box of cells belonging to this zoneIndex
+        int minRow = int.MaxValue, maxRow = int.MinValue;
+        int minCol = int.MaxValue, maxCol = int.MinValue;
+        bool found = false;
 
         for (int r = 0; r < rows && r < layout.CellChildMap.Length; r++)
         {
-            int rowOff = workArea.Top + rowHeights.Take(r).Sum() + (r > 0 ? spacing * r : 0);
-
             var rowCells = layout.CellChildMap[r];
             for (int c = 0; c < cols && c < rowCells.Length; c++)
             {
-                int childId = rowCells[c];
-                if (zoneRects.ContainsKey(childId)) continue; // Already covered (merged cell)
-
-                int colOff = workArea.Left + colWidths.Take(c).Sum() + (c > 0 ? spacing * c : 0);
-
-                // Find how many consecutive cells share this childId
-                int spanCols = 1;
-                for (int cc = c + 1; cc < cols && cc < rowCells.Length && rowCells[cc] == childId; cc++)
-                    spanCols++;
-
-                int spanRows = 1;
-                for (int rr = r + 1; rr < rows && rr < layout.CellChildMap.Length && layout.CellChildMap[rr][c] == childId; rr++)
-                    spanRows++;
-
-                int zW = colWidths.Skip(c).Take(spanCols).Sum() + spacing * (spanCols - 1);
-                int zH = rowHeights.Skip(r).Take(spanRows).Sum() + spacing * (spanRows - 1);
-
-                zoneRects[childId] = new RECT
+                if (rowCells[c] == zoneIndex)
                 {
-                    Left   = colOff,
-                    Top    = rowOff,
-                    Right  = colOff + zW,
-                    Bottom = rowOff + zH,
-                };
+                    minRow = Math.Min(minRow, r);
+                    maxRow = Math.Max(maxRow, r);
+                    minCol = Math.Min(minCol, c);
+                    maxCol = Math.Max(maxCol, c);
+                    found = true;
+                }
             }
         }
 
-        return zoneRects.TryGetValue(zoneIndex, out var rect) ? rect : null;
+        if (!found) return null;
+
+        // Translate grid lines to absolute screen coordinates
+        // Zone starts at the beginning of minCol and ends at the end of maxCol
+        var result = new RECT
+        {
+            Left   = workArea.Left + colLines[minCol],
+            Top    = workArea.Top  + rowLines[minRow],
+            Right  = workArea.Left + (minCol == maxCol ? colLines[minCol] + (colLines[minCol + 1] - (minCol == cols - 1 ? 0 : spacing) - colLines[minCol]) : colLines[maxCol + 1] - (maxCol == cols - 1 ? 0 : spacing)),
+            Bottom = workArea.Top  + (minRow == maxRow ? rowLines[minRow] + (rowLines[minRow + 1] - (minRow == rows - 1 ? 0 : spacing) - rowLines[minRow]) : rowLines[maxRow + 1] - (maxRow == rows - 1 ? 0 : spacing))
+        };
+
+        // Simplified right/bottom logic:
+        // A zone spanning from col A to col B starts at line A and ends at line B+1,
+        // BUT we must subtract the spacing that's baked into line i+1 if line i+1 is NOT the monitor edge.
+        result.Right = workArea.Left + colLines[maxCol + 1];
+        if (maxCol < cols - 1) result.Right -= spacing;
+
+        result.Bottom = workArea.Top + rowLines[maxRow + 1];
+        if (maxRow < rows - 1) result.Bottom -= spacing;
+
+        Console.WriteLine($"[ZoneCalculator] Grid Zone {zoneIndex}: [{result.Left},{result.Top},{result.Right},{result.Bottom}] (Size: {result.Width}x{result.Height})");
+        return result;
     }
 
     private static RECT? CalculateCanvasZone(LayoutInfo layout, int zoneIndex, RECT workArea)
@@ -89,47 +116,21 @@ public static class ZoneCalculator
         if (layout.CanvasZones == null || zoneIndex >= layout.CanvasZones.Length)
             return null;
 
-        var zone    = layout.CanvasZones[zoneIndex];
+        var zone  = layout.CanvasZones[zoneIndex];
         double refW = layout.ReferenceWidth  > 0 ? layout.ReferenceWidth  : workArea.Width;
         double refH = layout.ReferenceHeight > 0 ? layout.ReferenceHeight : workArea.Height;
 
         double scaleX = workArea.Width  / refW;
         double scaleY = workArea.Height / refH;
 
-        return new RECT
+        var result = new RECT
         {
             Left   = workArea.Left + (int)Math.Round(zone.X * scaleX),
             Top    = workArea.Top  + (int)Math.Round(zone.Y * scaleY),
             Right  = workArea.Left + (int)Math.Round((zone.X + zone.Width)  * scaleX),
             Bottom = workArea.Top  + (int)Math.Round((zone.Y + zone.Height) * scaleY),
         };
+        Console.WriteLine($"[ZoneCalculator] Canvas Zone {zoneIndex}: [{result.Left},{result.Top},{result.Right},{result.Bottom}]");
+        return result;
     }
-}
-
-/// <summary>Deserialized layout info used by ZoneCalculator.</summary>
-public class LayoutInfo
-{
-    public string? Type    { get; set; }
-    public int     Rows    { get; set; }
-    public int     Columns { get; set; }
-
-    public int[]?   RowsPercentage    { get; set; }
-    public int[]?   ColumnsPercentage { get; set; }
-    public int[][]? CellChildMap      { get; set; }
-
-    public bool ShowSpacing { get; set; }
-    public int  Spacing     { get; set; }
-
-    // Canvas fields
-    public CanvasZone[]? CanvasZones     { get; set; }
-    public int           ReferenceWidth  { get; set; }
-    public int           ReferenceHeight { get; set; }
-}
-
-public class CanvasZone
-{
-    public int X      { get; set; }
-    public int Y      { get; set; }
-    public int Width  { get; set; }
-    public int Height { get; set; }
 }

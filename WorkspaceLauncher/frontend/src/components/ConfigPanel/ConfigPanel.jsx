@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Settings, Keyboard, Monitor, Save, Check, Folder } from 'lucide-react'
+import { Settings, Keyboard, Monitor, Save, Check, Folder, LayoutGrid, RotateCw, X, ChevronRight } from 'lucide-react'
 import { bridge } from '../../api/bridge.js'
 import './ConfigPanel.css'
 
@@ -16,6 +16,7 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
   const [pip, setPip] = useState(pipWatcher)
   const [fzPath, setFzPath] = useState(fzCustomPath || '')
   const [saved, setSaved] = useState(false)
+  const [fzModalOpen, setFzModalOpen] = useState(false)
 
   function handleSave() {
     onSave({ hotkeys: hk, pipWatcherEnabled: pip, fzCustomPath: fzPath })
@@ -52,6 +53,20 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
             value={hk._desktop_cycle_enabled}
             onChange={v => setHotkey('_desktop_cycle_enabled', v)}
           />
+        </Section>
+
+        {/* FancyZones Status Manager */}
+        <Section title="FancyZones — Estado y Layouts" icon={<LayoutGrid size={14} />}>
+          <button className="fz-status-btn" onClick={() => setFzModalOpen(true)}>
+            <div className="fz-status-btn-content">
+              <LayoutGrid size={16} />
+              <div>
+                <span className="fz-status-btn-title">Gestionar Layouts por Monitor</span>
+                <span className="fz-status-btn-desc">Ver y cambiar qué layout está activo en cada monitor y escritorio</span>
+              </div>
+            </div>
+            <ChevronRight size={16} className="fz-status-btn-arrow" />
+          </button>
         </Section>
 
         {/* PowerToys path overrides */}
@@ -116,6 +131,165 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
         <button className="btn-launch" onClick={handleSave}>
           <Save size={14} /> Guardar configuración
         </button>
+      </div>
+
+      {fzModalOpen && (
+        <FzStatusModal onClose={() => setFzModalOpen(false)} />
+      )}
+    </div>
+  )
+}
+
+// ── FancyZones Status Modal ──────────────────────────────────────────────
+function FzStatusModal({ onClose }) {
+  const [fzStatus, setFzStatus] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [changingEntry, setChangingEntry] = useState(null) // entry being changed
+  const [savingMsg, setSavingMsg] = useState('')
+
+  const loadStatus = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await bridge.getFzStatus()
+      setFzStatus(data)
+    } catch (err) {
+      console.error("Error loading FZ status:", err)
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    loadStatus()
+  }, [loadStatus])
+
+  const handleChangeLayout = async (entry, newLayoutUuid) => {
+    setChangingEntry(entry)
+    try {
+      const res = await bridge.changeLayoutAssignment(
+        entry.monitorPtInstance,
+        entry.monitorPtName,
+        entry.desktopId,
+        newLayoutUuid
+      )
+      if (res?.success) {
+        setSavingMsg('✓ Layout cambiado correctamente')
+        setTimeout(() => setSavingMsg(''), 2000)
+        await loadStatus()
+      } else {
+        setSavingMsg('✗ Error al cambiar layout')
+        setTimeout(() => setSavingMsg(''), 3000)
+      }
+    } catch (err) {
+      setSavingMsg('✗ Error: ' + (err.message || 'desconocido'))
+      setTimeout(() => setSavingMsg(''), 3000)
+    }
+    setChangingEntry(null)
+  }
+
+  // Group entries by monitor
+  const groupedEntries = {}
+  if (fzStatus?.entries) {
+    for (const entry of fzStatus.entries) {
+      if (!groupedEntries[entry.monitorLabel]) {
+        groupedEntries[entry.monitorLabel] = []
+      }
+      groupedEntries[entry.monitorLabel].push(entry)
+    }
+  }
+
+  return (
+    <div className="dialog-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="dialog fz-modal">
+        <div className="dialog-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent)' }}>
+            <LayoutGrid size={20} />
+            <h2>Estado de FancyZones</h2>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              className="btn-icon-small fz-modal-refresh"
+              onClick={loadStatus}
+              title="Sincronizar"
+              disabled={loading}
+            >
+              <RotateCw size={14} className={loading ? 'fz-spin' : ''} />
+            </button>
+            <button className="dialog-close" onClick={onClose}><X size={20} /></button>
+          </div>
+        </div>
+
+        <div className="fz-modal-body">
+          {loading && !fzStatus ? (
+            <div className="fz-modal-loading">
+              <RotateCw size={20} className="fz-spin" />
+              <span>Leyendo configuración de FancyZones...</span>
+            </div>
+          ) : Object.keys(groupedEntries).length === 0 ? (
+            <div className="fz-modal-empty">
+              <Monitor size={32} style={{ opacity: 0.3 }} />
+              <p>No se encontraron monitores o layouts aplicados</p>
+            </div>
+          ) : (
+            <div className="fz-modal-monitors">
+              {Object.entries(groupedEntries).map(([monLabel, entries]) => (
+                <div key={monLabel} className="fz-modal-monitor-group">
+                  <div className="fz-modal-monitor-header">
+                    <Monitor size={14} />
+                    <span>{monLabel}</span>
+                  </div>
+                  <div className="fz-modal-desktop-list">
+                    {entries.map((entry, i) => (
+                      <div key={i} className={`fz-modal-desktop-row ${entry.desktopIsCurrent ? 'current' : ''}`}>
+                        <div className="fz-modal-desktop-info">
+                          <span className="fz-modal-desktop-name">
+                            {entry.desktopName}
+                            {entry.desktopIsCurrent && (
+                              <span className="fz-modal-current-badge">ACTUAL</span>
+                            )}
+                          </span>
+                          <span className="fz-modal-layout-display">
+                            {entry.activeLayout ? (
+                              <span className="fz-modal-layout-active">
+                                <LayoutGrid size={12} />
+                                {entry.activeLayout.name}
+                              </span>
+                            ) : (
+                              <span className="fz-modal-layout-none">Sin layout</span>
+                            )}
+                          </span>
+                        </div>
+                        <select
+                          className="fz-modal-layout-select"
+                          value={entry.activeLayoutUuid || ''}
+                          onChange={e => handleChangeLayout(entry, e.target.value)}
+                          disabled={changingEntry === entry}
+                        >
+                          <option value="">Sin layout</option>
+                          {(fzStatus?.layouts || []).map(l => (
+                            <option key={l.uuid} value={l.uuid}>{l.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {savingMsg && (
+            <div className={`fz-modal-toast ${savingMsg.startsWith('✓') ? 'success' : 'error'}`}>
+              {savingMsg}
+            </div>
+          )}
+        </div>
+
+        <div className="dialog-footer">
+          <div></div>
+          <button className="btn-secondary" onClick={onClose} style={{ border: 'none', background: 'transparent' }}>
+            Cerrar
+          </button>
+        </div>
       </div>
     </div>
   )

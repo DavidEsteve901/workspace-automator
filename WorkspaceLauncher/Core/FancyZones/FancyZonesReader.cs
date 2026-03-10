@@ -86,11 +86,11 @@ public static class FancyZonesReader
     }
 
     /// <summary>
-    /// Read applied layouts. Returns dict "{uuid}_{monitor}" → layout uuid.
+    /// Read applied layouts. Returns list of info (deviceId, desktopId, layoutUuid, monitorName, instance, monitorNumber, serialNumber).
     /// </summary>
-    public static Dictionary<string, string> ReadAppliedLayouts()
+    public static List<object> ReadAppliedLayouts()
     {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<object>();
         if (!File.Exists(AppliedLayoutsPath)) return result;
 
         try
@@ -103,10 +103,37 @@ public static class FancyZonesReader
             foreach (var entry in applied)
             {
                 if (entry is not JsonObject obj) continue;
-                var deviceId = obj["device-id"]?.GetValue<string>();
-                var layout   = obj["applied-layout"]?["uuid"]?.GetValue<string>();
-                if (deviceId != null && layout != null)
-                    result[deviceId] = layout.Trim('{', '}').ToLowerInvariant();
+                
+                var device = obj["device"];
+                string? instance = device?["monitor-instance"]?.GetValue<string>();
+                string? monitorName = device?["monitor"]?.GetValue<string>();
+                string? deviceId = string.IsNullOrEmpty(instance) ? monitorName : instance;
+                int monitorNumber = device?["monitor-number"]?.GetValue<int>() ?? 0;
+                string? serialNumber = device?["serial-number"]?.GetValue<string>();
+                
+                if (device == null)
+                    deviceId = obj["device-id"]?.GetValue<string>();
+
+                // Check both property names used by PowerToys
+                var desktopNode = obj["virtual-desktop-id"] ?? device?["virtual-desktop"];
+                string? desktopId = desktopNode?.GetValue<string>()?.Trim('{', '}').ToLowerInvariant();
+                
+                var layout = obj["applied-layout"]?["uuid"]?.GetValue<string>();
+                
+                if (!string.IsNullOrEmpty(deviceId) && !string.IsNullOrEmpty(layout))
+                {
+                    var item = new {
+                        deviceId,
+                        monitorName,
+                        instance,
+                        desktopId,
+                        monitorNumber,
+                        serialNumber = serialNumber ?? "",
+                        layoutUuid = layout.Trim('{', '}').ToLowerInvariant()
+                    };
+                    Console.WriteLine($"[FancyZonesReader] Applied entry: monitor={monitorName}, instance={instance}, monNum={monitorNumber}, desktop={desktopId}, layout={item.layoutUuid}");
+                    result.Add(item);
+                }
             }
         }
         catch (Exception ex)
@@ -153,6 +180,95 @@ public static class FancyZonesReader
         catch (Exception ex)
         {
             Console.WriteLine($"[FancyZonesReader] InjectLayout error: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Inject/update a layout assignment for a specific monitor+desktop combination.
+    /// Uses the FancyZones v2 format with device { monitor-instance, monitor, virtual-desktop }.
+    /// </summary>
+    public static bool InjectLayoutByDevice(string monitorInstance, string monitorName, string? virtualDesktopId, string layoutUuid)
+    {
+        if (!File.Exists(AppliedLayoutsPath)) return false;
+
+        try
+        {
+            string json = File.ReadAllText(AppliedLayoutsPath);
+            var root = JsonNode.Parse(json);
+            var arr = root?["applied-layouts"]?.AsArray();
+            if (arr == null) return false;
+
+            string wrappedLayoutUuid = $"{{{layoutUuid.ToUpperInvariant()}}}";
+            string wrappedDesktopId = !string.IsNullOrEmpty(virtualDesktopId) 
+                ? $"{{{virtualDesktopId.Trim('{', '}').ToUpperInvariant()}}}" 
+                : "{00000000-0000-0000-0000-000000000000}";
+
+            bool found = false;
+            foreach (var entry in arr)
+            {
+                if (entry is not JsonObject obj) continue;
+                var device = obj["device"];
+                if (device == null) continue;
+
+                string? entryInstance = device["monitor-instance"]?.GetValue<string>();
+                string? entryMonitor = device["monitor"]?.GetValue<string>();
+                string? entryDesktop = device["virtual-desktop"]?.GetValue<string>();
+
+                // Match by monitor-instance (most reliable) or fallback to monitor name
+                bool monitorMatch = (!string.IsNullOrEmpty(entryInstance) && entryInstance == monitorInstance) ||
+                                   (!string.IsNullOrEmpty(entryMonitor) && entryMonitor == monitorName);
+                
+                bool desktopMatch = string.IsNullOrEmpty(virtualDesktopId)
+                    ? true  // If no desktop specified, match any  
+                    : (entryDesktop?.Trim('{', '}').Equals(virtualDesktopId.Trim('{', '}'), StringComparison.OrdinalIgnoreCase) ?? false);
+
+                if (monitorMatch && desktopMatch)
+                {
+                    var appliedLayout = obj["applied-layout"] as JsonObject;
+                    if (appliedLayout != null)
+                    {
+                        appliedLayout["uuid"] = wrappedLayoutUuid;
+                        appliedLayout["type"] = "custom";
+                    }
+                    else
+                    {
+                        obj["applied-layout"] = JsonNode.Parse($"{{\"uuid\":\"{wrappedLayoutUuid}\",\"type\":\"custom\"}}");
+                    }
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found)
+            {
+                // Create a new entry
+                var newEntry = new JsonObject
+                {
+                    ["device"] = new JsonObject
+                    {
+                        ["monitor"] = monitorName ?? "",
+                        ["monitor-instance"] = monitorInstance ?? "",
+                        ["monitor-number"] = 0,
+                        ["serial-number"] = "",
+                        ["virtual-desktop"] = wrappedDesktopId
+                    },
+                    ["applied-layout"] = new JsonObject
+                    {
+                        ["uuid"] = wrappedLayoutUuid,
+                        ["type"] = "custom"
+                    }
+                };
+                arr.Add(newEntry);
+            }
+
+            File.WriteAllText(AppliedLayoutsPath, root!.ToJsonString(JsonOpts));
+            Console.WriteLine($"[FancyZonesReader] InjectLayoutByDevice: set {monitorInstance}/{monitorName} desktop={virtualDesktopId} → layout={layoutUuid}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FancyZonesReader] InjectLayoutByDevice error: {ex.Message}");
             return false;
         }
     }

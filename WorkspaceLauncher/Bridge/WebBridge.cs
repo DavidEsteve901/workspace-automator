@@ -168,6 +168,18 @@ public sealed class WebBridge
                 case "list_windows":
                     ReplyInvoke(reqId, HandleListWindows());
                     break;
+                
+                case "list_fancyzones":
+                    ReplyInvoke(reqId, HandleListFancyZones());
+                    break;
+
+                case "get_fz_status":
+                    ReplyInvoke(reqId, HandleGetFzStatus());
+                    break;
+
+                case "change_layout_assignment":
+                    ReplyInvoke(reqId, await HandleChangeLayoutAssignment(payload));
+                    break;
 
                 case "open_file_dialog":
                     var dialogResult = await HandleOpenFileDialog(payload);
@@ -351,25 +363,265 @@ public sealed class WebBridge
 
     private object HandleListMonitors()
     {
-        var monitors = WindowManager.GetMonitors();
-        return monitors.Select((m, idx) => new
+        var monitors = MonitorManager.GetActiveMonitors();
+        return monitors.Select(m => new
         {
-            id     = idx + 1,
-            name   = m.Name,
-            label  = $"Pantalla {idx + 1} [{m.Name}]",
-            workArea = new { left = m.WorkArea.Left, top = m.WorkArea.Top, right = m.WorkArea.Right, bottom = m.WorkArea.Bottom }
+            id         = m.Handle,
+            deviceName = m.DeviceName,
+            hardwareId = m.HardwareId,
+            ptName     = m.PtName,
+            ptInstance = m.PtInstance,
+            name       = m.Name,
+            label      = $"{m.Name}{(m.IsPrimary ? " ★" : "")}",
+            isPrimary  = m.IsPrimary,
         }).ToArray();
     }
 
     private object HandleListDesktops()
     {
-        var vdm      = VirtualDesktopManager.Instance;
-        var desktops = vdm.GetDesktops();
-        return desktops.Select((id, idx) => new
+        try
         {
-            id   = id.ToString(),
-            name = $"Escritorio {idx + 1}",
-        }).ToArray();
+            var vdm      = VirtualDesktopManager.Instance;
+            var desktops = vdm.GetDesktops();
+            var current  = vdm.GetCurrentDesktopId();
+            
+            if (desktops.Count == 0)
+            {
+                // Absolute fallback: always show at least one desktop
+                return new[] { new { id = Guid.Empty.ToString(), name = "Escritorio 1", isCurrent = true } };
+            }
+
+            return desktops.Select((id, idx) => new
+            {
+                id   = id.ToString().ToLowerInvariant(),
+                name = $"Escritorio {idx + 1}",
+                isCurrent = current.HasValue && current.Value == id
+            }).ToArray();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[WebBridge] HandleListDesktops error: {ex.Message}");
+            return new[] { new { id = Guid.Empty.ToString(), name = "Escritorio 1", isCurrent = true } };
+        }
+    }
+
+    private object HandleListFancyZones()
+    {
+        try
+        {
+            FancyZonesReader.SyncCacheFromDisk();
+            var applied = FancyZonesReader.ReadAppliedLayouts();
+            var layoutsCache = ConfigManager.Instance.Config.FzLayoutsCache;
+
+            var availableLayouts = layoutsCache.Values.Select(l => {
+                // Determine zone count from layout info
+                int zones = 0;
+                try {
+                    if (l.Info.TryGetProperty("cell-child-map", out var map))
+                        zones = map.GetArrayLength();
+                    else if (l.Info.TryGetProperty("rows", out var rows) && l.Info.TryGetProperty("columns", out var cols))
+                        zones = rows.GetInt32() * cols.GetInt32();
+                    else if (l.Info.TryGetProperty("zones", out var zArray))
+                        zones = zArray.GetArrayLength();
+                } catch { }
+
+                return new {
+                    uuid = l.Uuid,
+                    name = l.Name,
+                    type = l.Type,
+                    zoneCount = zones > 0 ? zones : 1,
+                    info = l.Info
+                };
+            }).ToArray();
+
+            return new
+            {
+                applied = applied,
+                layouts = availableLayouts
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[WebBridge] HandleListFancyZones error: {ex.Message}");
+            return new { applied = new List<object>(), layouts = new List<object>() };
+        }
+    }
+
+    private object HandleGetFzStatus()
+    {
+        try
+        {
+            FancyZonesReader.SyncCacheFromDisk();
+            var applied = FancyZonesReader.ReadAppliedLayouts();
+            var layoutsCache = ConfigManager.Instance.Config.FzLayoutsCache;
+            var monitors = MonitorManager.GetActiveMonitors();
+
+            var vdm = VirtualDesktopManager.Instance;
+            var desktopIds = vdm.GetDesktops();
+            var currentDesktop = vdm.GetCurrentDesktopId();
+
+            var desktops = desktopIds.Count > 0
+                ? desktopIds.Select((id, idx) => new
+                {
+                    id = id.ToString().ToLowerInvariant(),
+                    name = $"Escritorio {idx + 1}",
+                    isCurrent = currentDesktop.HasValue && currentDesktop.Value == id
+                }).ToArray()
+                : new[] { new { id = Guid.Empty.ToString(), name = "Escritorio 1", isCurrent = true } };
+
+            var availableLayouts = layoutsCache.Values.Select(l =>
+            {
+                int zones = 0;
+                try
+                {
+                    if (l.Info.TryGetProperty("cell-child-map", out var map))
+                    {
+                        var allCells = new HashSet<int>();
+                        for (int rr = 0; rr < map.GetArrayLength(); rr++)
+                            foreach (var cell in map[rr].EnumerateArray())
+                                allCells.Add(cell.GetInt32());
+                        zones = allCells.Count;
+                    }
+                    else if (l.Info.TryGetProperty("zones", out var zArray))
+                        zones = zArray.GetArrayLength();
+                }
+                catch { }
+
+                return new
+                {
+                    uuid = l.Uuid,
+                    name = l.Name,
+                    type = l.Type,
+                    zoneCount = zones > 0 ? zones : 1,
+                    info = l.Info
+                };
+            }).ToArray();
+
+            // Build a map: for each monitor+desktop, find the active layout
+            var statusEntries = new List<object>();
+            foreach (var mon in monitors)
+            {
+                foreach (var dk in desktops)
+                {
+                    // Find matching applied entry
+                    object? matchedLayout = null;
+                    string matchedLayoutUuid = "";
+
+                    foreach (var appliedEntry in applied)
+                    {
+                        // Serialize the anonymous object to extract its properties
+                        var json = JsonSerializer.Serialize(appliedEntry);
+                        using var doc = JsonDocument.Parse(json);
+                        var ae = doc.RootElement;
+
+                        string? aeInstance = ae.TryGetProperty("instance", out var inst) ? inst.GetString() : null;
+                        string? aeMonitorName = ae.TryGetProperty("monitorName", out var mn) ? mn.GetString() : null;
+                        string? aeDesktopId = ae.TryGetProperty("desktopId", out var dkid) ? dkid.GetString() : null;
+                        string? aeLayoutUuid = ae.TryGetProperty("layoutUuid", out var lu) ? lu.GetString() : null;
+
+                        // ── Monitor matching: PtInstance is the most reliable unique key ──
+                        // PtInstance = "4&1d653659&0&UID8388688" matches instance = "4&1d653659&0&UID8388688"
+                        bool monMatch = false;
+                        if (!string.IsNullOrEmpty(aeInstance) && !string.IsNullOrEmpty(mon.PtInstance) 
+                            && aeInstance == mon.PtInstance)
+                        {
+                            monMatch = true;
+                        }
+                        // Fallback: match by monitor model name (less precise for identical monitors)
+                        else if (!string.IsNullOrEmpty(aeMonitorName) && !string.IsNullOrEmpty(mon.PtName) 
+                            && aeMonitorName == mon.PtName)
+                        {
+                            monMatch = true;
+                        }
+
+                        // ── Desktop matching: compare trimmed lowercase GUIDs ──
+                        string dkIdNorm = dk.id.Trim('{', '}').ToLowerInvariant();
+                        string aeDkNorm = (aeDesktopId ?? "").Trim('{', '}').ToLowerInvariant();
+                        
+                        bool dkMatch = string.IsNullOrEmpty(aeDkNorm) ||
+                                       aeDkNorm == "00000000-0000-0000-0000-000000000000" ||
+                                       aeDkNorm == dkIdNorm;
+
+                        if (monMatch && dkMatch && !string.IsNullOrEmpty(aeLayoutUuid))
+                        {
+                            var layout = layoutsCache.Values.FirstOrDefault(l =>
+                                l.Uuid.Trim('{', '}').Equals(aeLayoutUuid.Trim('{', '}'), StringComparison.OrdinalIgnoreCase));
+                            if (layout != null)
+                            {
+                                matchedLayout = new { uuid = layout.Uuid, name = layout.Name };
+                                matchedLayoutUuid = layout.Uuid;
+                                Logger.Info($"[FzStatus] Matched: {mon.PtName}({mon.PtInstance}) + {dk.name} → {layout.Name}");
+                            }
+                            break;
+                        }
+                    }
+
+                    statusEntries.Add(new
+                    {
+                        monitorId = mon.Handle,
+                        monitorLabel = $"{mon.Name}{(mon.IsPrimary ? " ★" : "")}",
+                        monitorPtName = mon.PtName,
+                        monitorPtInstance = mon.PtInstance,
+                        monitorHardwareId = mon.HardwareId,
+                        desktopId = dk.id,
+                        desktopName = dk.name,
+                        desktopIsCurrent = dk.isCurrent,
+                        activeLayout = matchedLayout,
+                        activeLayoutUuid = matchedLayoutUuid
+                    });
+                }
+            }
+
+            return new
+            {
+                entries = statusEntries,
+                layouts = availableLayouts,
+                monitors = monitors.Select(m => new
+                {
+                    id = m.Handle,
+                    deviceName = m.DeviceName,
+                    hardwareId = m.HardwareId,
+                    ptName = m.PtName,
+                    ptInstance = m.PtInstance,
+                    name = m.Name,
+                    label = $"{m.Name}{(m.IsPrimary ? " ★" : "")}",
+                    isPrimary = m.IsPrimary,
+                }).ToArray(),
+                desktops
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[WebBridge] HandleGetFzStatus error: {ex.Message}");
+            return new { entries = new List<object>(), layouts = new List<object>(), monitors = new List<object>(), desktops = new List<object>() };
+        }
+    }
+
+    private async Task<object> HandleChangeLayoutAssignment(JsonElement payload)
+    {
+        try
+        {
+            string monitorInstance = payload.TryGetProperty("monitorInstance", out var mi) ? mi.GetString() ?? "" : "";
+            string monitorName = payload.TryGetProperty("monitorName", out var mn) ? mn.GetString() ?? "" : "";
+            string? desktopId = payload.TryGetProperty("desktopId", out var di) ? di.GetString() : null;
+            string layoutUuid = payload.TryGetProperty("layoutUuid", out var lu) ? lu.GetString() ?? "" : "";
+
+            if (string.IsNullOrEmpty(layoutUuid))
+                return new { success = false, error = "No layout UUID provided" };
+
+            bool ok = FancyZonesReader.InjectLayoutByDevice(monitorInstance, monitorName, desktopId, layoutUuid);
+            if (ok)
+            {
+                FancyZonesReader.SyncCacheFromDisk();
+                Logger.Info($"[WebBridge] Layout changed: {monitorName} desktop={desktopId} → {layoutUuid}");
+            }
+            return new { success = ok };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[WebBridge] HandleChangeLayoutAssignment error: {ex.Message}");
+            return new { success = false, error = ex.Message };
+        }
     }
 
     private object HandleListWindows()

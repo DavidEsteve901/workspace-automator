@@ -63,6 +63,10 @@ export const bridge = {
   listWindows: () => invoke("list_windows"),
   listDesktops: () => invoke("list_desktops"),
   listMonitors: () => invoke("list_monitors"),
+  listFancyZones: () => invoke("list_fancyzones"),
+  getFzStatus: () => invoke("get_fz_status"),
+  changeLayoutAssignment: (monitorInstance, monitorName, desktopId, layoutUuid) =>
+    invoke("change_layout_assignment", { monitorInstance, monitorName, desktopId, layoutUuid }),
   openFileDialog: (opts = {}) => invoke("open_file_dialog", opts),
 
   minimize: () => postMessage("window_minimize"),

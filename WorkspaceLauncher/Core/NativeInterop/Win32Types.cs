@@ -130,7 +130,7 @@ public static partial class User32
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetWindowText(nint hWnd, System.Text.StringBuilder lpString, int nMaxCount);
 
-    [LibraryImport("user32.dll")]
+    [LibraryImport("user32.dll", EntryPoint = "GetWindowTextLengthW")]
     public static partial int GetWindowTextLength(nint hWnd);
 
     public delegate bool EnumWindowsProc(nint hWnd, nint lParam);

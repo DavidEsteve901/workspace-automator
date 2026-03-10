@@ -86,20 +86,12 @@ public static class WindowManager
     }
 
     /// <summary>
-    /// Collect all monitors with their work areas.
-    /// Returns list of (deviceName, workArea).
+    /// Collect all monitors with their work areas and names.
     /// </summary>
     public static List<(string Name, RECT WorkArea)> GetMonitors()
     {
-        var monitors = new List<(string, RECT)>();
-        User32.EnumDisplayMonitors(0, 0, (nint hMon, nint hdc, ref RECT lprc, nint dwData) =>
-        {
-            var mi = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
-            if (User32.GetMonitorInfoW(hMon, ref mi))
-                monitors.Add(($"Monitor_{monitors.Count + 1}", mi.rcWork));
-            return true;
-        }, 0);
-        return monitors;
+        var monitors = Utils.MonitorManager.GetActiveMonitors();
+        return monitors.Select(m => (m.Name, m.WorkArea)).ToList();
     }
 
     public static string GetWindowTitle(nint hwnd)

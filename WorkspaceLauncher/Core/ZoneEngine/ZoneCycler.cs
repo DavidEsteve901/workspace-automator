@@ -93,13 +93,18 @@ public sealed class ZoneCycler
         RECT workArea = default;
         bool foundMonitor = false;
 
+        // Get detailed monitor info for PtInstance-based key matching
+        var detailedMonitors = Utils.MonitorManager.GetActiveMonitors();
+
         for (int i = 0; i < monitors.Count; i++)
         {
-            // Check if the window center is within this monitor's work area
             var mwa = monitors[i].WorkArea;
             if (cx >= mwa.Left && cx <= mwa.Right && cy >= mwa.Top && cy <= mwa.Bottom)
             {
-                monitorName = $"Pantalla {i + 1} [{monitors[i].Name}]";
+                // Use PtInstance as the monitor key (matches ZoneStack registration in orchestrator)
+                monitorName = i < detailedMonitors.Count
+                    ? detailedMonitors[i].PtInstance
+                    : monitors[i].Name;
                 workArea = mwa;
                 foundMonitor = true;
                 break;
@@ -109,7 +114,9 @@ public sealed class ZoneCycler
         if (!foundMonitor && monitors.Count > 0)
         {
             workArea = monitors[0].WorkArea;
-            monitorName = $"Pantalla 1 [{monitors[0].Name}]";
+            monitorName = detailedMonitors.Count > 0
+                ? detailedMonitors[0].PtInstance
+                : monitors[0].Name;
         }
 
         // Try each layout in cache
@@ -143,7 +150,7 @@ public sealed class ZoneCycler
 
     private static void BringToFront(nint hwnd)
     {
-        User32.ShowWindow(hwnd, User32.SW_RESTORE);
-        User32.SetForegroundWindow(hwnd);
+        // Use the full Phase 4 anti-block force-focus sequence
+        DwmHelper.ForceFocus(hwnd);
     }
 }
