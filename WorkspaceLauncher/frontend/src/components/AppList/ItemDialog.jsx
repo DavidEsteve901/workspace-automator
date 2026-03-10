@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { FolderOpen, X, Globe, Terminal, Code2, FileCode, MonitorSmartphone, Cog, ArrowLeft, RotateCw, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { FolderOpen, X, Globe, Terminal, Code2, FileCode, MonitorSmartphone, Cog, ArrowLeft, RotateCw, AlertCircle, CheckCircle2, Plus, Trash2, GripVertical } from 'lucide-react'
 import { bridge, onEvent, offEvent } from '../../api/bridge.js'
 import './ItemDialog.css'
 
@@ -37,7 +37,13 @@ const DEFAULT_ITEM = {
 export default function ItemDialog({ category, index, item, onSave, onClose }) {
   // Wizard state: 1 = Type selection, 2 = Form details
   const [step, setStep] = useState(item ? 2 : 1)
-  const [form, setForm] = useState({ ...DEFAULT_ITEM, ...(item || {}) })
+  // Ensure we don't pick up null values from item that might break the state
+  const [form, setForm] = useState({ 
+    ...DEFAULT_ITEM, 
+    ...(item || {}),
+    desktop: item?.desktop || 'Por defecto',
+    monitor: item?.monitor || 'Por defecto'
+  })
 
   // Data states - use the unified fzStatus endpoint
   const [fzStatus, setFzStatus] = useState(null) // { entries, layouts, monitors, desktops }
@@ -135,12 +141,11 @@ export default function ItemDialog({ category, index, item, onSave, onClose }) {
           desktopName: match.desktopName
         })
 
-        // Auto-select the detected layout and reset to zone 1
-        // Only auto-update if the user hasn't manually picked a different layout
-        // or this is the initial load
+        // Auto-select the detected layout only if the user hasn't picked one yet
         setForm(f => {
-          // If form already has a layout selected that matches, keep the zone
-          if (f.fancyzone_uuid === layout.uuid) return f
+          // If a layout is already selected manually, don't overwrite it
+          if (f.fancyzone_uuid && f.fancyzone_uuid !== '') return f;
+          
           return {
             ...f,
             fancyzone_uuid: layout.uuid,
@@ -159,7 +164,8 @@ export default function ItemDialog({ category, index, item, onSave, onClose }) {
   const handleEnvChange = async (key, val) => {
     set(key, val)
     // Force fresh sync to get the latest state for the new selection
-    await loadFzStatus()
+    // but don't let fzStatus refresh overwrite our manual selection
+    setTimeout(() => loadFzStatus(), 0)
   }
 
   const handleBrowsePath = useCallback(async () => {
@@ -253,11 +259,13 @@ export default function ItemDialog({ category, index, item, onSave, onClose }) {
             </Field>
           )}
 
-          {/* PowerShell / URL Tabs */}
+          {/* Tab Management for URL/PowerShell */}
           {(form.type === 'url' || form.type === 'powershell') && (
-            <Field label={form.type === 'url' ? "URLs adicionales (separadas por  --- NUEVA PESTAÑA ---)" : "Comandos en pestañas (separadas por  --- NUEVA PESTAÑA ---)"}>
-              <textarea rows={2} value={form.cmd || ''} onChange={e => set('cmd', e.target.value)} />
-            </Field>
+            <TabManager
+              type={form.type}
+              value={form.cmd}
+              onChange={newVal => set('cmd', newVal)}
+            />
           )}
 
           {/* URL: browser */}
@@ -278,7 +286,7 @@ export default function ItemDialog({ category, index, item, onSave, onClose }) {
               <select value={form.monitor} onChange={e => handleEnvChange('monitor', e.target.value)}>
                 <option value="Por defecto">Por defecto</option>
                 {monitors.map(m => (
-                  <option key={m.id} value={m.label}>{m.label}</option>
+                  <option key={m.id} value={m.name}>{m.displayLabel || m.label}</option>
                 ))}
               </select>
             </Field>
@@ -421,13 +429,12 @@ function FancyZonesVisualizer({ form, set, availableLayouts, detectedLayout, onR
 
   return (
     <div className="fz-visualizer">
-      <div className="fz-header" style={{ display: 'flex', alignItems: 'flex-end', gap: '15px', marginBottom: '10px' }}>
+      <div className="fz-header">
         <Field label="Layout de FancyZones">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div className="fz-select-row">
             <select
               value={form.fancyzone_uuid || "Ninguna"}
               onChange={e => handleLayoutChange(e.target.value)}
-              style={{ width: '250px' }}
               className={isActiveLayout ? 'fz-select-active' : ''}
             >
               <option value="Ninguna">Ninguno / Libre</option>
@@ -444,8 +451,8 @@ function FancyZonesVisualizer({ form, set, availableLayouts, detectedLayout, onR
         </Field>
 
         {form.fancyzone && form.fancyzone !== "Ninguna" && (
-          <span className="fz-status" style={{ fontSize: '0.85rem', color: 'var(--accent)', opacity: 0.9, paddingBottom: '8px' }}>
-            📍 Asignado: {form.fancyzone}
+          <span className="fz-status-text">
+            📍 {form.fancyzone}
           </span>
         )}
       </div>
@@ -453,7 +460,7 @@ function FancyZonesVisualizer({ form, set, availableLayouts, detectedLayout, onR
       {currentLayout && form.fancyzone_uuid && (
         <div className="fz-render-container" style={{
           width: '100%',
-          height: '240px',
+          height: '180px',
           background: 'rgba(0,0,0,0.45)',
           borderRadius: '12px',
           border: isActiveLayout ? '1px solid rgba(0, 230, 118, 0.3)' : '1px solid rgba(255,255,255,0.08)',
@@ -590,4 +597,121 @@ function renderZones(info, activeIdx, onClick) {
     )
   }
   return null;
+}
+
+// ── Tab Manager Component ──────────────────────────────────────────────
+const TAB_SEPARATOR = '--- NUEVA PESTAÑA ---'
+
+function TabManager({ type, value, onChange }) {
+  const [draggingIdx, setDraggingIdx] = useState(null)
+
+  const tabs = useMemo(() => {
+    if (value === null || value === undefined) return []
+    return value.split(TAB_SEPARATOR).map(t => t.trim())
+  }, [value])
+
+  const updateTabs = (newTabs) => {
+    if (newTabs.length === 0) {
+      onChange(null)
+    } else {
+      onChange(newTabs.join(` ${TAB_SEPARATOR} `))
+    }
+  }
+
+  const handleAdd = () => {
+    updateTabs([...tabs, ''])
+  }
+
+  const handleRemove = (idx) => {
+    const next = [...tabs]
+    next.splice(idx, 1)
+    updateTabs(next)
+  }
+
+  const handleChange = (idx, val) => {
+    const next = [...tabs]
+    next[idx] = val
+    updateTabs(next)
+  }
+
+  const handleDragStart = (e, idx) => {
+    setDraggingIdx(idx)
+    e.dataTransfer.effectAllowed = 'move'
+    // Set a ghost image or just use default
+    const row = e.target.closest('.tab-item-row')
+    if (row) row.classList.add('dragging')
+  }
+
+  const handleDragOver = (e, idx) => {
+    e.preventDefault()
+    if (draggingIdx === null || draggingIdx === idx) return
+
+    const next = [...tabs]
+    const [movedItem] = next.splice(draggingIdx, 1)
+    next.splice(idx, 0, movedItem)
+    
+    // We update local order during drag for smooth feel
+    updateTabs(next)
+    setDraggingIdx(idx)
+  }
+
+  const handleDragEnd = (e) => {
+    setDraggingIdx(null)
+    const row = e.target.closest('.tab-item-row')
+    if (row) row.classList.remove('dragging')
+  }
+
+  const label = type === 'url' ? 'URLs Adicionales' : 'Pestañas de Terminal'
+  const placeholder = type === 'url' ? 'https://...' : 'Comando o script...'
+
+  return (
+    <div className="tab-manager">
+      <div className="tab-manager-header">
+        <label className="dialog-label">{label}</label>
+        {tabs.length > 0 && <span className="tab-count-badge">{tabs.length} pestañas</span>}
+      </div>
+
+      <div className="tab-list">
+        {tabs.length === 0 && (
+          <div className="tab-empty-state">
+            No hay pestañas adicionales configuradas.
+          </div>
+        )}
+
+        {tabs.map((tab, idx) => (
+          <div 
+            key={idx} 
+            className={`tab-item-row ${draggingIdx === idx ? 'dragging' : ''}`}
+            draggable
+            onDragStart={(e) => handleDragStart(e, idx)}
+            onDragOver={(e) => handleDragOver(e, idx)}
+            onDragEnd={handleDragEnd}
+          >
+            <div className="tab-drag-handle">
+              <GripVertical size={14} />
+            </div>
+            <div className="tab-index-badge">{idx + 1}</div>
+            <input
+              value={tab}
+              onChange={e => handleChange(idx, e.target.value)}
+              placeholder={placeholder}
+              className="tab-input"
+            />
+            <button 
+              className="tab-delete-btn" 
+              onClick={() => handleRemove(idx)}
+              type="button"
+              title="Eliminar pestaña"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <button className="tab-add-btn" onClick={handleAdd} type="button">
+        <Plus size={16} /> Añadir nueva pestaña
+      </button>
+    </div>
+  )
 }

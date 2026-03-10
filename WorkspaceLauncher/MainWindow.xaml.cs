@@ -1,15 +1,18 @@
 using System;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Interop;
 using Microsoft.Web.WebView2.Core;
 using WorkspaceLauncher.Bridge;
 using WorkspaceLauncher.Core.Config;
 using WorkspaceLauncher.Core.FancyZones;
 using WorkspaceLauncher.Core.NativeInterop;
 using WorkspaceLauncher.Core.SystemTray;
+using WorkspaceLauncher.Core.ZoneEngine;
 
 namespace WorkspaceLauncher;
 
@@ -23,7 +26,58 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        
+        try
+        {
+            var iconUri = new Uri("pack://application:,,,/launcher_icon.ico");
+            this.Icon = System.Windows.Media.Imaging.BitmapFrame.Create(iconUri);
+        }
+        catch { /* Fallback to default if icon fails to load */ }
+
         Loaded += MainWindow_Loaded;
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        var handle = new WindowInteropHelper(this).Handle;
+        var source = HwndSource.FromHwnd(handle);
+        source?.AddHook(WndProc);
+    }
+
+    private nint WndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
+    {
+        if (msg == (int)User32.WM_GETMINMAXINFO)
+        {
+            WmGetMinMaxInfo(hwnd, lParam);
+            handled = true;
+        }
+        return nint.Zero;
+    }
+
+    private void WmGetMinMaxInfo(nint hwnd, nint lParam)
+    {
+        var mmi = Marshal.PtrToStructure<MINMAXINFO>(lParam);
+
+        // Get the monitor that has the window
+        var monitor = User32.MonitorFromWindow(hwnd, User32.MONITOR_DEFAULTTONEAREST);
+
+        if (monitor != nint.Zero)
+        {
+            var monitorInfo = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
+            User32.GetMonitorInfoW(monitor, ref monitorInfo);
+
+            var rcWorkArea = monitorInfo.rcWork;
+            var rcMonitorArea = monitorInfo.rcMonitor;
+
+            // Normalize coordinates if needed, but usually rcWork is perfect as is
+            mmi.ptMaxPosition.X = Math.Abs(rcWorkArea.Left - rcMonitorArea.Left);
+            mmi.ptMaxPosition.Y = Math.Abs(rcWorkArea.Top - rcMonitorArea.Top);
+            mmi.ptMaxSize.X = Math.Abs(rcWorkArea.Width);
+            mmi.ptMaxSize.Y = Math.Abs(rcWorkArea.Height);
+        }
+
+        Marshal.StructureToPtr(mmi, lParam, true);
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -42,6 +96,7 @@ public partial class MainWindow : Window
         InitializeTray();
         InitializeHooks();
         PipWatcher.Instance.Start();
+        ZoneAutoRegistrar.Instance.Start();
 
         // Check virtual desktop COM availability and surface any errors
         if (!VirtualDesktopManager.Instance.IsAvailable)
@@ -143,8 +198,8 @@ public partial class MainWindow : Window
         _hookManager = new GlobalHookManager();
         
         // Connect UI bridge first for telemetry/UI updates
-        _hookManager.OnX1Down += () => _bridge?.SendEvent("hotkey", new { action = "x1_down" });
-        _hookManager.OnX2Down += () => _bridge?.SendEvent("hotkey", new { action = "x2_down" });
+        _hookManager.OnX1Down += (alt, ctrl, shift, win) => _bridge?.SendEvent("hotkey", new { action = "x1_down" });
+        _hookManager.OnX2Down += (alt, ctrl, shift, win) => _bridge?.SendEvent("hotkey", new { action = "x2_down" });
         
         // Connect HotkeyProcessor for actual logic execution
         HotkeyProcessor.Instance.Initialize(_hookManager);
@@ -163,6 +218,7 @@ public partial class MainWindow : Window
         else
         {
             _hookManager?.Stop();
+            ZoneAutoRegistrar.Instance.Stop();
             _trayManager?.Dispose();
         }
     }

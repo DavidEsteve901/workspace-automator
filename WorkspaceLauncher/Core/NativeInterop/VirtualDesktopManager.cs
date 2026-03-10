@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using WorkspaceLauncher.Core.Utils;
 
 namespace WorkspaceLauncher.Core.NativeInterop;
@@ -11,7 +12,6 @@ namespace WorkspaceLauncher.Core.NativeInterop;
 public sealed class VirtualDesktopManager : IDisposable
 {
     private object? _manager;    // Typed as object since the interface varies by build
-    private object? _pinManager;
     private bool _initialized;
     private bool _initAttempted;
     private BuildVariant _variant = BuildVariant.Unknown;
@@ -206,7 +206,6 @@ public sealed class VirtualDesktopManager : IDisposable
                 {
                     GetDesktopId(desktop, out Guid g);
                     id = g;
-                    Logger.Info($"[VirtualDesktopManager] Current (COM): {id}");
                 }
             }
             catch { }
@@ -215,9 +214,80 @@ public sealed class VirtualDesktopManager : IDisposable
         if (id == null)
         {
             id = GetCurrentDesktopIdFromRegistry();
-            Logger.Info($"[VirtualDesktopManager] Current (Reg): {id}");
         }
         return id;
+    }
+
+    public async Task<bool> WaitForDesktopSwitchAsync(Guid targetId, int timeoutMs = 4000)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < timeoutMs)
+        {
+            var current = GetCurrentDesktopId();
+            if (current == targetId) return true;
+            await Task.Delay(100);
+        }
+        return false;
+    }
+
+    public bool IsWindowOnCurrentDesktop(nint hwnd)
+    {
+        try
+        {
+            var desktopId = GetWindowDesktopId(hwnd);
+            if (desktopId == null) return true; // Fail safe
+
+            var current = GetCurrentDesktopId();
+            return desktopId == current;
+        }
+        catch { return true; }
+    }
+
+    public Guid? GetWindowDesktopId(nint hwnd)
+    {
+        if (!User32.IsWindow(hwnd)) return null;
+        
+        try
+        {
+            // The standard IVirtualDesktopManager works for this across all builds
+            var standardMgr = (IVirtualDesktopManager)new VirtualDesktopManagerClass();
+            standardMgr.GetWindowDesktopId(hwnd, out Guid id);
+            return id;
+        }
+        catch { return null; }
+    }
+
+    public bool MoveWindowToDesktop(nint hwnd, Guid desktopId)
+    {
+        if (!User32.IsWindow(hwnd)) return false;
+        
+        try
+        {
+            var standardMgr = (IVirtualDesktopManager)new VirtualDesktopManagerClass();
+            int hr = standardMgr.MoveWindowToDesktop(hwnd, ref desktopId);
+            
+            if (hr != 0)
+            {
+                Logger.Error($"[VirtualDesktopManager] MoveWindowToDesktop COM error: 0x{hr:X} for HWND {hwnd}");
+                return false;
+            }
+
+            // Verification Pulse
+            var actual = GetWindowDesktopId(hwnd);
+            if (actual == desktopId)
+            {
+                Logger.Success($"[VirtualDesktopManager] Ventana {hwnd} movida correctamente a {desktopId}");
+                return true;
+            }
+            
+            Logger.Warn($"[VirtualDesktopManager] El movimiento de {hwnd} no se reflejó. Reintentando vía COM...");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[VirtualDesktopManager] MoveWindowToDesktop Exception: {ex.Message}");
+            return false;
+        }
     }
 
     private Guid? GetCurrentDesktopIdFromRegistry()
@@ -652,5 +722,20 @@ public sealed class VirtualDesktopManager : IDisposable
         [PreserveSig] int MoveDesktop(IVirtualDesktop_24H2 pDesktop, uint nIndex);
         [PreserveSig] int RemoveDesktop(IVirtualDesktop_24H2 pRemove, IVirtualDesktop_24H2 pFallbackDesktop);
         [PreserveSig] int FindDesktop(ref Guid desktopId, out IVirtualDesktop_24H2 ppDesktop);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Standard IVirtualDesktopManager (Public COM Interface)
+    // ══════════════════════════════════════════════════════════════════════════
+    
+    [ComImport, Guid("aa509086-5d76-480e-80f2-19352c335693")]
+    private class VirtualDesktopManagerClass { }
+
+    [ComImport, Guid("a5cd92ff-29be-454c-8d04-d82879fb3f1b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IVirtualDesktopManager
+    {
+        [PreserveSig] int IsWindowOnCurrentVirtualDesktop(nint topLevelWindow, [MarshalAs(UnmanagedType.Bool)] out bool onCurrentDesktop);
+        [PreserveSig] int GetWindowDesktopId(nint topLevelWindow, out Guid desktopId);
+        [PreserveSig] int MoveWindowToDesktop(nint topLevelWindow, ref Guid desktopId);
     }
 }

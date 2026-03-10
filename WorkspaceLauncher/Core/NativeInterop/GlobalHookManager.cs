@@ -23,8 +23,11 @@ public sealed class GlobalHookManager : IDisposable
     private bool _suppressedX2;
 
     // ── Public events ──────────────────────────────────────────────────────
-    public event Action? OnX1Down;
-    public event Action? OnX2Down;
+    // Modifiers are captured at hook time (on the hook thread) and passed here
+    // so handlers don't need to re-read GetAsyncKeyState on a thread pool thread
+    // where the keys may have already been released.
+    public event Action<bool, bool, bool, bool>? OnX1Down; // alt, ctrl, shift, win
+    public event Action<bool, bool, bool, bool>? OnX2Down; // alt, ctrl, shift, win
     public event Action? OnX1Up;
     public event Action? OnX2Up;
     public event Action<int, bool, bool, bool, bool>? OnKeyDown; // vkCode, alt, ctrl, shift, win
@@ -109,7 +112,8 @@ public sealed class GlobalHookManager : IDisposable
                     if (hasMod && !(CheckXMapped?.Invoke("x1", alt, ctrl, shift, win) ?? false))
                         return User32.CallNextHookEx(_hookMouse, nCode, wParam, lParam);
                     _suppressedX1 = true;
-                    Task.Run(() => OnX1Down?.Invoke());
+                    bool a1 = alt, c1 = ctrl, s1 = shift, w1 = win;
+                    Task.Run(() => OnX1Down?.Invoke(a1, c1, s1, w1));
                     return 1;
                 }
                 if (button == User32.XBUTTON2)
@@ -117,7 +121,8 @@ public sealed class GlobalHookManager : IDisposable
                     if (hasMod && !(CheckXMapped?.Invoke("x2", alt, ctrl, shift, win) ?? false))
                         return User32.CallNextHookEx(_hookMouse, nCode, wParam, lParam);
                     _suppressedX2 = true;
-                    Task.Run(() => OnX2Down?.Invoke());
+                    bool a2 = alt, c2 = ctrl, s2 = shift, w2 = win;
+                    Task.Run(() => OnX2Down?.Invoke(a2, c2, s2, w2));
                     return 1;
                 }
             }
@@ -149,7 +154,13 @@ public sealed class GlobalHookManager : IDisposable
             int vk   = (int)data.vkCode;
 
             if (vk == User32.VK_BROWSER_BACK || vk == User32.VK_BROWSER_FORWARD)
-                return 1; // Suppress browser nav keys
+            {
+                // Allow passthrough when Ctrl is held (user wants real browser nav)
+                bool ctrlHeld = (User32.GetAsyncKeyState(User32.VK_CTRL) & 0x8000) != 0;
+                if (!ctrlHeld) return 1; // Suppress – these are mapped to X1/X2 gestures
+                // Ctrl+Back/Forward → pass through to browser
+                return User32.CallNextHookEx(_hookKeyboard, nCode, wParam, lParam);
+            }
 
             bool alt   = (User32.GetAsyncKeyState(User32.VK_ALT)   & 0x8000) != 0 || wParam == User32.WM_SYSKEYDOWN;
             bool ctrl  = (User32.GetAsyncKeyState(User32.VK_CTRL)  & 0x8000) != 0;

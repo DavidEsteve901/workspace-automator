@@ -33,37 +33,33 @@ public static class ZoneCalculator
         int totalW = workArea.Width;
         int totalH = workArea.Height;
 
-        // Compute usable area (total minus all gaps between cells)
-        int usableW = totalW - (cols - 1) * spacing;
-        int usableH = totalH - (rows - 1) * spacing;
-
         double totalRowPct = layout.RowsPercentage.Sum();
         double totalColPct = layout.ColumnsPercentage.Sum();
+        if (totalColPct == 0) totalColPct = 10000;
+        if (totalRowPct == 0) totalRowPct = 10000;
 
-        // Calculate absolute grid lines for cell boundaries
-        // Each cell i occupies space between line i and line i+1
-        int[] colLines = new int[cols + 1];
-        int[] rowLines = new int[rows + 1];
+        // Build cumulative boundary arrays (exact Python port):
+        //   col_bounds[0] = left_bound
+        //   col_bounds[i] = left_bound + int((cumulative_pct / total_c) * width)
+        // No spacing is involved here — spacing is applied as inset on all 4 sides at the end.
+        int[] colBounds = new int[cols + 1];
+        int[] rowBounds = new int[rows + 1];
 
-        colLines[0] = 0;
-        int currentW = 0;
-        for (int i = 0; i < cols - 1; i++)
+        colBounds[0] = workArea.Left;
+        double accumC = 0;
+        for (int i = 0; i < cols; i++)
         {
-            currentW += (int)Math.Round((double)layout.ColumnsPercentage[i] / totalColPct * usableW);
-            colLines[i + 1] = currentW;
-            currentW += spacing; // Jump over spacing for next cell start
+            accumC += layout.ColumnsPercentage[i];
+            colBounds[i + 1] = workArea.Left + (int)(accumC / totalColPct * totalW);
         }
-        colLines[cols] = totalW; // Last line is always the edge
 
-        rowLines[0] = 0;
-        int currentH = 0;
-        for (int i = 0; i < rows - 1; i++)
+        rowBounds[0] = workArea.Top;
+        double accumR = 0;
+        for (int i = 0; i < rows; i++)
         {
-            currentH += (int)Math.Round((double)layout.RowsPercentage[i] / totalRowPct * usableH);
-            rowLines[i + 1] = currentH;
-            currentH += spacing;
+            accumR += layout.RowsPercentage[i];
+            rowBounds[i + 1] = workArea.Top + (int)(accumR / totalRowPct * totalH);
         }
-        rowLines[rows] = totalH;
 
         // Find the bounding box of cells belonging to this zoneIndex
         int minRow = int.MaxValue, maxRow = int.MinValue;
@@ -88,26 +84,22 @@ public static class ZoneCalculator
 
         if (!found) return null;
 
-        // Translate grid lines to absolute screen coordinates
-        // Zone starts at the beginning of minCol and ends at the end of maxCol
-        var result = new RECT
-        {
-            Left   = workArea.Left + colLines[minCol],
-            Top    = workArea.Top  + rowLines[minRow],
-            Right  = workArea.Left + (minCol == maxCol ? colLines[minCol] + (colLines[minCol + 1] - (minCol == cols - 1 ? 0 : spacing) - colLines[minCol]) : colLines[maxCol + 1] - (maxCol == cols - 1 ? 0 : spacing)),
-            Bottom = workArea.Top  + (minRow == maxRow ? rowLines[minRow] + (rowLines[minRow + 1] - (minRow == rows - 1 ? 0 : spacing) - rowLines[minRow]) : rowLines[maxRow + 1] - (maxRow == rows - 1 ? 0 : spacing))
-        };
+        // Apply spacing as inset on all 4 sides (exact Python port):
+        //   z_l = col_bounds[min_c] + spacing
+        //   z_r = col_bounds[max_c + 1] - spacing
+        //   z_t = row_bounds[min_r] + spacing
+        //   z_b = row_bounds[max_r + 1] - spacing
+        int zLeft   = colBounds[minCol]     + spacing;
+        int zRight  = colBounds[maxCol + 1] - spacing;
+        int zTop    = rowBounds[minRow]     + spacing;
+        int zBottom = rowBounds[maxRow + 1] - spacing;
 
-        // Simplified right/bottom logic:
-        // A zone spanning from col A to col B starts at line A and ends at line B+1,
-        // BUT we must subtract the spacing that's baked into line i+1 if line i+1 is NOT the monitor edge.
-        result.Right = workArea.Left + colLines[maxCol + 1];
-        if (maxCol < cols - 1) result.Right -= spacing;
+        // Enforce minimum 50px size (same as Python's max(50, ...))
+        if (zRight  - zLeft   < 50) zRight  = zLeft   + 50;
+        if (zBottom - zTop    < 50) zBottom = zTop    + 50;
 
-        result.Bottom = workArea.Top + rowLines[maxRow + 1];
-        if (maxRow < rows - 1) result.Bottom -= spacing;
-
-        Console.WriteLine($"[ZoneCalculator] Grid Zone {zoneIndex}: [{result.Left},{result.Top},{result.Right},{result.Bottom}] (Size: {result.Width}x{result.Height})");
+        var result = new RECT { Left = zLeft, Top = zTop, Right = zRight, Bottom = zBottom };
+        Console.WriteLine($"[ZoneCalculator] Grid Zone {zoneIndex}: [{result.Left},{result.Top},{result.Right},{result.Bottom}] (Size: {result.Width}x{result.Height}) (Spacing: {spacing})");
         return result;
     }
 
@@ -123,14 +115,22 @@ public static class ZoneCalculator
         double scaleX = workArea.Width  / refW;
         double scaleY = workArea.Height / refH;
 
+        // PORT NOTE: Python calculates Width and Height independently and then
+        // uses them in SetWindowPos. Calculating Right/Bottom directly in C#
+        // and then deriving Width/Height can lead to 1px discrepancies due to truncation.
+        int x = workArea.Left + (int)(zone.X * scaleX);
+        int y = workArea.Top  + (int)(zone.Y * scaleY);
+        int w = (int)(zone.Width  * scaleX);
+        int h = (int)(zone.Height * scaleY);
+
         var result = new RECT
         {
-            Left   = workArea.Left + (int)Math.Round(zone.X * scaleX),
-            Top    = workArea.Top  + (int)Math.Round(zone.Y * scaleY),
-            Right  = workArea.Left + (int)Math.Round((zone.X + zone.Width)  * scaleX),
-            Bottom = workArea.Top  + (int)Math.Round((zone.Y + zone.Height) * scaleY),
+            Left   = x,
+            Top    = y,
+            Right  = x + w,
+            Bottom = y + h,
         };
-        Console.WriteLine($"[ZoneCalculator] Canvas Zone {zoneIndex}: [{result.Left},{result.Top},{result.Right},{result.Bottom}]");
+        Console.WriteLine($"[ZoneCalculator] Canvas Zone {zoneIndex}: [{result.Left},{result.Top},{result.Right},{result.Bottom}] (Scaling: {scaleX:F2}x{scaleY:F2})");
         return result;
     }
 }

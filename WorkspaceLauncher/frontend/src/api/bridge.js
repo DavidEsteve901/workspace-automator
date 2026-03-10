@@ -53,8 +53,11 @@ export const bridge = {
     postMessage("delete_item", { category, index }),
   moveItem: (category, from, to) =>
     postMessage("move_item", { category, from, to }),
+  moveCategory: (from, to) =>
+    postMessage("move_category", { from, to }),
   addCategory: (name) => postMessage("add_category", { name }),
   deleteCategory: (name) => postMessage("delete_category", { name }),
+  renameCategory: (oldName, newName) => postMessage("rename_category", { oldName, newName }),
   saveConfig: (config) => postMessage("save_config", config),
   saveFzPath: (path) => postMessage("save_fz_path", { path }),
   setHotkeysEnabled: (enabled) => postMessage("set_hotkeys_enabled", { enabled }),
@@ -65,9 +68,16 @@ export const bridge = {
   listMonitors: () => invoke("list_monitors"),
   listFancyZones: () => invoke("list_fancyzones"),
   getFzStatus: () => invoke("get_fz_status"),
-  changeLayoutAssignment: (monitorInstance, monitorName, desktopId, layoutUuid) =>
-    invoke("change_layout_assignment", { monitorInstance, monitorName, desktopId, layoutUuid }),
+  changeLayoutAssignment: (monitorInstance, monitorName, desktopId, layoutUuid, layoutType) =>
+    invoke("change_layout_assignment", { monitorInstance, monitorName, desktopId, layoutUuid, layoutType }),
   openFileDialog: (opts = {}) => invoke("open_file_dialog", opts),
+  getWindowsToClean: (category) => invoke("get_windows_to_clean", { category }),
+  closeWindows: (hwnds) => invoke("close_windows", { hwnds }),
+  validateWorkspace: (category) => invoke("validate_workspace", { category }),
+  syncWorkspaceLayouts: (layoutUuids) => invoke("sync_workspace_layouts", { layoutUuids }),
+  getConfigPath: () => invoke("get_config_path"),
+  openConfigFolder: () => postMessage("open_config_folder"),
+  changeConfigPath: (path) => invoke("change_config_path", { path }),
 
   minimize: () => postMessage("window_minimize"),
   maximize: () => postMessage("window_maximize"),

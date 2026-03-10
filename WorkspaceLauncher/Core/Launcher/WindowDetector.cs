@@ -77,73 +77,9 @@ public static class WindowDetector
         nint bestHwnd = 0;
         int bestScore  = -1;
 
-        string itemPathLower    = (item.Path ?? "").ToLowerInvariant();
-        string itemFileLower    = Path.GetFileName(itemPathLower);
-        string folderNameLower  = Path.GetFileName(itemPathLower.TrimEnd('\\', '/'));
-
         foreach (var hwnd in candidates)
         {
-            if (!User32.IsWindowVisible(hwnd)) continue;
-
-            string title = GetTitle(hwnd).ToLowerInvariant().Trim();
-            if (string.IsNullOrEmpty(title)) continue;
-
-            string procPath  = GetProcessPath(hwnd).ToLowerInvariant();
-            string procName  = Path.GetFileNameWithoutExtension(procPath);
-
-            int score = 0;
-
-            switch (item.Type)
-            {
-                case "exe":
-                    if (procPath == itemPathLower)               score = 10;
-                    else if (procPath.Contains(itemFileLower) && !string.IsNullOrEmpty(itemFileLower))
-                                                                score = 8;
-                    else if (!string.IsNullOrEmpty(itemFileLower) && title.Contains(Path.GetFileNameWithoutExtension(itemFileLower)))
-                                                                score = 5;
-                    break;
-
-                case "url":
-                    string host = GetHost(item.Path);
-                    if (!string.IsNullOrEmpty(host) && title.Contains(host))    score = 9;
-                    else if (IsBrowserProcess(procName))                         score = 3;
-                    // Penalise explorer opening a folder with same name as domain
-                    if (procName == "explorer" && score > 0)    score -= 5;
-                    break;
-
-                case "vscode":
-                    if (procName == "code")                      score = 8;
-                    if (!string.IsNullOrEmpty(folderNameLower) && title.Contains(folderNameLower))
-                                                                score = Math.Max(score, 9);
-                    if (title.Contains("visual studio code"))    score = Math.Max(score, 7);
-                    break;
-
-                case "ide":
-                    string? ideCmd = (item.IdeCmd ?? "").ToLowerInvariant();
-                    if (!string.IsNullOrEmpty(ideCmd) && procName.Contains(ideCmd))
-                                                                score = 8;
-                    if (!string.IsNullOrEmpty(folderNameLower) && title.Contains(folderNameLower))
-                                                                score = Math.Max(score, 9);
-                    break;
-
-                case "powershell":
-                    if (procName is "wt" or "windowsterminal")   score = 8;
-                    else if (procName is "powershell" or "pwsh")  score = 5;
-                    if (!string.IsNullOrEmpty(folderNameLower) && title.Contains(folderNameLower))
-                                                                score = Math.Max(score, 6);
-                    break;
-
-                case "obsidian":
-                    if (procName == "obsidian")                  score = 8;
-                    if (!string.IsNullOrEmpty(folderNameLower) && title.Contains(folderNameLower))
-                                                                score = Math.Max(score, 9);
-                    break;
-            }
-
-            // Generic path-in-title boost
-            if (score == 0 && !string.IsNullOrEmpty(itemPathLower) && title.Contains(itemPathLower))
-                score = 9;
-
+            int score = CalculateScore(item, hwnd);
             if (score > bestScore)
             {
                 bestScore = score;
@@ -153,6 +89,81 @@ public static class WindowDetector
 
         // Minimum relevance threshold to avoid false positives
         return bestScore >= 3 ? bestHwnd : 0;
+    }
+
+    /// <summary>
+    /// Core scoring logic for a single window against an AppItem.
+    /// Public so it can be used for inclusive detection (e.g. Clean modal).
+    /// </summary>
+    public static int CalculateScore(Config.AppItem item, nint hwnd)
+    {
+        if (!User32.IsWindowVisible(hwnd)) return 0;
+
+        string title = GetTitle(hwnd).ToLowerInvariant().Trim();
+        // Some app windows might temporarily have no title, but they are rare for main windows.
+        // For browsers/IDEs they always have titles.
+        if (string.IsNullOrEmpty(title)) return 0;
+
+        string procPath  = GetProcessPath(hwnd).ToLowerInvariant();
+        string procName  = Path.GetFileNameWithoutExtension(procPath);
+
+        string itemPathLower    = (item.Path ?? "").ToLowerInvariant();
+        string itemFileLower    = Path.GetFileName(itemPathLower);
+        string folderNameLower  = Path.GetFileName(itemPathLower.TrimEnd('\\', '/'));
+
+        int score = 0;
+
+        switch (item.Type)
+        {
+            case "exe":
+                if (procPath == itemPathLower)               score = 10;
+                else if (!string.IsNullOrEmpty(itemFileLower) && procPath.Contains(itemFileLower))
+                                                            score = 8;
+                else if (!string.IsNullOrEmpty(itemFileLower) && title.Contains(Path.GetFileNameWithoutExtension(itemFileLower)))
+                                                            score = 5;
+                break;
+
+            case "url":
+                string host = GetHost(item.Path);
+                if (!string.IsNullOrEmpty(host) && title.Contains(host))    score = 9;
+                else if (IsBrowserProcess(procName))                         score = 3;
+                if (procName == "explorer" && score > 0)    score -= 5;
+                break;
+
+            case "vscode":
+                if (procName == "code")                      score = 8;
+                if (!string.IsNullOrEmpty(folderNameLower) && title.Contains(folderNameLower))
+                                                            score = Math.Max(score, 9);
+                if (title.Contains("visual studio code"))    score = Math.Max(score, 7);
+                break;
+
+            case "ide":
+                string? ideCmd = (item.IdeCmd ?? "").ToLowerInvariant();
+                if (!string.IsNullOrEmpty(ideCmd) && procName.Contains(ideCmd))
+                                                            score = 8;
+                if (!string.IsNullOrEmpty(folderNameLower) && title.Contains(folderNameLower))
+                                                            score = Math.Max(score, 9);
+                break;
+
+            case "powershell":
+                if (procName is "wt" or "windowsterminal")   score = 8;
+                else if (procName is "powershell" or "pwsh")  score = 5;
+                if (!string.IsNullOrEmpty(folderNameLower) && title.Contains(folderNameLower))
+                                                            score = Math.Max(score, 6);
+                break;
+
+            case "obsidian":
+                if (procName == "obsidian")                  score = 8;
+                if (!string.IsNullOrEmpty(folderNameLower) && title.Contains(folderNameLower))
+                                                            score = Math.Max(score, 9);
+                break;
+        }
+
+        // Generic path-in-title boost
+        if (score == 0 && !string.IsNullOrEmpty(itemPathLower) && title.Contains(itemPathLower))
+            score = 9;
+
+        return score;
     }
 
     /// <summary>

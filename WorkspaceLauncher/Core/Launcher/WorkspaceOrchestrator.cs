@@ -32,65 +32,173 @@ public sealed class WorkspaceOrchestrator
             return;
         }
 
-        Report($"Iniciando workspace: {category}", 0);
+        Report($"Iniciando workspace (Motor de Convergencia): {category}", 0);
         ZoneStack.Instance.Clear();
 
-        // PHASE 1a: Sync FancyZones layouts before anything
-        Report("Sincronizando layouts FancyZones...", 5);
+        // Phase 1a: Sync FancyZones layouts
+        Report("Sincronizando layouts...", 5);
         LayoutSyncer.SyncForWorkspace(items, config.AppliedMappings);
-
-        // PHASE 1b: Ensure virtual desktops exist
-        Report("Verificando escritorios virtuales...", 10);
         await EnsureVirtualDesktopsAsync(items);
 
-        // PHASE 1c: Group items by target desktop for correct launch ordering
-        // Items without a desktop go to "Por defecto" group (launched on current desktop)
+        // --- CONVERGENCE ENGINE: Desktop-Sequential / App-Parallel Pulse ---
+        // We visit each desktop once, launch its apps in parallel, and stabilize them
+        // before moving to the next one. This prevents "mixing" windows on the same screen.
+        int total = items.Count;
         var groups = items
             .GroupBy(i => i.Desktop ?? "Por defecto")
             .OrderBy(g => g.Key == "Por defecto" ? 999 : TryParseDesktopIndex(g.Key, out int n) ? n : 999)
             .ToList();
 
-        int total = items.Count;
-        int launched = 0;
-
+        var hwndsByItem = new Dictionary<AppItem, nint>();
+        int processedCount = 0;
         foreach (var group in groups)
         {
-            // PHASE 1c: Switch to the target desktop and let the OS settle
-            var vdm = VirtualDesktopManager.Instance;
-            var desktops = vdm.GetDesktops();
+            string desktopName = group.Key;
+            Report($"Escritorio: {desktopName}", 10 + (int)((double)processedCount / total * 80));
 
-            if (group.Key != "Por defecto" && TryParseDesktopIndex(group.Key, out int dIdx))
+            // 1. Switch to the target desktop and WAIT for OS confirmation
+            if (!await PrepareDesktopAsync(desktopName)) 
             {
-                if (dIdx - 1 < desktops.Count)
+                Logger.Error($"[Orchestrator] Saltando escritorio {desktopName} por error en cambio.");
+                processedCount += group.Count();
+                continue;
+            }
+
+            // 2. Process windows for THIS desktop ONE BY ONE
+            foreach (var item in group)
+            {
+                processedCount++;
+                Report($"Abriendo: {GetItemDisplayName(item)}", 10 + (int)((double)processedCount / total * 80));
+
+                if (int.TryParse(item.Delay, out int d) && d > 0) 
+                    await Task.Delay(d);
+
+                // Launch and WAIT for the window to appear
+                nint hwnd = await LaunchOnlyAsync(item);
+                
+                if (hwnd != 0)
                 {
-                    Report($"Cambiando a {group.Key}...", 10 + (int)((double)launched / total * 70));
-                    vdm.SwitchToDesktop(desktops[dIdx - 1]);
-                    await Task.Delay(500); // Let the OS settle the desktop switch
+                    // ── CRITICAL ISOLATION SAFEGUARD ──
+                    // Avoid checking against 'current' desktop, as the user might have switched manually.
+                    // We check if the window is on the SPECIFIC target desktop.
+                    var targetId = ResolveDesktopGuid(item);
+                    if (targetId.HasValue && targetId != Guid.Empty)
+                    {
+                        var currentDeskId = VirtualDesktopManager.Instance.GetWindowDesktopId(hwnd);
+                        if (currentDeskId.HasValue && currentDeskId != targetId)
+                        {
+                            Logger.Warn($"[Orchestrator] {GetItemDisplayName(item)} apareció en escritorio {currentDeskId}, pero debería estar en {targetId}. Moviendo...");
+                            VirtualDesktopManager.Instance.MoveWindowToDesktop(hwnd, targetId.Value);
+                            
+                            // Give the OS time to verify the move
+                            await Task.Delay(500); 
+                        }
+                    }
+
+                    // Strict Snap: Position the window
+                    RECT? zoneRect = ResolveZoneRect(item, config);
+                    if (zoneRect.HasValue)
+                    {
+                        Logger.Info($"[Orchestrator] Ajustando {GetItemDisplayName(item)} en {desktopName}...");
+                        
+                        // ── SMART SILENCE ──
+                        // If the window is NOT on the current view, we use silent mode.
+                        // This prevents the SWP_SHOWWINDOW flag from forcing the OS to switch desktops.
+                        bool isHere = VirtualDesktopManager.Instance.IsWindowOnCurrentDesktop(hwnd);
+                        bool ok = await DwmHelper.ApplyZoneRect(hwnd, zoneRect.Value, retries: 4, silent: !isHere);
+                        
+                        if (ok) RegisterInZoneStack(item, hwnd, config);
+                    }
+
+                    await Task.Delay(400); // Breathe
+                }
+                else
+                {
+                    Logger.Warn($"[Orchestrator] Tiempo de espera agotado para {GetItemDisplayName(item)}");
                 }
             }
 
-            // Launch each item in this desktop group
-            foreach (var item in group)
-            {
-                launched++;
-                int percent = 15 + (int)((double)launched / total * 70);
-                Report($"Lanzando: {GetItemDisplayName(item)}", percent);
-
-                if (int.TryParse(item.Delay, out int delayMs) && delayMs > 0)
-                    await Task.Delay(delayMs);
-
-                nint hwnd = await LaunchAndSnapAsync(item, config);
-                if (hwnd != 0)
-                    RegisterInZoneStack(item, hwnd, config);
-            }
+            await Task.Delay(600); // Breathe between desktops
         }
 
-        // PHASE 7: Final integrity sweep — wait for OS to settle, then re-snap any drifted windows
-        Report("Barrido de integridad final...", 90);
-        await Task.Delay(2000);
-        await FinalIntegritySweep(items, config);
+        // --- PHASE 3: Global Integrity Sweep ---
+        Report("Auditoría final de integridad global...", 95);
+        await Task.Delay(1000); 
+        
+        // We do a final "Deep Convergence" phase: check everything twice with gaps.
+        // This handles windows that were still animating or being pulled by the user.
+        await FinalIntegritySweep(items, config, silent: true);
+        await Task.Delay(1500);
+        await FinalIntegritySweep(items, config, silent: true);
 
-        Report("Workspace lanzado correctamente.", 100);
+        Report("Workspace estabilizado correctamente.", 100);
+    }
+
+    private async Task<bool> PrepareDesktopAsync(string desktopLabel)
+    {
+        var vdm = VirtualDesktopManager.Instance;
+        var desktops = vdm.GetDesktops();
+
+        if (desktopLabel != "Por defecto" && TryParseDesktopIndex(desktopLabel, out int dIdx))
+        {
+            if (dIdx - 1 < desktops.Count)
+            {
+                Guid targetId = desktops[dIdx - 1];
+                var current = vdm.GetCurrentDesktopId();
+                if (current == targetId) return true;
+
+                Logger.Info($"[Orchestrator] Cambiando al escritorio {desktopLabel} ({targetId})...");
+                vdm.SwitchToDesktop(targetId);
+                
+                // Aggressive Verification Loop
+                bool success = false;
+                for (int i = 0; i < 5; i++)
+                {
+                    success = await vdm.WaitForDesktopSwitchAsync(targetId, timeoutMs: 800);
+                    if (success) break;
+                    
+                    Logger.Warn($"[Orchestrator] Reintentando cambio de escritorio ({i + 1}/5)...");
+                    vdm.SwitchToDesktop(targetId);
+                }
+
+                if (!success)
+                {
+                    Logger.Error($"[Orchestrator] ERROR: No se pudo confirmar cambio al escritorio {desktopLabel} tras varios intentos.");
+                    return false;
+                }
+                return true; 
+            }
+        }
+        return true;
+    }
+
+    private async Task<nint> LaunchOnlyAsync(AppItem item)
+    {
+        var before = new HashSet<nint>(WindowManager.GetVisibleWindows());
+        var process = ProcessLauncher.Launch(item);
+        nint hwnd = 0;
+
+        if (process != null)
+        {
+            try { hwnd = await WindowDetector.WaitForWindowAsync(process, timeoutMs: 6_000); } catch { }
+        }
+
+        if (hwnd == 0)
+        {
+            hwnd = await WindowDetector.WaitForNewWindowAsync(
+                before, typeHint: item.Type, pathHint: item.Path, timeoutMs: 6_000);
+        }
+
+        // --- Convergence Fallback ---
+        // If still no window, look at ALL visible windows and use the scoring system (like Restore mode)
+        if (hwnd == 0)
+        {
+            var all = WindowManager.GetVisibleWindows();
+            hwnd = WindowDetector.ScoreMatchBestWindow(item, all.ToList());
+            if (hwnd != 0) Logger.Info($"[Orchestrator] Ventana para {GetItemDisplayName(item)} encontrada vía fallback de scoring.");
+        }
+
+        return hwnd;
     }
 
     // ── PHASE 6: Recovery Mode ───────────────────────────────────────────────
@@ -149,6 +257,11 @@ public sealed class WorkspaceOrchestrator
                 matched++;
             }
         }
+        
+        // Final Sweep to ensure everything is perfect
+        Report("Verificando integridad final...", 95);
+        await Task.Delay(1000);
+        await FinalIntegritySweep(items, config);
 
         Report($"Workspace restaurado: {matched}/{total} ventanas reposicionadas.", 100);
     }
@@ -236,7 +349,12 @@ public sealed class WorkspaceOrchestrator
         RECT? zoneRect = ResolveZoneRect(item, config);
         if (zoneRect.HasValue)
         {
+            Console.WriteLine($"[Orchestrator] Snapping '{GetItemDisplayName(item)}' to zone...");
             await DwmHelper.ApplyZoneRect(hwnd, zoneRect.Value);
+        }
+        else
+        {
+            Console.WriteLine($"[Orchestrator] No zone assigned (or layout missing) for '{GetItemDisplayName(item)}'");
         }
 
         return hwnd;
@@ -244,38 +362,61 @@ public sealed class WorkspaceOrchestrator
 
     // ── PHASE 7: Final integrity sweep ───────────────────────────────────────
 
-    private async Task FinalIntegritySweep(List<AppItem> items, AppConfig config)
+    private async Task FinalIntegritySweep(List<AppItem> items, AppConfig config, bool silent = false)
     {
         var currentWindows = WindowManager.GetVisibleWindows().ToList();
+        var vdm = VirtualDesktopManager.Instance;
 
-        foreach (var item in items)
+        // Perform two internal passes for each sweep call
+        for (int pass = 1; pass <= 2; pass++)
         {
-            if (item.Fancyzone == "Ninguna" || string.IsNullOrEmpty(item.FancyzoneUuid)) continue;
-
-            RECT? zoneRect = ResolveZoneRect(item, config);
-            if (!zoneRect.HasValue) continue;
-
-            // Use scoring to find the window even if hwnd changed
-            nint hwnd = WindowDetector.ScoreMatchBestWindow(item, currentWindows);
-            if (hwnd == 0) continue;
-
-            // Verify using visual bounds (DWM)
-            RECT actual = WindowManager.GetWindowRect(hwnd);
-            var target = zoneRect.Value;
-
-            // PHASE 7: Re-snap if the window has drifted significantly (>= 50px as per Python script)
-            // This handles cases where apps auto-resize or shift after being snapped.
-            int drift = Math.Abs(actual.Left - target.Left)
-                      + Math.Abs(actual.Top - target.Top)
-                      + Math.Abs(actual.Width - target.Width)
-                      + Math.Abs(actual.Height - target.Height);
-
-            if (drift >= 50)
+            Logger.Info($"[Orchestrator] Integridad (silent={silent}): Pase {pass}/2...");
+            
+            foreach (var item in items)
             {
-                Console.WriteLine($"[Orchestrator] Integridad: Re-snapping window (drift={drift}px): {GetItemDisplayName(item)}");
-                await DwmHelper.ApplyZoneRect(hwnd, target, retries: 2);
-                RegisterInZoneStack(item, hwnd, config);
+                if (item.Fancyzone == "Ninguna" || string.IsNullOrEmpty(item.FancyzoneUuid)) continue;
+
+                RECT? zoneRect = ResolveZoneRect(item, config);
+                if (!zoneRect.HasValue) continue;
+
+                nint hwnd = WindowDetector.ScoreMatchBestWindow(item, currentWindows);
+                if (hwnd == 0) continue;
+
+                // 1. Verify Desktop - CRITICAL for portability
+                Guid? targetDesktopId = ResolveDesktopGuid(item);
+                if (targetDesktopId.HasValue && targetDesktopId != Guid.Empty)
+                {
+                    var actualDesk = vdm.GetWindowDesktopId(hwnd);
+                    if (actualDesk.HasValue && actualDesk != targetDesktopId)
+                    {
+                        Logger.Warn($"[Orchestrator] Integridad: Corrigiendo escritorio de '{GetItemDisplayName(item)}' ({actualDesk} -> {targetDesktopId})");
+                        vdm.MoveWindowToDesktop(hwnd, targetDesktopId.Value);
+                        await Task.Delay(200);
+                    }
+                }
+
+                // 2. Verify Position (Visual bounds)
+                RECT actual = WindowManager.GetWindowRect(hwnd);
+                var target = zoneRect.Value;
+
+                // Tolerance becomes tighter in second pass
+                int tolerance = pass == 2 ? 10 : 35; 
+
+                bool hasDrifted = Math.Abs(actual.Left - target.Left) > tolerance ||
+                                  Math.Abs(actual.Top - target.Top) > tolerance ||
+                                  Math.Abs(actual.Width - target.Width) > tolerance ||
+                                  Math.Abs(actual.Height - target.Height) > tolerance;
+
+                if (hasDrifted)
+                {
+                    Logger.Info($"[Orchestrator] Integridad: Re-ajuste de {GetItemDisplayName(item)}");
+                    // Use the 'silent' parameter to avoid fighting with the user's active view
+                    await DwmHelper.ApplyZoneRect(hwnd, target, retries: 2, silent: silent);
+                    RegisterInZoneStack(item, hwnd, config);
+                }
             }
+            
+            if (pass == 1) await Task.Delay(500);
         }
     }
 
@@ -436,11 +577,18 @@ public sealed class WorkspaceOrchestrator
                 Type              = entry.Type,
                 Rows              = info.TryGetProperty("rows", out var r)   ? r.GetInt32()  : 1,
                 Columns           = info.TryGetProperty("columns", out var c) ? c.GetInt32() : 1,
-                RowsPercentage    = info.TryGetProperty("rows-percentage",    out var rp) ? rp.Deserialize<int[]>() : null,
-                ColumnsPercentage = info.TryGetProperty("columns-percentage", out var cp) ? cp.Deserialize<int[]>() : null,
-                CellChildMap      = info.TryGetProperty("cell-child-map",     out var cm) ? cm.Deserialize<int[][]>() : null,
-                ShowSpacing       = info.TryGetProperty("show-spacing", out var ss) && ss.GetBoolean(),
+                RowsPercentage    = info.TryGetProperty("rows-percentage",    out var rp) ? rp.Deserialize<int[]>() : new[] { 10000 },
+                ColumnsPercentage = info.TryGetProperty("columns-percentage", out var cp) ? cp.Deserialize<int[]>() : new[] { 10000 },
+                CellChildMap      = info.TryGetProperty("cell-child-map",     out var cm) ? cm.Deserialize<int[][]>() : new[] { new[] { 0 } },
+                // Python defaults show-spacing=True; only disable if explicitly false
+                ShowSpacing       = !info.TryGetProperty("show-spacing", out var ss) || ss.GetBoolean(),
                 Spacing           = info.TryGetProperty("spacing", out var sp) ? sp.GetInt32() : 0,
+                // Canvas layout fields (missing previously — broke all canvas zone snapping)
+                ReferenceWidth    = info.TryGetProperty("ref-width",  out var rw) ? rw.GetDouble() : 0,
+                ReferenceHeight   = info.TryGetProperty("ref-height", out var rh) ? rh.GetDouble() : 0,
+                CanvasZones       = info.TryGetProperty("zones", out var zs)
+                    ? zs.Deserialize<CanvasZoneInfo[]>()
+                    : null,
             };
         }
         catch { return null; }
@@ -450,8 +598,15 @@ public sealed class WorkspaceOrchestrator
     {
         index = 0;
         if (string.IsNullOrEmpty(name)) return false;
+
+        // Try direct parse (e.g. "1")
+        if (int.TryParse(name, out index)) return true;
+
+        // Try segment parse (e.g. "Escritorio 1")
         var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length >= 2 && int.TryParse(parts[^1], out index);
+        if (parts.Length > 0 && int.TryParse(parts[^1], out index)) return true;
+
+        return false;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

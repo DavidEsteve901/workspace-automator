@@ -1,9 +1,33 @@
+import { useState } from 'react'
 import { Plus, Play, Inbox, RotateCcw, Trash2 } from 'lucide-react'
 import AppCard from './AppCard.jsx'
 import './AppList.css'
 
 export default function AppList({ category, items, onAddItem, onEditItem, onDeleteItem, onMoveItem, onLaunch, onRestore, onClean, launchStatus }) {
+  const [draggedIdx, setDraggedIdx] = useState(null)
   const launching = launchStatus && launchStatus.progress < 100
+
+  // HTML5 Drag and Drop logic
+  function handleDragStart(e, idx) {
+    setDraggedIdx(idx)
+    e.dataTransfer.effectAllowed = 'move'
+    // Optional: make it look better while dragging
+    setTimeout(() => {
+      e.target.parentElement.classList.add('is-dragging-child')
+    }, 0)
+  }
+
+  function handleDragOver(e, idx) {
+    e.preventDefault()
+    if (draggedIdx === null || draggedIdx === idx) return
+    onMoveItem(draggedIdx, idx)
+    setDraggedIdx(idx)
+  }
+
+  function handleDragEnd(e) {
+    setDraggedIdx(null)
+    e.target.parentElement.classList.remove('is-dragging-child')
+  }
 
   return (
     <div className="applist">
@@ -77,6 +101,10 @@ export default function AppList({ category, items, onAddItem, onEditItem, onDele
               onDelete={() => onDeleteItem(idx)}
               onMoveUp={idx > 0 ? () => onMoveItem(idx, idx - 1) : null}
               onMoveDown={idx < items.length - 1 ? () => onMoveItem(idx, idx + 1) : null}
+              dragging={draggedIdx === idx}
+              onDragStart={(e) => handleDragStart(e, idx)}
+              onDragOver={(e) => handleDragOver(e, idx)}
+              onDragEnd={handleDragEnd}
             />
           ))
         )}

@@ -21,3 +21,68 @@
   overflow: hidden;
   background: var(--bg-main);
 }
+
+/* ── Sync Alert (Floating) ─────────────────────────────────────────────── */
+.sync-alert {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  background: #f59e0b;
+  color: #000;
+  padding: 12px 20px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  animation: slideInUp 0.3s ease-out;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  transition: transform 0.2s, background 0.2s;
+}
+
+.sync-alert:hover {
+  transform: translateY(-2px);
+  background: #fbbf24;
+}
+
+.sync-alert-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.sync-alert-text strong {
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+}
+
+.sync-alert-text span {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+.sync-alert-badge {
+  background: #000;
+  color: #f59e0b;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  margin-left: 4px;
+}
+
+@keyframes slideInUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}

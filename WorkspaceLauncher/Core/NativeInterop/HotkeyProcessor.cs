@@ -21,7 +21,7 @@ public sealed class HotkeyProcessor
     {
         _hookManager = hookManager;
 
-        // Connect side buttons
+        // Connect side buttons (modifiers captured at hook time)
         _hookManager.OnX1Down += HandleX1;
         _hookManager.OnX2Down += HandleX2;
         _hookManager.OnKeyDown += HandleKeyDown;
@@ -30,10 +30,19 @@ public sealed class HotkeyProcessor
         {
             if (!Enabled) return false;
             var config = ConfigManager.Instance.Config;
-            // Check if bare X buttons are mapped for desktop cycling
+
+            // Ctrl-only = browser back/forward passthrough (don't suppress)
+            if (ctrl && !alt && !shift && !win) return false;
+
+            // Bare X = desktop cycling
             if (config.Hotkeys.DesktopCycleEnabled && !alt && !ctrl && !shift && !win)
                 return true;
-            // Check if modifier combos are mapped for zone cycling
+
+            // Alt-only + X = hover zone cycling
+            if (config.Hotkeys.ZoneCycleEnabled && alt && !ctrl && !shift && !win)
+                return true;
+
+            // Any other configured combo for zone cycling
             if (config.Hotkeys.ZoneCycleEnabled)
             {
                 if (IsHotKeyActive(config.Hotkeys.CycleForward, button, alt, ctrl, shift, win)) return true;
@@ -61,73 +70,101 @@ public sealed class HotkeyProcessor
         };
     }
 
-    private void HandleX1()
+    private void HandleX1(bool alt, bool ctrl, bool shift, bool win)
     {
         if (!Enabled) return;
         var config = ConfigManager.Instance.Config;
 
-        // Read current modifier state to distinguish combos
-        bool alt = (User32.GetAsyncKeyState(User32.VK_ALT) & 0x8000) != 0;
-        bool ctrl = (User32.GetAsyncKeyState(User32.VK_CTRL) & 0x8000) != 0;
-        bool shift = (User32.GetAsyncKeyState(User32.VK_SHIFT) & 0x8000) != 0;
-        bool win = (User32.GetAsyncKeyState(User32.VK_LWIN) & 0x8000) != 0 || (User32.GetAsyncKeyState(User32.VK_RWIN) & 0x8000) != 0;
+        // Alt-only + X1 → hover zone cycling (window under cursor)
+        if (config.Hotkeys.ZoneCycleEnabled && alt && !ctrl && !shift && !win)
+        {
+            Console.WriteLine("[HotkeyProcessor] Alt+X1 -> CycleZoneForward (hover)");
+            var key = GetZoneKeyUnderCursor() ?? ZoneCycler.Instance.DetectActiveWindowZoneKey();
+            if (key != null) ZoneCycler.Instance.CycleForward(key);
+            return;
+        }
 
-        // Check zone cycling first (e.g., alt+x1)
+        // Configured modifier combos (keyboard-style zone cycling via x1)
         if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActive(config.Hotkeys.CycleForward, "x1", alt, ctrl, shift, win))
         {
-            Console.WriteLine("[HotkeyProcessor] X1+mod detected -> CycleZoneForward");
+            Console.WriteLine("[HotkeyProcessor] X1+mod -> CycleZoneForward");
             var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
             if (key != null) ZoneCycler.Instance.CycleForward(key);
             return;
         }
         if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActive(config.Hotkeys.CycleBackward, "x1", alt, ctrl, shift, win))
         {
-            Console.WriteLine("[HotkeyProcessor] X1+mod detected -> CycleZoneBackward");
+            Console.WriteLine("[HotkeyProcessor] X1+mod -> CycleZoneBackward");
             var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
             if (key != null) ZoneCycler.Instance.CycleBackward(key);
             return;
         }
 
-        // Bare X1 → desktop switching
+        // Bare X1 → desktop forward
         if (config.Hotkeys.DesktopCycleEnabled && !alt && !ctrl && !shift && !win)
         {
-            Console.WriteLine("[HotkeyProcessor] X1 detected -> SwitchNextDesktop");
+            Console.WriteLine("[HotkeyProcessor] X1 -> SwitchNextDesktop");
             VirtualDesktopManager.Instance.SwitchNextDesktop();
         }
     }
 
-    private void HandleX2()
+    private void HandleX2(bool alt, bool ctrl, bool shift, bool win)
     {
         if (!Enabled) return;
         var config = ConfigManager.Instance.Config;
 
-        bool alt = (User32.GetAsyncKeyState(User32.VK_ALT) & 0x8000) != 0;
-        bool ctrl = (User32.GetAsyncKeyState(User32.VK_CTRL) & 0x8000) != 0;
-        bool shift = (User32.GetAsyncKeyState(User32.VK_SHIFT) & 0x8000) != 0;
-        bool win = (User32.GetAsyncKeyState(User32.VK_LWIN) & 0x8000) != 0 || (User32.GetAsyncKeyState(User32.VK_RWIN) & 0x8000) != 0;
+        // Alt-only + X2 → hover zone cycling backward (window under cursor)
+        if (config.Hotkeys.ZoneCycleEnabled && alt && !ctrl && !shift && !win)
+        {
+            Console.WriteLine("[HotkeyProcessor] Alt+X2 -> CycleZoneBackward (hover)");
+            var key = GetZoneKeyUnderCursor() ?? ZoneCycler.Instance.DetectActiveWindowZoneKey();
+            if (key != null) ZoneCycler.Instance.CycleBackward(key);
+            return;
+        }
 
-        // Check zone cycling first (e.g., alt+x2)
+        // Configured modifier combos
         if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActive(config.Hotkeys.CycleForward, "x2", alt, ctrl, shift, win))
         {
-            Console.WriteLine("[HotkeyProcessor] X2+mod detected -> CycleZoneForward");
+            Console.WriteLine("[HotkeyProcessor] X2+mod -> CycleZoneForward");
             var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
             if (key != null) ZoneCycler.Instance.CycleForward(key);
             return;
         }
         if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActive(config.Hotkeys.CycleBackward, "x2", alt, ctrl, shift, win))
         {
-            Console.WriteLine("[HotkeyProcessor] X2+mod detected -> CycleZoneBackward");
+            Console.WriteLine("[HotkeyProcessor] X2+mod -> CycleZoneBackward");
             var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
             if (key != null) ZoneCycler.Instance.CycleBackward(key);
             return;
         }
 
-        // Bare X2 → desktop switching
+        // Bare X2 → desktop backward
         if (config.Hotkeys.DesktopCycleEnabled && !alt && !ctrl && !shift && !win)
         {
-            Console.WriteLine("[HotkeyProcessor] X2 detected -> SwitchPreviousDesktop");
+            Console.WriteLine("[HotkeyProcessor] X2 -> SwitchPreviousDesktop");
             VirtualDesktopManager.Instance.SwitchPreviousDesktop();
         }
+    }
+
+    /// <summary>
+    /// Returns the zone key of the window currently under the mouse cursor.
+    /// First checks the registered zone stack (fast), then falls back to
+    /// position-based detection (so newly-moved windows are found immediately).
+    /// </summary>
+    private static ZoneStack.ZoneKey? GetZoneKeyUnderCursor()
+    {
+        if (!User32.GetCursorPos(out POINT pt)) return null;
+        nint hwnd = User32.WindowFromPoint(pt);
+        if (hwnd == 0) return null;
+        // Normalize to top-level window — WindowFromPoint returns child windows
+        // (e.g. browser tab content, VS Code editor pane) which aren't in the stack
+        nint root = User32.GetAncestor(hwnd, User32.GA_ROOT);
+        if (root != 0) hwnd = root;
+        // Fast path: already registered in a zone stack
+        var registered = ZoneStack.Instance.FindKeyForHwnd(hwnd);
+        if (registered != null) return registered;
+        // Slow path: detect by position (catches windows dragged to a zone but not yet in stack)
+        return ZoneCycler.DetectZoneByPosition(hwnd);
     }
 
     private void HandleKeyDown(int vk, bool alt, bool ctrl, bool shift, bool win)

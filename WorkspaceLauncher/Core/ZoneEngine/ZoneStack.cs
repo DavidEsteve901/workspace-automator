@@ -1,3 +1,5 @@
+using WorkspaceLauncher.Core.NativeInterop;
+
 namespace WorkspaceLauncher.Core.ZoneEngine;
 
 /// <summary>
@@ -57,6 +59,19 @@ public sealed class ZoneStack
                 if (list.Contains(hwnd)) return key;
             }
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Remove HWNDs of windows that have been closed (IsWindow returns false).
+    /// Called before cycling to prevent silent failures on stale entries.
+    /// </summary>
+    public void PruneDeadWindows()
+    {
+        lock (_lock)
+        {
+            foreach (var list in _stacks.Values)
+                list.RemoveAll(hwnd => !User32.IsWindow(hwnd));
         }
     }
 

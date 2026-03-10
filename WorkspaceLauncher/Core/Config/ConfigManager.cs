@@ -21,15 +21,21 @@ public sealed class ConfigManager
 
     private AppConfig _config = new();
     private string _configPath = string.Empty;
-
     public AppConfig Config => _config;
+    public string ConfigPath => _configPath;
 
     private ConfigManager() { }
 
     public void Load(string? baseDir = null)
     {
-        string dir  = baseDir ?? AppContext.BaseDirectory;
-        _configPath = Path.Combine(dir, ConfigFileName);
+        if (!string.IsNullOrEmpty(baseDir))
+        {
+            _configPath = Path.Combine(baseDir, ConfigFileName);
+        }
+        else if (string.IsNullOrEmpty(_configPath))
+        {
+            _configPath = Path.Combine(AppContext.BaseDirectory, ConfigFileName);
+        }
 
         if (!File.Exists(_configPath))
         {
@@ -48,6 +54,12 @@ public sealed class ConfigManager
             Console.WriteLine($"[Config] Load error: {ex.Message}");
             _config = new AppConfig();
         }
+    }
+
+    public void ChangeConfigPath(string newPath)
+    {
+        _configPath = newPath;
+        Load();
     }
 
     public void Save()

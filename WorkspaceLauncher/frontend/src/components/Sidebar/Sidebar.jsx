@@ -1,11 +1,14 @@
 import { useState } from 'react'
-import { FolderOpen, Plus, Trash2, Settings } from 'lucide-react'
+import { FolderOpen, Plus, Trash2, Settings, ChevronUp, ChevronDown, GripVertical, Check } from 'lucide-react'
 import logo from '../../assets/logo.ico'
 import './Sidebar.css'
 
-export default function Sidebar({ categories, activeCategory, onSelect, onAddCategory, onDeleteCategory, onOpenConfig, configActive }) {
+export default function Sidebar({ categories, activeCategory, onSelect, onAddCategory, onDeleteCategory, onMoveCategory, onRenameCategory, onOpenConfig, configActive }) {
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
+  const [editing, setEditing] = useState(null) // cat name
+  const [editValue, setEditValue] = useState('')
+  const [draggedIdx, setDraggedIdx] = useState(null)
 
   function handleAdd() {
     const name = newName.trim()
@@ -16,9 +19,48 @@ export default function Sidebar({ categories, activeCategory, onSelect, onAddCat
     setAdding(false)
   }
 
+  function handleStartEdit(cat) {
+    setEditing(cat)
+    setEditValue(cat)
+  }
+
+  function handleConfirmRename() {
+    const val = editValue.trim()
+    if (val && val !== editing) {
+      onRenameCategory(editing, val)
+    }
+    setEditing(null)
+  }
+
+  function handleEditKeyDown(e) {
+    if (e.key === 'Enter') handleConfirmRename()
+    if (e.key === 'Escape') setEditing(null)
+  }
+
   function handleKeyDown(e) {
     if (e.key === 'Enter') handleAdd()
     if (e.key === 'Escape') { setAdding(false); setNewName('') }
+  }
+
+  function handleMove(idx, direction) {
+    onMoveCategory(idx, idx + direction)
+  }
+
+  // HTML5 Drag and Drop
+  function onDragStart(e, index) {
+    setDraggedIdx(index)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  function onDragOver(e, index) {
+    e.preventDefault()
+    if (draggedIdx === null || draggedIdx === index) return
+    onMoveCategory(draggedIdx, index)
+    setDraggedIdx(index)
+  }
+
+  function onDragEnd() {
+    setDraggedIdx(null)
   }
 
   return (
@@ -34,21 +76,64 @@ export default function Sidebar({ categories, activeCategory, onSelect, onAddCat
       {/* Category list */}
       <div className="sidebar-label">WORKSPACES</div>
       <nav className="sidebar-nav">
-        {categories.map(cat => (
+        {categories.map((cat, idx) => (
           <div
             key={cat}
-            className={`sidebar-item ${cat === activeCategory ? 'active' : ''}`}
+            className={`sidebar-item ${cat === activeCategory ? 'active' : ''} ${draggedIdx === idx ? 'dragging' : ''} ${editing === cat ? 'editing' : ''}`}
             onClick={() => onSelect(cat)}
+            onDoubleClick={() => handleStartEdit(cat)}
+            draggable={!editing}
+            onDragStart={(e) => onDragStart(e, idx)}
+            onDragOver={(e) => onDragOver(e, idx)}
+            onDragEnd={onDragEnd}
           >
-            <FolderOpen size={15} className="sidebar-item-icon" />
-            <span className="sidebar-item-name" title={cat}>{cat}</span>
-            <button
-              className="sidebar-item-delete"
-              title="Eliminar workspace"
-              onClick={e => { e.stopPropagation(); onDeleteCategory(cat) }}
-            >
-              <Trash2 size={13} />
-            </button>
+            {editing === cat ? (
+              <div className="sidebar-edit-row" onClick={e => e.stopPropagation()}>
+                <input
+                  autoFocus
+                  value={editValue}
+                  onChange={e => setEditValue(e.target.value)}
+                  onKeyDown={handleEditKeyDown}
+                  onBlur={handleConfirmRename}
+                  className="sidebar-edit-input"
+                />
+                <button className="sidebar-edit-confirm" onClick={handleConfirmRename}>
+                  <Check size={14} />
+                </button>
+              </div>
+            ) : (
+              <>
+                <GripVertical size={14} className="sidebar-item-grip" />
+                <FolderOpen size={15} className="sidebar-item-icon" />
+                <span className="sidebar-item-name" title={cat}>{cat}</span>
+                
+                <div className="sidebar-item-actions">
+                  <button 
+                    className="sidebar-item-move" 
+                    onClick={(e) => { e.stopPropagation(); handleMove(idx, -1) }}
+                    disabled={idx === 0}
+                    title="Subir"
+                  >
+                    <ChevronUp size={12} />
+                  </button>
+                  <button 
+                    className="sidebar-item-move" 
+                    onClick={(e) => { e.stopPropagation(); handleMove(idx, 1) }}
+                    disabled={idx === categories.length - 1}
+                    title="Bajar"
+                  >
+                    <ChevronDown size={12} />
+                  </button>
+                  <button
+                    className="sidebar-item-delete"
+                    title="Eliminar workspace"
+                    onClick={e => { e.stopPropagation(); onDeleteCategory(cat) }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         ))}
 

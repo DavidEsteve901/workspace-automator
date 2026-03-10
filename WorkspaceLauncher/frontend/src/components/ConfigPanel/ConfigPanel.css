@@ -9,9 +9,31 @@
 .config-header {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
   padding: 18px 24px;
   border-bottom: 1px solid var(--border);
+}
+
+.config-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.config-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition: all var(--transition);
+}
+
+.config-close-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .config-header-icon {
@@ -190,6 +212,48 @@
   font-weight: 500;
 }
 
+.fz-path-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.fz-path-input {
+  flex: 1;
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  width: 100%;
+}
+
+.fz-path-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+.fz-path-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+
+.fz-path-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .fz-path-help {
   font-size: 11px;
   color: var(--text-muted);
@@ -197,30 +261,35 @@
 }
 
 .fz-detected-path {
-  margin-top: 6px;
-  padding: 8px 12px;
+  margin-top: 12px;
+  padding: 10px 14px;
   background: var(--bg-sidebar);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   font-size: 11px;
   color: var(--text-secondary);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  box-shadow: var(--shadow-sm);
 }
 
 .fz-detected-path span {
-  font-weight: 700;
+  font-weight: 800;
   color: var(--text-muted);
   text-transform: uppercase;
   font-size: 9px;
-  letter-spacing: 0.5px;
+  letter-spacing: 1px;
+  white-space: nowrap;
 }
 
 .fz-detected-path code {
   font-family: 'JetBrains Mono', monospace;
-  color: var(--accent);
-  opacity: 0.9;
+  color: var(--accent-light);
+  opacity: 1;
+  word-break: break-all;
+  line-height: 1.4;
 }
 
 /* ── FZ Status Button ────────────────────────────────────────────────── */
@@ -279,7 +348,8 @@
 
 /* ── FZ Modal ────────────────────────────────────────────────────────── */
 .fz-modal {
-  width: 680px;
+  width: 820px;
+  max-width: 90vw;
   max-height: 85vh;
 }
 

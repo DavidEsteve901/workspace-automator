@@ -63,6 +63,12 @@
   color: var(--accent);
 }
 
+.btn-secondary.btn-danger:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-dim);
+}
+
 .btn-launch {
   display: inline-flex;
   align-items: center;

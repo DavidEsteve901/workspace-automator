@@ -1,4 +1,3 @@
-/* ── App Card ──────────────────────────────────────────────────────────── */
 .app-card {
   display: flex;
   align-items: center;
@@ -7,13 +6,36 @@
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 10px;
-  transition: all var(--transition);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: grab;
+  user-select: none;
 }
 
 .app-card:hover {
   border-color: var(--border-accent);
   background: var(--bg-hover);
   box-shadow: var(--shadow-sm);
+  transform: translateX(4px);
+}
+
+.app-card.dragging {
+  opacity: 0.4;
+  border: 1px dashed var(--accent);
+  background: var(--bg-active);
+  transform: scale(0.98);
+}
+
+.app-card-grip {
+  color: var(--text-muted);
+  opacity: 0.4;
+  display: flex;
+  align-items: center;
+  margin-left: -4px;
+  transition: opacity 0.2s;
+}
+
+.app-card:hover .app-card-grip {
+  opacity: 1;
 }
 
 /* ── Category-colored avatar ─────────────────────────────────────────── */

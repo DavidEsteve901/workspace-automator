@@ -46,6 +46,16 @@ public struct MSG
 }
 
 [StructLayout(LayoutKind.Sequential)]
+public struct MINMAXINFO
+{
+    public POINT ptReserved;
+    public POINT ptMaxSize;
+    public POINT ptMaxPosition;
+    public POINT ptMinTrackSize;
+    public POINT ptMaxTrackSize;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 public struct MONITORINFO
 {
     public uint  cbSize;
@@ -158,6 +168,7 @@ public static partial class User32
     public const uint WM_SYSKEYDOWN = 0x0104;
     public const uint WM_SYSKEYUP   = 0x0105;
     public const uint WM_QUIT       = 0x0012;
+    public const uint WM_GETMINMAXINFO = 0x0024;
 
     // Virtual keys
     public const int VK_BROWSER_BACK    = 0xA6;
@@ -192,6 +203,49 @@ public static partial class User32
     // Display device enumeration
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern bool EnumDisplayDevicesW(string? lpDevice, uint iDevNum, ref DISPLAY_DEVICE lpDisplayDevice, uint dwFlags);
+
+    // Cursor / hit-test
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetCursorPos(out POINT lpPoint);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint WindowFromPoint(POINT Point);
+
+    // Window ancestor / validation
+    // GA_ROOT(2) returns the top-level root window — needed because WindowFromPoint
+    // can return child windows (browser content pane, editor area, etc.)
+    [DllImport("user32.dll")]
+    public static extern nint GetAncestor(nint hwnd, uint gaFlags);
+    public const uint GA_ROOT = 2;
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool IsWindow(nint hWnd);
+
+    // Thread input attachment — allows SetForegroundWindow from a background thread
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool AttachThreadInput(uint idAttach, uint idAttachTo,
+        [MarshalAs(UnmanagedType.Bool)] bool fAttach);
+
+    // WinEvent hook (for auto-registering windows moved to zones)
+    public delegate void WinEventProc(nint hWinEventHook, uint eventType, nint hwnd,
+        int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
+
+    [DllImport("user32.dll")]
+    public static extern nint SetWinEventHook(uint eventMin, uint eventMax,
+        nint hmodWinEventProc, WinEventProc lpfnWinEventProc,
+        uint idProcess, uint idThread, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool UnhookWinEvent(nint hWinEventHook);
+
+    // WinEvent constants
+    public const uint EVENT_SYSTEM_MOVESIZEEND = 0x000B;
+    public const uint WINEVENT_OUTOFCONTEXT    = 0x0000;
+    public const uint WINEVENT_SKIPOWNPROCESS  = 0x0002;
 }
 
 [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

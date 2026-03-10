@@ -11,6 +11,9 @@ public class AppConfig
     [JsonPropertyName("last_category")]
     public string LastCategory { get; set; } = string.Empty;
 
+    [JsonPropertyName("category_order")]
+    public List<string> CategoryOrder { get; set; } = [];
+
     [JsonPropertyName("applied_mappings")]
     public Dictionary<string, string> AppliedMappings { get; set; } = [];
 

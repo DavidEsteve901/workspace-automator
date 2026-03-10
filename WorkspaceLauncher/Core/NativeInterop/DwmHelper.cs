@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using WorkspaceLauncher.Core.Utils;
 
 namespace WorkspaceLauncher.Core.NativeInterop;
 
@@ -114,55 +115,50 @@ public static class DwmHelper
         Console.WriteLine($"[DwmHelper] Logical call: [{adjusted.Left},{adjusted.Top},{adjusted.Right},{adjusted.Bottom}] (w={adjusted.Width},h={adjusted.Height})");
         return adjusted;
     }
-
     /// <summary>
-    /// PHASE 4: Apply a zone rect to a window with full DWM compensation.
-    ///
-    /// Sequence (as per Python script):
-    /// 1. Restore if minimized or maximized (cannot resize maximized windows)
-    /// 2. Force focus with anti-block sequence
-    /// 3. Apply DWM-compensated coordinates with SWP_SHOWWINDOW
-    /// 4. Verify using VISUAL rect (not logical) and retry if needed
+    /// Public entry point: restore → focus → snap with DWM compensation.
+    /// Sequence mirrors the Python script: SW_RESTORE → ALT hack → SetWindowPos compensated.
+    /// If 'silent' is true, it avoids forcing focus to prevent virtual desktop jumps.
     /// </summary>
-    // Lógica recomendada para DwmHelper.ApplyZoneRect
-    public static async Task ApplyZoneRectWithCompensation(nint hwnd, RECT targetRect)
+    public static async Task<bool> ApplyZoneRect(nint hwnd, RECT zoneRect, int retries = 3, bool silent = false)
     {
-        // 1. Obtener el rect visual (lo que el usuario ve)
-        NativeMethods.DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, out RECT frameRect, (uint)Marshal.SizeOf<RECT>());
-        
-        // 2. Obtener el rect lógico (el que incluye la sombra)
-        NativeMethods.GetWindowRect(hwnd, out RECT windowRect);
+        // 1. Restore if minimized (only if not silent or it's absolutely necessary)
+        if (IsIconic(hwnd))
+        {
+            User32.ShowWindow(hwnd, silent ? User32.SW_SHOWNOACTIVATE : User32.SW_RESTORE);
+            await Task.Delay(250);
+        }
 
-        // 3. Calcular el "offset" o margen de la sombra
-        int offsetX = (windowRect.Left - frameRect.Left);
-        int offsetY = (windowRect.Top - frameRect.Top);
-        int offsetW = (windowRect.Right - windowRect.Left) - (frameRect.Right - frameRect.Left);
-        int offsetH = (windowRect.Bottom - windowRect.Top) - (frameRect.Bottom - frameRect.Top);
+        // 2. Force foreground (only if NOT silent)
+        if (!silent)
+        {
+            ForceFocus(hwnd);
+            await Task.Delay(150);
+        }
 
-        // 4. Ajustar el target añadiendo esos márgenes
-        RECT compensatedRect = new RECT(
-            targetRect.Left + offsetX,
-            targetRect.Top + offsetY,
-            targetRect.Width + offsetW,
-            targetRect.Height + offsetH
-        );
-
-        // 5. Mover la ventana
-        await WindowManager.SnapToRectAsync(hwnd, compensatedRect);
+        // 3. Snap with DWM compensation + retry
+        return await SnapToZoneAsync(hwnd, zoneRect, retries, silent);
     }
 
     /// <summary>
     /// Apply the logical rect to SetWindowPos and verify the visual result converges.
     /// Uses SWP_SHOWWINDOW so the window is always brought to visible state.
+    /// If 'silent' is true, it uses SWP_NOACTIVATE and SWP_NOZORDER to avoid stealing focus or changing Z-order.
     /// </summary>
-    private static async Task<bool> SnapToZoneAsync(nint hwnd, RECT zoneRect, int retries)
+    private static async Task<bool> SnapToZoneAsync(nint hwnd, RECT zoneRect, int retries, bool silent)
     {
+        // For silent mode, we avoid SWP_SHOWWINDOW and use SWP_NOACTIVATE + SWP_NOZORDER
+        // to prevent Windows from switching the current Virtual Desktop to where the window is.
+        uint flags = silent 
+            ? (User32.SWP_NOACTIVATE | User32.SWP_NOZORDER) 
+            : (User32.SWP_SHOWWINDOW);
+
         for (int attempt = 0; attempt < retries; attempt++)
         {
             // Compute DWM-compensated logical rect for this attempt
             RECT logicalRect = CompensateForSetWindowPos(hwnd, zoneRect);
 
-            // SetWindowPos with SWP_SHOWWINDOW to ensure the window is visible and sized
+            // Execute positioning
             User32.SetWindowPos(
                 hwnd,
                 nint.Zero,
@@ -170,7 +166,7 @@ public static class DwmHelper
                 logicalRect.Top,
                 logicalRect.Width,
                 logicalRect.Height,
-                SWP_SHOW_MOVE_SIZE);  // SWP_SHOWWINDOW — critical for correct sizing
+                flags);
 
             await Task.Delay(attempt == 0 ? 200 : 350); // First try faster, retries slower
 
@@ -183,9 +179,9 @@ public static class DwmHelper
 
             RECT checkRect = hr == 0 ? actualVisual : GetLogicalRectFallback(hwnd);
 
-            if (VisualRectsClose(checkRect, zoneRect, threshold: 12))
+            if (VisualRectsClose(checkRect, zoneRect, threshold: 5))
             {
-                Console.WriteLine($"[DwmHelper] Snap converged on attempt {attempt + 1}. Visual: [{checkRect.Left},{checkRect.Top},{checkRect.Right},{checkRect.Bottom}]");
+                Logger.Info($"[DwmHelper] Snap converged on attempt {attempt + 1} (precision <= 5px).");
                 return true;
             }
 
@@ -203,9 +199,9 @@ public static class DwmHelper
 
     private static bool VisualRectsClose(RECT a, RECT b, int threshold)
         => Math.Abs(a.Left - b.Left) <= threshold &&
-           Math.Abs(a.Top  - b.Top)  <= threshold &&
-           Math.Abs(a.Right  - b.Right)  <= threshold &&
-           Math.Abs(a.Bottom - b.Bottom) <= threshold;
+           Math.Abs(a.Top - b.Top) <= threshold &&
+           Math.Abs(a.Width - b.Width) <= threshold &&
+           Math.Abs(a.Height - b.Height) <= threshold;
 
     /// <summary>
     /// PHASE 4 - Force Focus anti-block sequence.
@@ -216,6 +212,8 @@ public static class DwmHelper
     {
         try
         {
+            if (!User32.IsWindow(hwnd)) return;
+
             // 1. SwitchToThisWindow (undocumented but reliable for foreground forcing)
             SwitchToThisWindow(hwnd, true);
 
@@ -224,11 +222,21 @@ public static class DwmHelper
             keybd_event(VK_MENU, 0, 0, 0);
             keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
 
-            // 3. SetForegroundWindow + BringWindowToTop
+            // 3. AttachThreadInput trick to the FOREGROUND window (matches user's latest Preference)
+            uint currentTid = Kernel32.GetCurrentThreadId();
+            nint fgWin      = User32.GetForegroundWindow();
+            uint fgTid      = fgWin != 0 ? User32.GetWindowThreadProcessId(fgWin, out _) : 0;
+            bool attached   = fgTid != 0 && fgTid != currentTid
+                              && User32.AttachThreadInput(currentTid, fgTid, true);
+
+            // 4. SetForegroundWindow + BringWindowToTop
             User32.SetForegroundWindow(hwnd);
             BringWindowToTop(hwnd);
 
-            // 4. TOPMOST toggle: briefly make topmost then revert —
+            if (attached)
+                User32.AttachThreadInput(currentTid, fgTid, false);
+
+            // 5. TOPMOST toggle: briefly make topmost then revert —
             //    this forces the window manager to reorder the Z-stack reliably
             User32.SetWindowPos(hwnd, HWND_TOPMOST,   0, 0, 0, 0, SWP_TOPMOST_FLAGS);
             User32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_TOPMOST_FLAGS);
@@ -236,6 +244,46 @@ public static class DwmHelper
         catch (Exception ex)
         {
             Console.WriteLine($"[DwmHelper] ForceFocus error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Lightweight focus for zone cycling.
+    /// - Does NOT inject Alt key events (user may be holding Alt for the gesture)
+    /// - Uses AttachThreadInput to reliably call SetForegroundWindow from a background thread
+    /// - SwitchToThisWindow as primary + TOPMOST toggle as Z-order backstop
+    /// </summary>
+    public static void FocusForCycling(nint hwnd)
+    {
+        try
+        {
+            if (!User32.IsWindow(hwnd)) return;
+
+            if (IsIconic(hwnd))
+                User32.ShowWindow(hwnd, User32.SW_RESTORE);
+
+            // AttachThreadInput trick: attach our thread to the FOREGROUND thread
+            // (not the target thread). This grants our thread "last input" rights so
+            // SetForegroundWindow succeeds from a background thread.
+            uint currentTid = Kernel32.GetCurrentThreadId();
+            nint fgWin      = User32.GetForegroundWindow();
+            uint fgTid      = fgWin != 0 ? User32.GetWindowThreadProcessId(fgWin, out _) : 0;
+            bool attached   = fgTid != 0 && fgTid != currentTid
+                              && User32.AttachThreadInput(currentTid, fgTid, true);
+
+            User32.SetForegroundWindow(hwnd);
+            BringWindowToTop(hwnd);
+
+            if (attached)
+                User32.AttachThreadInput(currentTid, fgTid, false);
+
+            // TOPMOST toggle forces Z-order update even if SetForegroundWindow fails
+            User32.SetWindowPos(hwnd, HWND_TOPMOST,   0, 0, 0, 0, SWP_TOPMOST_FLAGS);
+            User32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_TOPMOST_FLAGS);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[DwmHelper] FocusForCycling error: {ex.Message}");
         }
     }
 }

@@ -95,6 +95,18 @@
   transition: color var(--transition);
 }
 
+.sidebar-item-grip {
+  opacity: 0;
+  color: var(--text-muted);
+  transition: opacity 0.2s;
+  cursor: grab;
+  margin-left: -4px;
+}
+
+.sidebar-item:hover .sidebar-item-grip {
+  opacity: 0.5;
+}
+
 .sidebar-item-name {
   flex: 1;
   font-size: 13px;
@@ -104,23 +116,87 @@
   text-overflow: ellipsis;
 }
 
-.sidebar-item-delete {
-  opacity: 0;
+.sidebar-item-actions {
   display: flex;
   align-items: center;
-  padding: 3px;
-  border-radius: 4px;
-  color: var(--danger);
-  transition: opacity var(--transition), background var(--transition);
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.2s;
 }
 
-.sidebar-item:hover .sidebar-item-delete {
-  opacity: 0.6;
+.sidebar-item:hover .sidebar-item-actions {
+  opacity: 1;
+}
+
+.sidebar-item-move,
+.sidebar-item-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  transition: all 0.2s;
+  background: transparent;
+  cursor: pointer;
+}
+
+.sidebar-item-move:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.sidebar-item-move:disabled {
+  opacity: 0.2;
+  cursor: default;
+}
+
+.sidebar-item-delete {
+  color: var(--danger);
 }
 
 .sidebar-item-delete:hover {
-  opacity: 1 !important;
   background: var(--danger-dim);
+  color: var(--danger);
+}
+
+.sidebar-item.dragging {
+  opacity: 0.4;
+  background: var(--accent-low);
+  border: 1px dashed var(--accent);
+}
+
+.sidebar-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.sidebar-edit-input {
+  flex: 1;
+  background: var(--bg-main) !important;
+  border: 1px solid var(--accent) !important;
+  border-radius: 4px;
+  padding: 4px 8px !important;
+  font-size: 13px;
+  color: #fff;
+}
+
+.sidebar-edit-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--success);
+  padding: 4px;
+  border-radius: 4px;
+  background: var(--success-dim);
+  transition: all 0.2s;
+}
+
+.sidebar-edit-confirm:hover {
+  background: var(--success);
+  color: #000;
 }
 
 /* ── Add category ────────────────────────────────────────────────────── */

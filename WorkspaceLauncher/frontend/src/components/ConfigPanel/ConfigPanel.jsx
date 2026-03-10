@@ -11,7 +11,7 @@ const HOTKEY_LABELS = {
   util_reload_layouts: 'Recargar layouts FancyZones',
 }
 
-export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetectedPath, onSave }) {
+export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetectedPath, configPath, onSave, onClose }) {
   const [hk, setHk] = useState({ ...hotkeys })
   const [pip, setPip] = useState(pipWatcher)
   const [fzPath, setFzPath] = useState(fzCustomPath || '')
@@ -29,6 +29,20 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
     if (res) setFzPath(res)
   }
 
+  async function handlePickConfigPath() {
+    const res = await bridge.openFileDialog({ 
+      isFolder: false, 
+      title: "Seleccionar archivo de configuración o carpeta de destino" 
+    })
+    if (res) {
+      await bridge.changeConfigPath(res)
+    }
+  }
+
+  function handleOpenConfigFolder() {
+    bridge.openConfigFolder()
+  }
+
   function setHotkey(key, value) {
     setHk(h => ({ ...h, [key]: value }))
   }
@@ -36,8 +50,13 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
   return (
     <div className="config-panel">
       <div className="config-header">
-        <Settings size={20} className="config-header-icon" />
-        <h2>Configuración</h2>
+        <div className="config-header-left">
+          <Settings size={20} className="config-header-icon" />
+          <h2>Configuración</h2>
+        </div>
+        <button className="config-close-btn" onClick={onClose} title="Cerrar configuración">
+          <X size={20} />
+        </button>
       </div>
 
       <div className="config-body">
@@ -91,6 +110,27 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
               <span>Detectado:</span> <code>{fzDetectedPath}</code>
             </div>
           )}
+        </Section>
+
+        {/* Config file location */}
+        <Section title="Ubicación de Configuración (JSON)" icon={<Folder size={14} />}>
+          <div className="fz-path-row">
+            <input
+              className="fz-path-input"
+              type="text"
+              readOnly
+              value={configPath || ''}
+            />
+            <button className="fz-path-btn" onClick={handlePickConfigPath} title="Cambiar ubicación">
+              <RotateCw size={14} />
+            </button>
+            <button className="fz-path-btn" onClick={handleOpenConfigFolder} title="Abrir carpeta">
+              <Folder size={14} />
+            </button>
+          </div>
+          <p className="fz-path-help">
+            Ruta actual del archivo <code>mis_apps_config_v2.json</code>. Puedes cambiarla para sincronizar con Drive o copias de seguridad.
+          </p>
         </Section>
 
         <Section title="Sistema" icon={<Monitor size={14} />}>

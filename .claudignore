@@ -1,0 +1,34 @@
+# .claudignore
+
+# Directorios de compilación C# (MUY IMPORTANTE)
+bin/
+obj/
+publish/
+*.exe
+*.dll
+*.pdb
+*.nupkg
+
+# Dependencias de Frontend/Node
+node_modules/
+dist/
+build/
+.npm/
+
+# Entornos virtuales Python (si aún quedan)
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Git y Logs
+.git/
+*.log
+.vscode/
+.idea/
+
+# Archivos temporales y de sistema
+.DS_Store
+Thumbs.db
+temp/
+tmp/

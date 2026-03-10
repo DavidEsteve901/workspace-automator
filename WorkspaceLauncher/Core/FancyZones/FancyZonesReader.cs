@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using System.IO;
 using WorkspaceLauncher.Core.Config;
 
@@ -9,6 +10,31 @@ namespace WorkspaceLauncher.Core.FancyZones;
 /// Reads and writes PowerToys FancyZones configuration files.
 /// Port of the Python FancyZones reading logic.
 /// </summary>
+
+public class AppliedLayoutEntry
+{
+    [JsonPropertyName("deviceId")]
+    public string DeviceId { get; set; } = "";
+
+    [JsonPropertyName("monitorName")]
+    public string MonitorName { get; set; } = "";
+
+    [JsonPropertyName("instance")]
+    public string Instance { get; set; } = "";
+
+    [JsonPropertyName("desktopId")]
+    public string DesktopId { get; set; } = "";
+
+    [JsonPropertyName("monitorNumber")]
+    public int MonitorNumber { get; set; }
+
+    [JsonPropertyName("serialNumber")]
+    public string SerialNumber { get; set; } = "";
+
+    [JsonPropertyName("layoutUuid")]
+    public string LayoutUuid { get; set; } = "";
+}
+
 public static class FancyZonesReader
 {
     /// <summary>
@@ -88,9 +114,9 @@ public static class FancyZonesReader
     /// <summary>
     /// Read applied layouts. Returns list of info (deviceId, desktopId, layoutUuid, monitorName, instance, monitorNumber, serialNumber).
     /// </summary>
-    public static List<object> ReadAppliedLayouts()
+    public static List<AppliedLayoutEntry> ReadAppliedLayouts()
     {
-        var result = new List<object>();
+        var result = new List<AppliedLayoutEntry>();
         if (!File.Exists(AppliedLayoutsPath)) return result;
 
         try
@@ -114,7 +140,6 @@ public static class FancyZonesReader
                 if (device == null)
                     deviceId = obj["device-id"]?.GetValue<string>();
 
-                // Check both property names used by PowerToys
                 var desktopNode = obj["virtual-desktop-id"] ?? device?["virtual-desktop"];
                 string? desktopId = desktopNode?.GetValue<string>()?.Trim('{', '}').ToLowerInvariant();
                 
@@ -122,16 +147,15 @@ public static class FancyZonesReader
                 
                 if (!string.IsNullOrEmpty(deviceId) && !string.IsNullOrEmpty(layout))
                 {
-                    var item = new {
-                        deviceId,
-                        monitorName,
-                        instance,
-                        desktopId,
-                        monitorNumber,
-                        serialNumber = serialNumber ?? "",
-                        layoutUuid = layout.Trim('{', '}').ToLowerInvariant()
+                    var item = new AppliedLayoutEntry {
+                        DeviceId = deviceId,
+                        MonitorName = monitorName ?? "",
+                        Instance = instance ?? "",
+                        DesktopId = desktopId ?? "",
+                        MonitorNumber = monitorNumber,
+                        SerialNumber = serialNumber ?? "",
+                        LayoutUuid = layout.Trim('{', '}').ToLowerInvariant()
                     };
-                    Console.WriteLine($"[FancyZonesReader] Applied entry: monitor={monitorName}, instance={instance}, monNum={monitorNumber}, desktop={desktopId}, layout={item.layoutUuid}");
                     result.Add(item);
                 }
             }
@@ -188,7 +212,7 @@ public static class FancyZonesReader
     /// Inject/update a layout assignment for a specific monitor+desktop combination.
     /// Uses the FancyZones v2 format with device { monitor-instance, monitor, virtual-desktop }.
     /// </summary>
-    public static bool InjectLayoutByDevice(string monitorInstance, string monitorName, string? virtualDesktopId, string layoutUuid)
+    public static bool InjectLayoutByDevice(string monitorInstance, string monitorName, string? virtualDesktopId, string layoutUuid, string type = "custom")
     {
         if (!File.Exists(AppliedLayoutsPath)) return false;
 
@@ -215,12 +239,11 @@ public static class FancyZonesReader
                 string? entryMonitor = device["monitor"]?.GetValue<string>();
                 string? entryDesktop = device["virtual-desktop"]?.GetValue<string>();
 
-                // Match by monitor-instance (most reliable) or fallback to monitor name
                 bool monitorMatch = (!string.IsNullOrEmpty(entryInstance) && entryInstance == monitorInstance) ||
                                    (!string.IsNullOrEmpty(entryMonitor) && entryMonitor == monitorName);
                 
                 bool desktopMatch = string.IsNullOrEmpty(virtualDesktopId)
-                    ? true  // If no desktop specified, match any  
+                    ? true  
                     : (entryDesktop?.Trim('{', '}').Equals(virtualDesktopId.Trim('{', '}'), StringComparison.OrdinalIgnoreCase) ?? false);
 
                 if (monitorMatch && desktopMatch)
@@ -229,11 +252,15 @@ public static class FancyZonesReader
                     if (appliedLayout != null)
                     {
                         appliedLayout["uuid"] = wrappedLayoutUuid;
-                        appliedLayout["type"] = "custom";
+                        appliedLayout["type"] = type;
                     }
                     else
                     {
-                        obj["applied-layout"] = JsonNode.Parse($"{{\"uuid\":\"{wrappedLayoutUuid}\",\"type\":\"custom\"}}");
+                        obj["applied-layout"] = new JsonObject
+                        {
+                            ["uuid"] = wrappedLayoutUuid,
+                            ["type"] = type
+                        };
                     }
                     found = true;
                     break;
@@ -242,7 +269,6 @@ public static class FancyZonesReader
 
             if (!found)
             {
-                // Create a new entry
                 var newEntry = new JsonObject
                 {
                     ["device"] = new JsonObject
@@ -256,14 +282,13 @@ public static class FancyZonesReader
                     ["applied-layout"] = new JsonObject
                     {
                         ["uuid"] = wrappedLayoutUuid,
-                        ["type"] = "custom"
+                        ["type"] = type
                     }
                 };
                 arr.Add(newEntry);
             }
 
             File.WriteAllText(AppliedLayoutsPath, root!.ToJsonString(JsonOpts));
-            Console.WriteLine($"[FancyZonesReader] InjectLayoutByDevice: set {monitorInstance}/{monitorName} desktop={virtualDesktopId} → layout={layoutUuid}");
             return true;
         }
         catch (Exception ex)
@@ -277,7 +302,7 @@ public static class FancyZonesReader
     /// Update or insert a custom layout definition in custom-layouts.json.
     /// This allows absolute portability of workspaces.
     /// </summary>
-    public static bool UpsertCustomLayout(string uuid, string name, JsonElement info)
+    public static bool UpsertCustomLayout(string uuid, string name, string type, JsonElement info)
     {
         if (!File.Exists(CustomLayoutsPath)) return false;
 
@@ -296,6 +321,7 @@ public static class FancyZonesReader
                 if (obj["uuid"]?.GetValue<string>()?.Trim('{', '}').Equals(uuid, StringComparison.OrdinalIgnoreCase) == true)
                 {
                     obj["name"] = name;
+                    obj["type"] = type;
                     obj["info"] = JsonNode.Parse(info.GetRawText());
                     found = true;
                     break;
@@ -308,7 +334,7 @@ public static class FancyZonesReader
                 {
                     ["uuid"] = wrappedUuid,
                     ["name"] = name,
-                    ["type"] = info.TryGetProperty("type", out var t) ? t.GetString() : "grid",
+                    ["type"] = type,
                     ["info"] = JsonNode.Parse(info.GetRawText())
                 };
                 arr.Add(newLayout);

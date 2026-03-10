@@ -1,4 +1,4 @@
-import { Globe, Terminal, Code2, MonitorSmartphone, FileCode, Cog, ArrowUp, ArrowDown, Pencil, Trash2 } from 'lucide-react'
+import { Globe, Terminal, Code2, MonitorSmartphone, FileCode, Cog, ArrowUp, ArrowDown, Pencil, Trash2, GripVertical } from 'lucide-react'
 import './AppCard.css'
 
 const TYPE_CONFIG = {
@@ -39,12 +39,22 @@ function getSubtitle(item) {
   return parts.join(' · ')
 }
 
-export default function AppCard({ item, index, total, onEdit, onDelete, onMoveUp, onMoveDown }) {
+export default function AppCard({ item, index, total, onEdit, onDelete, onMoveUp, onMoveDown, dragging, onDragStart, onDragOver, onDragEnd }) {
   const cfg = TYPE_CONFIG[item.type] || TYPE_CONFIG.exe
   const IconComponent = cfg.icon
 
   return (
-    <div className="app-card">
+    <div 
+      className={`app-card ${dragging ? 'dragging' : ''}`}
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragEnd={onDragEnd}
+    >
+      <div className="app-card-grip">
+        <GripVertical size={16} />
+      </div>
+
       {/* Category-colored icon circle */}
       <div className="app-card-avatar" style={{ '--card-color': cfg.color }}>
         <IconComponent size={20} />

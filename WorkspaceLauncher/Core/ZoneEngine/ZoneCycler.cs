@@ -16,65 +16,101 @@ public sealed class ZoneCycler
     private ZoneCycler() { }
 
     private readonly Dictionary<ZoneStack.ZoneKey, int> _positions = [];
-    private DateTime _lastCycleTime = DateTime.MinValue;
-    private static readonly TimeSpan DebounceInterval = TimeSpan.FromMilliseconds(500);
+    // Serialize cycling so rapid clicks queue up instead of running in parallel
+    private readonly SemaphoreSlim _cycleLock = new(1, 1);
+    // Per-key timestamps to allow rapid cycling on different zones independently
+    private readonly Dictionary<ZoneStack.ZoneKey, DateTime> _lastCyclePerKey = [];
+    private static readonly TimeSpan DebounceInterval = TimeSpan.FromMilliseconds(120);
 
-    public void CycleForward(ZoneStack.ZoneKey key)
+    public void CycleForward(ZoneStack.ZoneKey key) => Task.Run(() => DoCycle(key, forward: true));
+    public void CycleBackward(ZoneStack.ZoneKey key) => Task.Run(() => DoCycle(key, forward: false));
+
+    private void DoCycle(ZoneStack.ZoneKey key, bool forward)
     {
-        if (!CheckDebounce()) return;
-
-        var stack = ZoneStack.Instance.GetStack(key);
-        if (stack.Count < 2) return;
-
-        _positions.TryGetValue(key, out int pos);
-        pos = (pos + 1) % stack.Count;
-        _positions[key] = pos;
-
-        BringToFront(stack[pos]);
-    }
-
-    public void CycleBackward(ZoneStack.ZoneKey key)
-    {
-        if (!CheckDebounce()) return;
-
-        var stack = ZoneStack.Instance.GetStack(key);
-        if (stack.Count < 2) return;
-
-        _positions.TryGetValue(key, out int pos);
-        pos = (pos - 1 + stack.Count) % stack.Count;
-        _positions[key] = pos;
-
-        BringToFront(stack[pos]);
-    }
-
-    private bool CheckDebounce()
-    {
+        // Per-key debounce check BEFORE acquiring the lock — prevents pile-up
+        // of queued tasks that all fire when the previous cycle finishes
         var now = DateTime.UtcNow;
-        if (now - _lastCycleTime < DebounceInterval) return false;
-        _lastCycleTime = now;
-        return true;
+        lock (_lastCyclePerKey)
+        {
+            if (_lastCyclePerKey.TryGetValue(key, out var last) && now - last < DebounceInterval)
+                return;
+            _lastCyclePerKey[key] = now;
+        }
+
+        // Serialize execution: if another cycle is running, skip (don't queue)
+        if (!_cycleLock.Wait(0)) return;
+        try
+        {
+
+            // Prune closed windows before cycling
+            ZoneStack.Instance.PruneDeadWindows();
+
+            var stack = ZoneStack.Instance.GetStack(key);
+            if (stack.Count < 2) return;
+
+            int pos = GetCurrentPos(key, stack);
+            pos = forward
+                ? (pos + 1) % stack.Count
+                : (pos - 1 + stack.Count) % stack.Count;
+            _positions[key] = pos;
+
+            Console.WriteLine($"[ZoneCycler] Cycling {(forward ? "fwd" : "bwd")} key={key.Zone} stack={stack.Count} → pos={pos} hwnd={stack[pos]}");
+            BringToFront(stack[pos]);
+        }
+        finally { _cycleLock.Release(); }
+    }
+
+    /// <summary>
+    /// Resolve the "current" position in the stack by checking which window is
+    /// actually foreground right now. This prevents phantom cycles where the
+    /// stored index points to a window that's already on top — the first click
+    /// would bring the same window again with no visible effect.
+    /// Falls back to the stored position (clamped) if no stack window is foreground.
+    /// </summary>
+    private int GetCurrentPos(ZoneStack.ZoneKey key, IReadOnlyList<nint> stack)
+    {
+        nint fg = User32.GetForegroundWindow();
+        for (int i = 0; i < stack.Count; i++)
+            if (stack[i] == fg) return i;
+
+        // No stack window is foreground — use stored position, clamped to valid range
+        _positions.TryGetValue(key, out int stored);
+        return stored % stack.Count;
     }
 
     /// <summary>
     /// Detect which zone the currently active/foreground window belongs to.
-    /// Returns the ZoneKey or null if no match is found.
-    /// This is the C# port of Python's _detect_zone_for_window() + _get_active_zone_context().
     /// </summary>
     public ZoneStack.ZoneKey? DetectActiveWindowZoneKey()
     {
         nint hwnd = User32.GetForegroundWindow();
         if (hwnd == 0) return null;
+        return GetZoneKeyForHwnd(hwnd);
+    }
 
-        // Fast path: check if hwnd is already registered in a zone stack
-        var registeredKey = ZoneStack.Instance.FindKeyForHwnd(hwnd);
-        if (registeredKey != null) return registeredKey;
-
-        // Slow path: fuzzy detection via window position
+    /// <summary>
+    /// Get the zone key for a specific window handle.
+    /// Fast path checks registered stacks; slow path detects by position.
+    /// Used for hover-based cycling (window under cursor, not necessarily foreground).
+    /// </summary>
+    public ZoneStack.ZoneKey? GetZoneKeyForHwnd(nint hwnd)
+    {
+        if (hwnd == 0) return null;
+        var registered = ZoneStack.Instance.FindKeyForHwnd(hwnd);
+        if (registered != null) return registered;
         return DetectZoneByPosition(hwnd);
     }
 
-    private static ZoneStack.ZoneKey? DetectZoneByPosition(nint hwnd)
+    /// <summary>
+    /// Detect zone by window position (fuzzy matching against all cached layout rects).
+    /// </summary>
+    public static ZoneStack.ZoneKey? DetectZoneByPosition(nint hwnd)
     {
+        // Normalize to top-level window — WindowFromPoint can return child windows
+        // (browser content pane, editor scroll area, etc.) which have wrong rects
+        nint root = User32.GetAncestor(hwnd, User32.GA_ROOT);
+        if (root != 0) hwnd = root;
+
         // Get window center point
         var rect = WindowManager.GetWindowRect(hwnd);
         int cx = rect.Left + rect.Width / 2;
@@ -150,7 +186,7 @@ public sealed class ZoneCycler
 
     private static void BringToFront(nint hwnd)
     {
-        // Use the full Phase 4 anti-block force-focus sequence
-        DwmHelper.ForceFocus(hwnd);
+        // Use the cycling-safe focus sequence (no Alt key injection — user may hold Alt)
+        DwmHelper.FocusForCycling(hwnd);
     }
 }

@@ -1,0 +1,24 @@
+.confirm-modal {
+  max-width: 400px;
+}
+
+.confirm-message {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.confirm-modal .dialog-footer {
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.confirm-modal .btn-danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.confirm-modal .btn-danger:hover {
+  background: var(--danger-hover);
+}

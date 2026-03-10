@@ -1,0 +1,119 @@
+.sync-modal {
+  max-width: 550px;
+}
+
+.sync-intro {
+  display: flex;
+  gap: 12px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.sync-intro svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.sync-warnings-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.sync-warning-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sync-warning-item:last-child {
+  border-bottom: none;
+}
+
+.sync-warning-icon {
+  color: var(--accent);
+  opacity: 0.7;
+  padding-top: 2px;
+}
+
+.sync-warning-content {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sync-conflict, .sync-solution {
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.sync-label {
+  font-weight: 700;
+  margin-right: 6px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sync-conflict .sync-label {
+  color: #f59e0b;
+}
+
+.sync-solution .sync-label {
+  color: var(--cat-url); /* A green-ish color for solution */
+}
+
+.sync-warning-msg {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.sync-warning-app {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 6px;
+  border-radius: 4px;
+  align-self: flex-start;
+}
+
+.sync-footer-info {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 0 4px;
+}
+
+.sync-done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  text-align: center;
+  gap: 12px;
+}
+
+.sync-done p {
+  font-size: 1.1rem;
+  color: var(--text);
+  font-weight: 600;
+  margin: 0;
+}
+
+.sync-done span {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
