@@ -92,7 +92,7 @@ public static class WindowManager
     public static List<(string Name, RECT WorkArea)> GetMonitors()
     {
         var monitors = new List<(string, RECT)>();
-        User32.EnumDisplayMonitors(0, 0, (hMon, _, ref _, _) =>
+        User32.EnumDisplayMonitors(0, 0, (nint hMon, nint hdc, ref RECT lprc, nint dwData) =>
         {
             var mi = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
             if (User32.GetMonitorInfoW(hMon, ref mi))
@@ -100,5 +100,14 @@ public static class WindowManager
             return true;
         }, 0);
         return monitors;
+    }
+
+    public static string GetWindowTitle(nint hwnd)
+    {
+        int length = User32.GetWindowTextLength(hwnd);
+        if (length == 0) return string.Empty;
+        var sb = new System.Text.StringBuilder(length + 1);
+        User32.GetWindowText(hwnd, sb, sb.Capacity);
+        return sb.ToString();
     }
 }

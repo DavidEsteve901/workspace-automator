@@ -127,6 +127,12 @@ public static partial class User32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool EnumDisplayMonitors(nint hdc, nint lprcClip, MonitorEnumProc lpfnEnum, nint dwData);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowText(nint hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+    [LibraryImport("user32.dll")]
+    public static partial int GetWindowTextLength(nint hWnd);
+
     public delegate bool EnumWindowsProc(nint hWnd, nint lParam);
     public delegate bool MonitorEnumProc(nint hMonitor, nint hdcMonitor, ref RECT lprcMonitor, nint dwData);
 
@@ -159,6 +165,12 @@ public static partial class User32
     public const int VK_ALT             = 0x12;
     public const int VK_CTRL            = 0x11;
     public const int VK_SHIFT           = 0x10;
+    public const int VK_LWIN            = 0x5B;
+    public const int VK_RWIN            = 0x5C;
+    public const int VK_PRIOR           = 0x21; // Page Up
+    public const int VK_NEXT            = 0x22; // Page Down
+    public const int VK_LEFT            = 0x25;
+    public const int VK_RIGHT           = 0x27;
 
     public const int XBUTTON1 = 0x0001;
     public const int XBUTTON2 = 0x0002;

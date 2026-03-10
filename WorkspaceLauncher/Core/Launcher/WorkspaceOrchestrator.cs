@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
 using WorkspaceLauncher.Core.Config;
 using WorkspaceLauncher.Core.FancyZones;
 using WorkspaceLauncher.Core.NativeInterop;

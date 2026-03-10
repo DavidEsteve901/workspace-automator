@@ -4,12 +4,15 @@
   "description": "Workspace Launcher — native C#/.NET + React app",
   "private": true,
   "scripts": {
-    "dev": "cd frontend && npm run dev",
-    "build:frontend": "cd frontend && npm run build",
-    "dotnet:run": "dotnet run",
-    "dotnet:build": "dotnet build"
+    "dev": "concurrently -k \"npm run dev:react\" \"wait-on tcp:5173 && npm run dotnet:run\"",
+    "dev:react": "cd frontend && npm run dev",
+    "dotnet:run": "cross-env WL_DEV_URL=http://localhost:5173 dotnet watch run --non-interactive",
+    "dotnet:build": "dotnet build",
+    "build:frontend": "cd frontend && npm run build"
   },
   "devDependencies": {
-    "cross-env": "^7.0.3"
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "wait-on": "^7.2.0"
   }
 }

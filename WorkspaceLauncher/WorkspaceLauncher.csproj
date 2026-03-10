@@ -7,8 +7,7 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>WorkspaceLauncher</AssemblyName>
-    <RootNamespace>WorkspaceLauncher</RootNamespace>
-    <ApplicationIcon>launcher_icon1.ico</ApplicationIcon>
+    <ApplicationIcon>launcher_icon.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

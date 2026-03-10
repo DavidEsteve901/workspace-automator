@@ -14,7 +14,7 @@ public static class OsdManager
 
     public static void Show(string text, string icon = "ℹ️")
     {
-        Application.Current?.Dispatcher.Invoke(() =>
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
         {
             _window ??= new OsdWindow();
             _window.ShowMessage($"{icon} {text}");

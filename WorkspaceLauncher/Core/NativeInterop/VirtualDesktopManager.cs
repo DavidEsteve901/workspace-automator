@@ -14,7 +14,6 @@ public sealed class VirtualDesktopManager : IDisposable
 {
     private IVirtualDesktopManagerInternal? _manager;
     private IVirtualDesktopPinnedView? _pinManager;
-    private IVirtualDesktopNotificationService? _notifService;
     private bool _initialized;
 
     public static readonly VirtualDesktopManager Instance = new();

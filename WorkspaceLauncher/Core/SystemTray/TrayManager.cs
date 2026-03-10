@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.IO;
 using System.Windows;
 using System.Windows.Forms;
 using WorkspaceLauncher;
@@ -29,7 +30,7 @@ public sealed class TrayManager : IDisposable
         };
 
         // Try to load icon from base directory
-        string iconPath = Path.Combine(AppContext.BaseDirectory, "launcher_icon1.ico");
+        string iconPath = Path.Combine(AppContext.BaseDirectory, "launcher_icon.ico");
         if (File.Exists(iconPath))
             _notifyIcon.Icon = new Icon(iconPath);
         else

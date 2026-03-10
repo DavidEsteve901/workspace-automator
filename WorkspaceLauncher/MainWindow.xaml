@@ -12,7 +12,6 @@
         ResizeMode="CanResize"
         Closing="Window_Closing">
   <Grid>
-    <wv2:WebView2 x:Name="webView"
-                  Source="about:blank" />
+    <wv2:WebView2 x:Name="webView" />
   </Grid>
 </Window>

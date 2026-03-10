@@ -1,5 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.IO;
+using WorkspaceLauncher.Core.Config;
+using WorkspaceLauncher.Core.SystemTray;
 
 namespace WorkspaceLauncher.Core.FancyZones;
 

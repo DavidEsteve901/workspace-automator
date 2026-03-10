@@ -367,7 +367,7 @@ public sealed class WebBridge
         {
             if (isFolder)
             {
-                var dialog = new OpenFolderDialog
+                var dialog = new Microsoft.Win32.OpenFolderDialog
                 {
                     Title = "Seleccionar carpeta"
                 };
@@ -375,7 +375,7 @@ public sealed class WebBridge
             }
             else
             {
-                var dialog = new OpenFileDialog
+                var dialog = new Microsoft.Win32.OpenFileDialog
                 {
                     Title  = "Seleccionar archivo",
                     Filter = "Ejecutables (*.exe)|*.exe|Todos los archivos (*.*)|*.*"
