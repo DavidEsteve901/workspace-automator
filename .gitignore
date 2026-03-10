@@ -1,12 +1,88 @@
-# Archivos de configuración personal (para no subir tus rutas privadas)
-*.json
-mis_apps_config*.json
+# ─────────────────────────────────────────────────────────────────────
+# WorkspaceLauncher .gitignore
+# Stack: Electron + Vite + React + Node.js
+# ─────────────────────────────────────────────────────────────────────
 
-# Basura de Python
+# ── Node.js ──────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ── Build output / Binaries ──────────────────────────────────────────
+dist/
+dist-exe/
+dist-builder/
+build/
+out/
+*.asar
+
+# ── Vite ─────────────────────────────────────────────────────────────
+frontend/dist/
+
+# ── Electron Packager / Builder ──────────────────────────────────────
+release/
+*.blockmap
+*.exe
+!WorkspaceLauncher.bat
+
+# ── .NET / C# (legacy WPF code) ─────────────────────────────────────
+bin/
+obj/
+*.dll
+*.pdb
+*.user
+*.suo
+*.cache
+*.nupkg
+*.snupkg
+
+# ── Python (legacy script) ──────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Entornos virtuales (si usaras uno)
 venv/
 env/
+.venv/
+
+# ── Environment / Secrets ────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.local
+
+# ── IDE / Editor ─────────────────────────────────────────────────────
+.vs/
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+
+# ── OS Generated ────────────────────────────────────────────────────
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# ── Runtime / Cache ─────────────────────────────────────────────────
+*.log
+.eslintcache
+.parcel-cache/
+.cache/
+*.tsbuildinfo
+
+# ── Personal config (don't track user-specific paths) ───────────────
+mis_apps_config*.json
+error.txt

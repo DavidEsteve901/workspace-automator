@@ -1,0 +1,155 @@
+/* ── Dialog overlay ────────────────────────────────────────────────────── */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+
+.dialog {
+  background: var(--bg-main);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-lg);
+  width: 580px;
+  max-width: 95vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-md), var(--shadow-accent);
+  animation: slideUp 0.2s ease;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0 }
+  to   { transform: translateY(0);    opacity: 1 }
+}
+
+/* ── Header ───────────────────────────────────────────────────────────── */
+.dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dialog-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.dialog-category {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 3px 10px;
+  border-radius: 99px;
+  letter-spacing: 0.5px;
+}
+
+.dialog-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition);
+}
+
+.dialog-close:hover {
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+
+/* ── Body ─────────────────────────────────────────────────────────────── */
+.dialog-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dialog-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.dialog-field input,
+.dialog-field select,
+.dialog-field textarea {
+  width: 100%;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+
+.dialog-field textarea { resize: vertical; }
+
+.field-row {
+  display: flex;
+  gap: 12px;
+}
+
+.field-row .dialog-field { flex: 1; }
+
+/* ── Path field with browse button ────────────────────────────────────── */
+.field-with-btn {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.field-with-btn input {
+  flex: 1;
+}
+
+.btn-browse {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border-accent);
+  white-space: nowrap;
+  transition: all var(--transition);
+}
+
+.btn-browse:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────── */
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+}

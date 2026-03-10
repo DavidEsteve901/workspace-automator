@@ -1,0 +1,180 @@
+using System.Runtime.InteropServices;
+
+namespace WorkspaceLauncher.Core.NativeInterop;
+
+// ── Structs ────────────────────────────────────────────────────────────────
+[StructLayout(LayoutKind.Sequential)]
+public struct POINT { public int X; public int Y; }
+
+[StructLayout(LayoutKind.Sequential)]
+public struct RECT
+{
+    public int Left, Top, Right, Bottom;
+    public int Width  => Right - Left;
+    public int Height => Bottom - Top;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct MSLLHOOKSTRUCT
+{
+    public POINT   pt;
+    public uint    mouseData;
+    public uint    flags;
+    public uint    time;
+    public nint    dwExtraInfo;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct KBDLLHOOKSTRUCT
+{
+    public uint vkCode;
+    public uint scanCode;
+    public uint flags;
+    public uint time;
+    public nint dwExtraInfo;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct MSG
+{
+    public nint   hwnd;
+    public uint   message;
+    public nuint  wParam;
+    public nint   lParam;
+    public uint   time;
+    public POINT  pt;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct MONITORINFO
+{
+    public uint  cbSize;
+    public RECT  rcMonitor;
+    public RECT  rcWork;
+    public uint  dwFlags;
+}
+
+// ── Win32 API Signatures ───────────────────────────────────────────────────
+public static partial class User32
+{
+    public delegate nint HookProc(int nCode, nuint wParam, nint lParam);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    public static partial nint SetWindowsHookExW(int idHook, HookProc lpfn, nint hMod, uint dwThreadId);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool UnhookWindowsHookEx(nint hhk);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint CallNextHookEx(nint hhk, int nCode, nuint wParam, nint lParam);
+
+    [LibraryImport("user32.dll")]
+    public static partial int GetMessageW(out MSG lpMsg, nint hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool TranslateMessage(ref MSG lpMsg);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint DispatchMessageW(ref MSG lpMsg);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool PostThreadMessageW(uint idThread, uint Msg, nuint wParam, nint lParam);
+
+    [LibraryImport("user32.dll")]
+    public static partial short GetAsyncKeyState(int vKey);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool SetWindowPos(nint hWnd, nint hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetWindowRect(nint hWnd, out RECT lpRect);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool ShowWindow(nint hWnd, int nCmdShow);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool SetForegroundWindow(nint hWnd);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint FindWindowW([MarshalAs(UnmanagedType.LPWStr)] string? lpClassName, [MarshalAs(UnmanagedType.LPWStr)] string? lpWindowName);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool EnumWindows(EnumWindowsProc lpEnumFunc, nint lParam);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool IsWindowVisible(nint hWnd);
+
+    [LibraryImport("user32.dll")]
+    public static partial uint GetWindowThreadProcessId(nint hWnd, out uint lpdwProcessId);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetMonitorInfoW(nint hMonitor, ref MONITORINFO lpmi);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint MonitorFromWindow(nint hwnd, uint dwFlags);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool EnumDisplayMonitors(nint hdc, nint lprcClip, MonitorEnumProc lpfnEnum, nint dwData);
+
+    public delegate bool EnumWindowsProc(nint hWnd, nint lParam);
+    public delegate bool MonitorEnumProc(nint hMonitor, nint hdcMonitor, ref RECT lprcMonitor, nint dwData);
+
+    // Window style constants
+    public const uint SWP_NOZORDER    = 0x0004;
+    public const uint SWP_NOACTIVATE  = 0x0010;
+    public const uint SWP_SHOWWINDOW  = 0x0040;
+    public const int  SW_RESTORE      = 9;
+    public const int  SW_SHOWNOACTIVATE = 4;
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    // Hook type constants
+    public const int WH_MOUSE_LL    = 14;
+    public const int WH_KEYBOARD_LL = 13;
+
+    // Mouse messages
+    public const uint WM_XBUTTONDOWN = 0x020B;
+    public const uint WM_XBUTTONUP   = 0x020C;
+
+    // Keyboard messages
+    public const uint WM_KEYDOWN    = 0x0100;
+    public const uint WM_KEYUP      = 0x0101;
+    public const uint WM_SYSKEYDOWN = 0x0104;
+    public const uint WM_SYSKEYUP   = 0x0105;
+    public const uint WM_QUIT       = 0x0012;
+
+    // Virtual keys
+    public const int VK_BROWSER_BACK    = 0xA6;
+    public const int VK_BROWSER_FORWARD = 0xA7;
+    public const int VK_ALT             = 0x12;
+    public const int VK_CTRL            = 0x11;
+    public const int VK_SHIFT           = 0x10;
+
+    public const int XBUTTON1 = 0x0001;
+    public const int XBUTTON2 = 0x0002;
+    public const int HC_ACTION = 0;
+}
+
+public static partial class Kernel32
+{
+    [LibraryImport("kernel32.dll")]
+    public static partial uint GetCurrentThreadId();
+}
+
+public static partial class Dwmapi
+{
+    public const uint DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+
+    [LibraryImport("dwmapi.dll")]
+    public static partial int DwmGetWindowAttribute(nint hwnd, uint dwAttribute, out RECT pvAttribute, uint cbAttribute);
+}

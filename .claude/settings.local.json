@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tasklist 2>&1 | grep -i electron || echo \"checking...\")",
+      "Bash(cd \"C:\\\\Users\\\\BYOD-DESTEVE\\\\Desktop\\\\Herramientas\\\\Launcher Trabajo\\\\WorkspaceLauncher\" && set CSC_LINK=\"\" && set WIN_CSC_LINK=\"\" && npx electron-builder --win portable --config.win.sign=null 2>&1)"
+    ]
+  }
+}

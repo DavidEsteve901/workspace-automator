@@ -1,0 +1,157 @@
+using System.Runtime.InteropServices;
+
+namespace WorkspaceLauncher.Core.NativeInterop;
+
+/// <summary>
+/// Installs WH_MOUSE_LL + WH_KEYBOARD_LL hooks on a dedicated thread.
+/// Direct port of the Python GlobalHookManager class.
+/// </summary>
+public sealed class GlobalHookManager : IDisposable
+{
+    private nint  _hookMouse;
+    private nint  _hookKeyboard;
+    private Thread? _thread;
+    private uint  _threadId;
+    private bool  _running;
+    private bool  _disposed;
+
+    // Keep delegates alive to prevent GC collection
+    private User32.HookProc? _mouseProc;
+    private User32.HookProc? _kbProc;
+
+    private bool _suppressedX1;
+    private bool _suppressedX2;
+
+    // ── Public callbacks ───────────────────────────────────────────────────
+    public Action? OnX1Down { get; set; }
+    public Action? OnX2Down { get; set; }
+    public Action? OnX1Up   { get; set; }
+    public Action? OnX2Up   { get; set; }
+
+    /// <summary>
+    /// Optional predicate: given (button="x1"|"x2", alt, ctrl, shift) → true if the combo is mapped.
+    /// If mapped, the button is always suppressed. If not mapped, pass-through when modifier held.
+    /// </summary>
+    public Func<string, bool, bool, bool, bool>? CheckXMapped { get; set; }
+
+    public void Start()
+    {
+        if (_running) return;
+        _running = true;
+        _thread  = new Thread(InstallHooks) { IsBackground = true, Name = "GlobalHookThread" };
+        _thread.Start();
+    }
+
+    public void Stop()
+    {
+        _running = false;
+        if (_threadId != 0)
+            User32.PostThreadMessageW(_threadId, User32.WM_QUIT, 0, 0);
+        _thread?.Join(TimeSpan.FromSeconds(2));
+    }
+
+    // ── Hook install loop ──────────────────────────────────────────────────
+    private void InstallHooks()
+    {
+        _threadId  = Kernel32.GetCurrentThreadId();
+        _mouseProc = MouseHookProc;
+        _kbProc    = KeyboardHookProc;
+
+        _hookMouse    = User32.SetWindowsHookExW(User32.WH_MOUSE_LL,    _mouseProc, 0, 0);
+        _hookKeyboard = User32.SetWindowsHookExW(User32.WH_KEYBOARD_LL, _kbProc,    0, 0);
+
+        if (_hookMouse == 0 || _hookKeyboard == 0)
+        {
+            Console.WriteLine($"[HookManager] Error installing hooks: {Marshal.GetLastWin32Error()}");
+            _running = false;
+            return;
+        }
+
+        Console.WriteLine("[HookManager] Win32 hooks installed.");
+
+        while (_running)
+        {
+            int ret = User32.GetMessageW(out var msg, 0, 0, 0);
+            if (ret <= 0) break;
+            User32.TranslateMessage(ref msg);
+            User32.DispatchMessageW(ref msg);
+        }
+
+        if (_hookMouse    != 0) User32.UnhookWindowsHookEx(_hookMouse);
+        if (_hookKeyboard != 0) User32.UnhookWindowsHookEx(_hookKeyboard);
+        Console.WriteLine("[HookManager] Hooks uninstalled.");
+    }
+
+    // ── Mouse hook callback ────────────────────────────────────────────────
+    private nint MouseHookProc(int nCode, nuint wParam, nint lParam)
+    {
+        if (nCode == User32.HC_ACTION &&
+            (wParam == User32.WM_XBUTTONDOWN || wParam == User32.WM_XBUTTONUP))
+        {
+            var data   = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+            int button = (int)((data.mouseData >> 16) & 0xFFFF);
+
+            bool alt   = (User32.GetAsyncKeyState(User32.VK_ALT)   & 0x8000) != 0;
+            bool ctrl  = (User32.GetAsyncKeyState(User32.VK_CTRL)  & 0x8000) != 0;
+            bool shift = (User32.GetAsyncKeyState(User32.VK_SHIFT) & 0x8000) != 0;
+            bool hasMod = alt || ctrl || shift;
+
+            if (wParam == User32.WM_XBUTTONDOWN)
+            {
+                if (button == User32.XBUTTON1)
+                {
+                    if (hasMod && !(CheckXMapped?.Invoke("x1", alt, ctrl, shift) ?? false))
+                        return User32.CallNextHookEx(_hookMouse, nCode, wParam, lParam);
+                    _suppressedX1 = true;
+                    Task.Run(() => OnX1Down?.Invoke());
+                    return 1;
+                }
+                if (button == User32.XBUTTON2)
+                {
+                    if (hasMod && !(CheckXMapped?.Invoke("x2", alt, ctrl, shift) ?? false))
+                        return User32.CallNextHookEx(_hookMouse, nCode, wParam, lParam);
+                    _suppressedX2 = true;
+                    Task.Run(() => OnX2Down?.Invoke());
+                    return 1;
+                }
+            }
+            else if (wParam == User32.WM_XBUTTONUP)
+            {
+                if (button == User32.XBUTTON1 && _suppressedX1)
+                {
+                    _suppressedX1 = false;
+                    Task.Run(() => OnX1Up?.Invoke());
+                    return 1;
+                }
+                if (button == User32.XBUTTON2 && _suppressedX2)
+                {
+                    _suppressedX2 = false;
+                    Task.Run(() => OnX2Up?.Invoke());
+                    return 1;
+                }
+            }
+        }
+        return User32.CallNextHookEx(_hookMouse, nCode, wParam, lParam);
+    }
+
+    // ── Keyboard hook callback ─────────────────────────────────────────────
+    private nint KeyboardHookProc(int nCode, nuint wParam, nint lParam)
+    {
+        if (nCode == User32.HC_ACTION &&
+            (wParam == User32.WM_KEYDOWN || wParam == User32.WM_KEYUP ||
+             wParam == User32.WM_SYSKEYDOWN || wParam == User32.WM_SYSKEYUP))
+        {
+            var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+            if (data.vkCode == User32.VK_BROWSER_BACK || data.vkCode == User32.VK_BROWSER_FORWARD)
+                return 1; // Suppress browser nav keys
+        }
+        return User32.CallNextHookEx(_hookKeyboard, nCode, wParam, lParam);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        Stop();
+        _disposed = true;
+    }
+}

@@ -1,0 +1,58 @@
+/* ── Frameless title bar (Discord/Spotify style) ───────────────────────── */
+.titlebar {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  min-height: 36px;
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 200;
+}
+
+/* Makes the entire bar draggable except the buttons */
+.titlebar-drag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  padding: 0 14px;
+  -webkit-app-region: drag;
+  app-region: drag;
+  height: 100%;
+}
+
+.titlebar-icon {
+  color: var(--accent);
+  filter: drop-shadow(0 0 6px var(--accent-glow));
+}
+
+.titlebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+/* ── Window control buttons ───────────────────────────────────────────── */
+.titlebar-controls {
+  display: flex;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.wc-btn {
+  width: 46px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  transition: all 0.15s ease;
+  border-radius: 0;
+}
+
+.wc-btn:hover    { background: var(--bg-hover); color: var(--text-primary); }
+.wc-btn.close:hover { background: #c42b1c; color: #fff; }
