@@ -150,14 +150,14 @@ public static class ProcessLauncher
         }
 
         // Fallback: standard powershell.exe / pwsh.exe
-        Console.WriteLine($"[ProcessLauncher] wt.exe not found, falling back to powershell.exe");
+        string psExe = GetAvailablePowerShell();
+        Console.WriteLine($"[ProcessLauncher] wt.exe not found, falling back to {psExe}");
+        
         string cmd = tabs.Length > 0 ? EscapeCmd(tabs[0]) : "";
         string psArgs = string.IsNullOrEmpty(cmd)
             ? ""
             : $"-NoExit -Command \"{cmd}\"";
 
-        // Prefer pwsh (PowerShell 7+) if available
-        string psExe = FindExe("pwsh.exe") ?? FindExe("powershell.exe") ?? "powershell.exe";
         return Process.Start(new ProcessStartInfo
         {
             FileName         = psExe,
@@ -167,6 +167,16 @@ public static class ProcessLauncher
         });
     }
 
+    private static string GetAvailablePowerShell()
+    {
+        // Check for pwsh (PowerShell 7+) first
+        string? pwsh = FindExe("pwsh.exe");
+        if (pwsh != null && File.Exists(pwsh)) return "pwsh.exe";
+        
+        // Final fallback to Windows PowerShell
+        return "powershell.exe";
+    }
+
     private static string BuildWtArgs(string workDir, string[] tabs)
     {
         // wt.exe syntax: wt -w -1 -d "<dir>" pwsh -NoExit [-Command "..."] ; new-tab -d "<dir>" pwsh ...
@@ -174,12 +184,14 @@ public static class ProcessLauncher
         var parts = new List<string>();
         parts.Add("-w -1");
 
+        string psExeForWt = GetAvailablePowerShell();
+
         for (int i = 0; i < Math.Max(1, tabs.Length); i++)
         {
             string tabCmd = tabs.Length > i ? tabs[i] : "";
             string psInner = string.IsNullOrEmpty(tabCmd)
-                ? $"-d \"{workDir}\" pwsh -NoExit"
-                : $"-d \"{workDir}\" pwsh -NoExit -Command \"{EscapeCmd(tabCmd)}\"";
+                ? $"-d \"{workDir}\" {psExeForWt} -NoExit"
+                : $"-d \"{workDir}\" {psExeForWt} -NoExit -Command \"{EscapeCmd(tabCmd)}\"";
 
             if (i == 0)
                 parts.Add(psInner);

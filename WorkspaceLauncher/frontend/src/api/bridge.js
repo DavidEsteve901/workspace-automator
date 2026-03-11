@@ -75,6 +75,7 @@ export const bridge = {
   closeWindows: (hwnds) => invoke("close_windows", { hwnds }),
   validateWorkspace: (category) => invoke("validate_workspace", { category }),
   syncWorkspaceLayouts: (layoutUuids) => invoke("sync_workspace_layouts", { layoutUuids }),
+  resolveMonitorConflicts: (category, resolutions) => invoke("resolve_monitor_conflicts", { category, resolutions }),
   getConfigPath: () => invoke("get_config_path"),
   openConfigFolder: () => postMessage("open_config_folder"),
   changeConfigPath: (path) => invoke("change_config_path", { path }),

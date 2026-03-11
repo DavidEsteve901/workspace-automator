@@ -35,10 +35,15 @@ public sealed class WorkspaceOrchestrator
         Report($"Iniciando workspace (Motor de Convergencia): {category}", 0);
         ZoneStack.Instance.Clear();
 
+        // Auto-adapt monitor configuration if opening in a different environment
+        WorkspaceResolver.ResolveEnvironment(items);
+
+        // Phase 0: Ensure Virtual Desktops exist first (so GUIDs are available for FZ sync)
+        await EnsureVirtualDesktopsAsync(items);
+
         // Phase 1a: Sync FancyZones layouts
         Report("Sincronizando layouts...", 5);
         LayoutSyncer.SyncForWorkspace(items, config.AppliedMappings);
-        await EnsureVirtualDesktopsAsync(items);
 
         // --- CONVERGENCE ENGINE: Desktop-Sequential / App-Parallel Pulse ---
         // We visit each desktop once, launch its apps in parallel, and stabilize them
@@ -216,6 +221,10 @@ public sealed class WorkspaceOrchestrator
         }
 
         Report($"Restaurando workspace: {category}", 0);
+
+        // Check and remap monitors if changed
+        WorkspaceResolver.ResolveEnvironment(items);
+
         FancyZonesReader.SyncCacheFromDisk();
         LayoutSyncer.SyncForWorkspace(items, config.AppliedMappings);
         await EnsureVirtualDesktopsAsync(items);
@@ -454,7 +463,7 @@ public sealed class WorkspaceOrchestrator
         return match?.PtInstance ?? monitorLabel;
     }
 
-    private static Guid? ResolveDesktopGuid(AppItem item)
+    internal static Guid? ResolveDesktopGuid(AppItem item)
     {
         if (item.Desktop == "Por defecto")
             return VirtualDesktopManager.Instance.GetCurrentDesktopId();

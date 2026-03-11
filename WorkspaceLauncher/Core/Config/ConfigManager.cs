@@ -14,9 +14,10 @@ public sealed class ConfigManager
     private static readonly string ConfigFileName = "mis_apps_config_v2.json";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        WriteIndented          = true,
-        AllowTrailingCommas    = true,
-        ReadCommentHandling    = JsonCommentHandling.Skip,
+        WriteIndented              = true,
+        AllowTrailingCommas        = true,
+        ReadCommentHandling        = JsonCommentHandling.Skip,
+        PropertyNameCaseInsensitive = true,
     };
 
     private AppConfig _config = new();
@@ -48,11 +49,33 @@ public sealed class ConfigManager
         {
             string json = File.ReadAllText(_configPath);
             _config     = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions) ?? new AppConfig();
+            
+            // Sincronizar categorías por si faltan en el JSON (retrocompatibilidad)
+            SyncCategoryOrder();
+            
+            Console.WriteLine($"[Config] Loaded from: {_configPath}");
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[Config] Load error: {ex.Message}");
             _config = new AppConfig();
+        }
+    }
+
+    private void SyncCategoryOrder()
+    {
+        if (_config == null) return;
+        
+        var keys = _config.Apps.Keys.ToList();
+        
+        // Eliminar categorías que ya no están en los archivos
+        _config.CategoryOrder.RemoveAll(k => !_config.Apps.ContainsKey(k));
+        
+        // Añadir nuevas categorías que no estén en el orden
+        foreach (var k in keys)
+        {
+            if (!_config.CategoryOrder.Contains(k))
+                _config.CategoryOrder.Add(k);
         }
     }
 

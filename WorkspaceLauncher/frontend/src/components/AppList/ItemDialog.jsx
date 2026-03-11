@@ -286,8 +286,12 @@ export default function ItemDialog({ category, index, item, onSave, onClose }) {
               <select value={form.monitor} onChange={e => handleEnvChange('monitor', e.target.value)}>
                 <option value="Por defecto">Por defecto</option>
                 {monitors.map(m => (
-                  <option key={m.id} value={m.name}>{m.displayLabel || m.label}</option>
+                  <option key={m.id} value={m.ptName || m.name}>{m.displayLabel || m.label || m.name}</option>
                 ))}
+                {/* Fallback option if the saved monitor is completely missing from the active list */}
+                {form.monitor !== 'Por defecto' && !monitors.find(m => m.ptName === form.monitor || m.name === form.monitor) && (
+                  <option value={form.monitor}>{form.monitor} (Desconectado/No encontrado)</option>
+                )}
               </select>
             </Field>
             <Field label="Escritorio Virtual">

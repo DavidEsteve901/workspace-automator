@@ -6,6 +6,16 @@ import './SyncModal.css'
 export default function SyncModal({ category, validation, onClose, onSynced }) {
   const [syncing, setSyncing] = useState(false)
   const [done, setDone] = useState(false)
+  const [resolutions, setResolutions] = useState({})
+  const [layoutResolutions, setLayoutResolutions] = useState({})
+
+  const handleMonitorSelect = (index, monitor) => {
+    setResolutions(prev => ({ ...prev, [index]: monitor }))
+  }
+
+  const handleLayoutSelect = (warningIndex, layoutUuid) => {
+    setLayoutResolutions(prev => ({ ...prev, [warningIndex]: layoutUuid }))
+  }
 
   const handleSyncAll = async () => {
     setSyncing(true)
@@ -17,10 +27,31 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
 
       // 2. Solve Mismatches (changing active layouts in PowerToys)
       const warningsList = validation?.warnings || [];
-      const mismatches = warningsList.filter(w => w.type === 'layout_mismatch');
-      for (const m of mismatches) {
-        // bridge.changeLayoutAssignment(monitorInstance, monitorName, desktopId, layoutUuid, layoutType)
-        await bridge.changeLayoutAssignment(m.monitorInstance, m.monitorName, m.desktopId, m.layoutUuid, m.layoutType);
+      for (let i = 0; i < warningsList.length; i++) {
+        const w = warningsList[i];
+        if (w.type === 'layout_mismatch') {
+          const selectedLayoutUuid = layoutResolutions[i] || w.layoutUuid;
+          const layoutObj = (validation.availableLayouts || []).find(l => l.uuid === selectedLayoutUuid);
+          
+          // bridge.changeLayoutAssignment(monitorInstance, monitorName, desktopId, layoutUuid, layoutType)
+          await bridge.changeLayoutAssignment(
+            w.monitorInstance, 
+            w.monitorName, 
+            w.desktopId, 
+            selectedLayoutUuid, 
+            layoutObj?.type || w.layoutType || "custom"
+          );
+        }
+      }
+
+      // 3. Solve Monitor resolutions
+      const monitorMissing = warningsList.filter(w => w.type === 'monitor_missing');
+      if (monitorMissing.length > 0) {
+        const payloadRes = {};
+        for (const mw of monitorMissing) {
+          payloadRes[mw.itemIndex] = resolutions[mw.itemIndex] || mw.proposedMonitor;
+        }
+        await bridge.resolveMonitorConflicts(category, payloadRes);
       }
 
       // Re-validate or just signal parent to refresh
@@ -67,10 +98,15 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
                   let solution = "";
                   const isMonitor = w.type.includes('monitor');
                   
-                  if (isMonitor) {
-                    solution = "Se adaptará la posición al monitor actual más cercano.";
+                  if (w.type === 'monitor_missing') {
+                    solution = "Se adaptará la posición al monitor seleccionado.";
                   } else if (w.type === 'layout_mismatch') {
-                    solution = `Cambiar layout activo en monitor a '${w.assignedLayout}'.`;
+                    const selectedUuid = layoutResolutions[i] || w.layoutUuid;
+                    const layoutObj = (validation.availableLayouts || []).find(l => l.uuid === selectedUuid);
+                    const name = layoutObj ? layoutObj.name : "Ninguno / Libre";
+                    solution = `Cambiar layout activo en monitor a '${name}'.`;
+                  } else if (w.type === 'desktop_missing') {
+                    solution = "Se crearán automáticamente al levantar el workspace.";
                   } else {
                     solution = "Se creará e inyectará el Layout faltante en PowerToys.";
                   }
@@ -88,8 +124,40 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
                         <div className="sync-solution">
                           <span className="sync-label">Solución:</span>
                           <span>{solution}</span>
+                          {w.type === 'monitor_missing' && (
+                            <div style={{ marginTop: '6px' }}>
+                              <select 
+                                value={resolutions[w.itemIndex] || w.proposedMonitor}
+                                onChange={(e) => handleMonitorSelect(w.itemIndex, e.target.value)}
+                                className="sync-monitor-select"
+                              >
+                                {validation.activeMonitors?.map(mon => (
+                                  <option key={mon} value={mon}>{mon}</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          {w.type === 'layout_mismatch' && (
+                            <div style={{ marginTop: '6px' }}>
+                              <select 
+                                value={layoutResolutions[i] || w.layoutUuid}
+                                onChange={(e) => handleLayoutSelect(i, e.target.value)}
+                                className="sync-monitor-select"
+                              >
+                                {(validation.availableLayouts || []).map(layout => (
+                                  <option key={layout.uuid} value={layout.uuid}>
+                                    {layout.name}
+                                  </option>
+                                ))}
+                                <option value="">Ninguno / Libre</option>
+                              </select>
+                            </div>
+                          )}
                         </div>
-                        <div className="sync-warning-app">App: {w.itemPath?.split('\\').pop() || 'Sistema'}</div>
+                        {w.itemPath && (
+                          <div className="sync-warning-app">App: {w.itemPath.split('\\').pop() || 'Sistema'}</div>
+                        )}
                       </div>
                     </div>
                   );

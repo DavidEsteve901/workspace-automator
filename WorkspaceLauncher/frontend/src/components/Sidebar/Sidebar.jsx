@@ -3,7 +3,18 @@ import { FolderOpen, Plus, Trash2, Settings, ChevronUp, ChevronDown, GripVertica
 import logo from '../../assets/logo.ico'
 import './Sidebar.css'
 
-export default function Sidebar({ categories, activeCategory, onSelect, onAddCategory, onDeleteCategory, onMoveCategory, onRenameCategory, onOpenConfig, configActive }) {
+export default function Sidebar({ 
+  categories, 
+  activeCategory, 
+  onSelect, 
+  onAddCategory, 
+  onDeleteCategory, 
+  onMoveCategory, 
+  onRenameCategory, 
+  onOpenConfig, 
+  configActive,
+  disabled
+}) {
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
   const [editing, setEditing] = useState(null) // cat name
@@ -11,6 +22,7 @@ export default function Sidebar({ categories, activeCategory, onSelect, onAddCat
   const [draggedIdx, setDraggedIdx] = useState(null)
 
   function handleAdd() {
+    if (disabled) return
     const name = newName.trim()
     if (name) {
       onAddCategory(name)
@@ -20,11 +32,13 @@ export default function Sidebar({ categories, activeCategory, onSelect, onAddCat
   }
 
   function handleStartEdit(cat) {
+    if (disabled) return
     setEditing(cat)
     setEditValue(cat)
   }
 
   function handleConfirmRename() {
+    if (disabled) return
     const val = editValue.trim()
     if (val && val !== editing) {
       onRenameCategory(editing, val)
@@ -43,18 +57,23 @@ export default function Sidebar({ categories, activeCategory, onSelect, onAddCat
   }
 
   function handleMove(idx, direction) {
+    if (disabled) return
     onMoveCategory(idx, idx + direction)
   }
 
   // HTML5 Drag and Drop
   function onDragStart(e, index) {
+    if (disabled) {
+      e.preventDefault()
+      return
+    }
     setDraggedIdx(index)
     e.dataTransfer.effectAllowed = 'move'
   }
 
   function onDragOver(e, index) {
     e.preventDefault()
-    if (draggedIdx === null || draggedIdx === index) return
+    if (disabled || draggedIdx === null || draggedIdx === index) return
     onMoveCategory(draggedIdx, index)
     setDraggedIdx(index)
   }
@@ -75,14 +94,14 @@ export default function Sidebar({ categories, activeCategory, onSelect, onAddCat
 
       {/* Category list */}
       <div className="sidebar-label">WORKSPACES</div>
-      <nav className="sidebar-nav">
+      <nav className={`sidebar-nav ${disabled ? 'sidebar-locked' : ''}`}>
         {categories.map((cat, idx) => (
           <div
             key={cat}
             className={`sidebar-item ${cat === activeCategory ? 'active' : ''} ${draggedIdx === idx ? 'dragging' : ''} ${editing === cat ? 'editing' : ''}`}
             onClick={() => onSelect(cat)}
             onDoubleClick={() => handleStartEdit(cat)}
-            draggable={!editing}
+            draggable={!disabled && !editing}
             onDragStart={(e) => onDragStart(e, idx)}
             onDragOver={(e) => onDragOver(e, idx)}
             onDragEnd={onDragEnd}

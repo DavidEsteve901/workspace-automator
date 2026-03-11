@@ -67,16 +67,21 @@ export default function App() {
 
   // ── Category switch ──────────────────────────────────────────────────
   const handleCategorySelect = useCallback((cat) => {
+    if (view === 'config') return // Bloquear cambio si estamos en configuración
     setActiveCategory(cat)
     bridge.setLastCategory(cat)
-  }, [])
+  }, [view])
 
   // ── Launch ───────────────────────────────────────────────────────────
   const handleLaunch = useCallback(() => {
     if (!activeCategory) return
+    if (validation && !validation.valid) {
+      setSyncModal({ category: activeCategory, validation })
+      return
+    }
     setLaunchStatus({ message: 'Iniciando...', progress: 0 })
     bridge.launchWorkspace(activeCategory)
-  }, [activeCategory])
+  }, [activeCategory, validation])
 
   // ── Item CRUD ────────────────────────────────────────────────────────
   const handleSaveItem = useCallback((category, index, item) => {
@@ -188,8 +193,12 @@ export default function App() {
 
   const handleRestore = useCallback(() => {
     if (!activeCategory) return
+    if (validation && !validation.valid) {
+      setSyncModal({ category: activeCategory, validation })
+      return
+    }
     bridge.restoreWorkspace(activeCategory)
-  }, [activeCategory])
+  }, [activeCategory, validation])
 
   const handleClean = useCallback(() => {
     if (!activeCategory) return
@@ -221,6 +230,7 @@ export default function App() {
           onRenameCategory={handleRenameCategory}
           onOpenConfig={() => setView(v => v === 'config' ? 'main' : 'config')}
           configActive={view === 'config'}
+          disabled={view === 'config'}
         />
 
         <div className="main-content">
@@ -278,7 +288,7 @@ export default function App() {
           />
         )}
 
-        {validation && !validation.valid && (
+        {validation && !validation.valid && view !== 'config' && (
           <div
             className="sync-alert"
             onClick={() => setSyncModal({ category: activeCategory, validation })}

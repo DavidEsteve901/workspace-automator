@@ -172,9 +172,8 @@
 .dialog-field textarea {
   width: 100%;
   font-size: 13px;
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  background: var(--bg-active);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
 }
 
 .field-row {

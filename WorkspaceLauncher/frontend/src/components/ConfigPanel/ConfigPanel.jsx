@@ -31,8 +31,8 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
 
   async function handlePickConfigPath() {
     const res = await bridge.openFileDialog({ 
-      isFolder: false, 
-      title: "Seleccionar archivo de configuración o carpeta de destino" 
+      isFolder: true, 
+      title: "Seleccionar carpeta donde guardar la configuración" 
     })
     if (res) {
       await bridge.changeConfigPath(res)
@@ -121,11 +121,11 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
               readOnly
               value={configPath || ''}
             />
-            <button className="fz-path-btn" onClick={handlePickConfigPath} title="Cambiar ubicación">
-              <RotateCw size={14} />
-            </button>
-            <button className="fz-path-btn" onClick={handleOpenConfigFolder} title="Abrir carpeta">
+            <button className="fz-path-btn" onClick={handlePickConfigPath} title="Seleccionar nueva carpeta de configuración">
               <Folder size={14} />
+            </button>
+            <button className="fz-path-btn" onClick={handleOpenConfigFolder} title="Abrir carpeta actual en el Explorador">
+              <ChevronRight size={14} />
             </button>
           </div>
           <p className="fz-path-help">

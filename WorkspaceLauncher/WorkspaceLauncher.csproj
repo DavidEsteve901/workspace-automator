@@ -15,6 +15,7 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
@@ -23,5 +24,12 @@
     <!-- Embed the React build output as resources -->
     <EmbeddedResource Include="frontend\dist\**\*" />
     <Resource Include="launcher_icon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Incluir configuración local si existe -->
+    <None Include="mis_apps_config_v2.json" Condition="Exists('mis_apps_config_v2.json')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 </Project>
