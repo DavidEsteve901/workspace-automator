@@ -1,6 +1,9 @@
+using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using WorkspaceLauncher.Core.Config;
 using WorkspaceLauncher.Core.NativeInterop;
+using WorkspaceLauncher.Core.SystemTray;
 
 namespace WorkspaceLauncher.Core.Launcher;
 
@@ -21,11 +24,14 @@ public sealed class PipWatcher
         "picture-in-picture",        // Variant with hyphen
         "imagen en imagen",          // Chrome (Spanish)
         "imagen con imagen",         // Edge (Spanish) — matches "imagen con imagen incrustada"
+        "mini reproductor",          // YouTube/General Spanish
+        "ventana flotante",          // Generic Spanish
+        "reproductor flotante",      // Generic Spanish
         "modopip",                   // Some Spanish variant
     };
 
     // Browser window class prefixes that can host PiP (fallback for empty-title detection)
-    private static readonly string[] BrowserClasses = { "Chrome_WidgetWin", "MozillaWindowClass" };
+    private static readonly string[] BrowserClasses = { "Chrome_WidgetWin", "MozillaWindowClass", "WebView", "DeepMind" };
 
     // HWNDs already pinned — avoids repeated COM calls on each scan
     private readonly HashSet<nint> _pinnedHwnds = new();
@@ -67,7 +73,7 @@ public sealed class PipWatcher
             if (ConfigManager.Instance.Config.PipWatcherEnabled)
             {
                 try { CheckAndPinWindows(); }
-                catch (Exception ex) { Console.WriteLine($"[PipWatcher] Error: {ex.Message}"); }
+                catch (Exception ex) { File.AppendAllText("pip_error.log", $"[{DateTime.Now}] Error: {ex.Message}\n{ex.StackTrace}\n"); }
             }
             Thread.Sleep(2000);
         }
@@ -75,21 +81,38 @@ public sealed class PipWatcher
 
     private void CheckAndPinWindows()
     {
-        var windows = WindowManager.GetVisibleWindows();
-        var vdm     = VirtualDesktopManager.Instance;
+        var windows = new List<nint>();
+        User32.EnumWindows((hwnd, _) => { windows.Add(hwnd); return true; }, 0);
+        
+        var vdm = VirtualDesktopManager.Instance;
+        
+        // Detailed logging for debugging if file exists
+        bool debugEnabled = File.Exists("pip_debug_full.txt");
+        if (debugEnabled) File.AppendAllText("pip_debug_full.txt", $"\n--- Scan {DateTime.Now} ---\n");
 
-        // Cleanup stale entries: window closed or no longer a PiP
-        _pinnedHwnds.RemoveWhere(h =>
-            !User32.IsWindow(h) ||
-            !User32.IsWindowVisible(h) ||
-            !IsPipByTitle(GetWindowTitle(h).ToLowerInvariant()));
+        // Stale entries cleanup
+        _pinnedHwnds.RemoveWhere(h => !User32.IsWindow(h) || !User32.IsWindowVisible(h));
 
         foreach (var hwnd in windows)
         {
             if (_pinnedHwnds.Contains(hwnd)) continue;
 
-            string title = GetWindowTitle(hwnd).ToLowerInvariant();
-            bool isPip = IsPipByTitle(title) || IsBrowserPipByHeuristic(hwnd, title);
+            string title = GetWindowTitle(hwnd);
+            string cls = GetClassName(hwnd);
+            bool visible = User32.IsWindowVisible(hwnd);
+            User32.GetWindowRect(hwnd, out RECT r);
+            int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            bool topmost = (exStyle & WS_EX_TOPMOST) != 0;
+
+            if (debugEnabled && (cls.Contains("Chrome") || cls.Contains("Mozilla") || title.Contains("Picture") || title.Contains("Imagen")))
+            {
+                File.AppendAllText("pip_debug_full.txt", $"HWND={hwnd}, Title='{title}', Class='{cls}', Visible={visible}, Topmost={topmost}, Size={r.Width}x{r.Height}, ExStyle=0x{exStyle:X}\n");
+            }
+
+            if (!visible) continue;
+
+            string lowerTitle = title.ToLowerInvariant();
+            bool isPip = IsPipByTitle(lowerTitle) || IsBrowserPipByHeuristic(hwnd, lowerTitle);
 
             if (!isPip) continue;
 
@@ -97,8 +120,14 @@ public sealed class PipWatcher
             {
                 Console.WriteLine($"[PipWatcher] Pinning PiP window: '{title}' (HWND={hwnd})");
                 vdm.PinWindow(hwnd);
+                
+                // Notify the user via Windows notification
+                TrayManager.Instance?.ShowBalloon("PiP Detectado", $"La ventana '{title}' ha sido anclada a todos los escritorios.");
+                
+                // Debug log
+                File.AppendAllText("pip_detection.log", $"[{DateTime.Now}] Detected and Pinned: '{title}' HWND={hwnd}\n");
             }
-            _pinnedHwnds.Add(hwnd); // Don't check again even if PinWindow failed (avoid spam)
+            _pinnedHwnds.Add(hwnd);
         }
     }
 
@@ -115,7 +144,9 @@ public sealed class PipWatcher
     /// </summary>
     private static bool IsBrowserPipByHeuristic(nint hwnd, string lowerTitle)
     {
-        if (!string.IsNullOrEmpty(lowerTitle)) return false; // Title-based check handles it
+        // Heuristic fallback: detect windows that might have a title (video name) 
+        // but don't contain keywords, OR have no title at all.
+        // We only proceed if it looks like a small, always-on-top browser window.
 
         try
         {
@@ -126,14 +157,17 @@ public sealed class PipWatcher
                 if (cls.StartsWith(bc, StringComparison.OrdinalIgnoreCase)) { isBrowser = true; break; }
             if (!isBrowser) return false;
 
-            // Must be WS_EX_TOPMOST (PiP is always-on-top)
-            int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-            if ((exStyle & WS_EX_TOPMOST) == 0) return false;
-
-            // Must be a small window (PiP is typically < 800×600, > 100×60)
+            // Must be a small/medium window
             User32.GetWindowRect(hwnd, out RECT r);
             int w = r.Width, h = r.Height;
-            return w is > 60 and < 900 && h is > 40 and < 700;
+            bool sizeOk = w is > 40 and < 1600 && h is > 30 and < 1200;
+            
+            // Must be WS_EX_TOPMOST (PiP is always-on-top)
+            int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            
+            if (isBrowser && (exStyle & WS_EX_TOPMOST) != 0 && sizeOk) return true;
+            
+            return false;
         }
         catch { return false; }
     }

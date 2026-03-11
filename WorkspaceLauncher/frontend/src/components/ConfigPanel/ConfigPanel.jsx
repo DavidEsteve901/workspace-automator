@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Settings, Keyboard, Monitor, Save, Check, Folder, LayoutGrid, RotateCw, X, ChevronRight } from 'lucide-react'
+import { Settings, Keyboard, Monitor, Save, Check, Folder, LayoutGrid, ChevronRight, X, ArrowRightToLine, ArrowLeftToLine, ArrowRightSquare, ArrowLeftSquare, RefreshCcw } from 'lucide-react'
 import { bridge } from '../../api/bridge.js'
 import './ConfigPanel.css'
 
 const HOTKEY_LABELS = {
-  cycle_forward: 'Ciclar zona →',
-  cycle_backward: 'Ciclar zona ←',
-  desktop_cycle_fwd: 'Cambiar escritorio →',
-  desktop_cycle_bwd: 'Cambiar escritorio ←',
-  util_reload_layouts: 'Recargar layouts FancyZones',
+  cycle_forward: { label: 'Ciclar zona →', icon: ArrowRightToLine },
+  cycle_backward: { label: 'Ciclar zona ←', icon: ArrowLeftToLine },
+  desktop_cycle_fwd: { label: 'Cambiar escritorio →', icon: ArrowRightSquare },
+  desktop_cycle_bwd: { label: 'Cambiar escritorio ←', icon: ArrowLeftSquare },
+  util_reload_layouts: { label: 'Recargar layouts', icon: RefreshCcw },
 }
 
 export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetectedPath, configPath, onSave, onClose }) {
@@ -17,6 +17,7 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
   const [fzPath, setFzPath] = useState(fzCustomPath || '')
   const [saved, setSaved] = useState(false)
   const [fzModalOpen, setFzModalOpen] = useState(false)
+  const [activeRecordingKey, setActiveRecordingKey] = useState(null)
 
   function handleSave() {
     onSave({ hotkeys: hk, pipWatcherEnabled: pip, fzCustomPath: fzPath })
@@ -149,15 +150,20 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
         {/* Hotkeys — keybinding recorder */}
         <Section title="Atajos de teclado / ratón" icon={<Keyboard size={14} />}>
           <div className="hotkey-table">
-            {Object.entries(HOTKEY_LABELS).map(([key, label]) => (
+            {Object.entries(HOTKEY_LABELS).map(([key, data]) => {
+              const Icon = data.icon;
+              return (
               <div key={key} className="hotkey-row">
-                <span className="hotkey-label">{label}</span>
+                <span className="hotkey-label"><Icon size={14} className="hotkey-icon" /> {data.label}</span>
                 <KeybindRecorder
                   value={hk[key] || ''}
+                  isRecording={activeRecordingKey === key}
+                  onStartRecording={() => setActiveRecordingKey(key)}
+                  onStopRecording={() => setActiveRecordingKey(null)}
                   onChange={val => setHotkey(key, val)}
                 />
               </div>
-            ))}
+            )})}
           </div>
         </Section>
       </div>
@@ -365,8 +371,7 @@ function Toggle({ label, value, onChange }) {
  * KeybindRecorder — captures real keyboard events instead of manual text input.
  * Click "Presiona la combinación..." → press keys → combo is saved automatically.
  */
-function KeybindRecorder({ value, onChange }) {
-  const [recording, setRecording] = useState(false)
+function KeybindRecorder({ value, isRecording, onStartRecording, onStopRecording, onChange }) {
   const [display, setDisplay] = useState(value)
   const ref = useRef(null)
 
@@ -385,7 +390,7 @@ function KeybindRecorder({ value, onChange }) {
     if (e.metaKey) parts.push('Win')
 
     if (e.key === 'Escape') {
-      setRecording(false)
+      onStopRecording()
       setDisplay(value)
       return
     }
@@ -406,15 +411,15 @@ function KeybindRecorder({ value, onChange }) {
       const combo = parts.join('+')
       setDisplay(combo)
       onChange(combo.toLowerCase())
-      setRecording(false)
+      onStopRecording()
       ref.current?.blur()
     }
-  }, [onChange])
+  }, [onChange, onStopRecording, value])
 
   const handleMouseDown = useCallback((e) => {
-    if (!recording) return
-    // Capture mouse X buttons (button 3 = X1/Back, button 4 = X2/Forward)
-    if (e.button === 3 || e.button === 4) {
+    if (!isRecording) return
+    // Capture mouse buttons: middle click (1), X1/Back (3), X2/Forward (4)
+    if (e.button === 1 || e.button === 3 || e.button === 4) {
       e.preventDefault()
       e.stopPropagation()
 
@@ -424,37 +429,39 @@ function KeybindRecorder({ value, onChange }) {
       if (e.shiftKey) parts.push('Shift')
       if (e.metaKey) parts.push('Win')
 
-      parts.push(e.button === 3 ? 'x1' : 'x2')
+      let btnName = 'mbutton'
+      if (e.button === 3) btnName = 'x1'
+      else if (e.button === 4) btnName = 'x2'
+
+      parts.push(btnName)
 
       const combo = parts.join('+')
       setDisplay(combo)
       onChange(combo.toLowerCase())
-      setRecording(false)
+      onStopRecording()
     }
-  }, [recording, onChange])
+  }, [isRecording, onChange, onStopRecording])
 
   useEffect(() => {
-    if (recording) {
+    if (isRecording) {
       bridge.setHotkeysEnabled(false)
       window.addEventListener('mousedown', handleMouseDown, true)
-      window.addEventListener('auxclick', handleMouseDown, true)
       return () => {
         bridge.setHotkeysEnabled(true)
         window.removeEventListener('mousedown', handleMouseDown, true)
-        window.removeEventListener('auxclick', handleMouseDown, true)
       }
     }
-  }, [recording, handleMouseDown])
+  }, [isRecording, handleMouseDown])
 
   return (
     <button
       ref={ref}
-      className={`keybind-btn ${recording ? 'recording' : ''}`}
-      onClick={() => setRecording(true)}
-      onKeyDown={recording ? handleKeyDown : undefined}
+      className={`keybind-btn ${isRecording ? 'recording' : ''}`}
+      onClick={() => { if (!isRecording) onStartRecording() }}
+      onKeyDown={isRecording ? handleKeyDown : undefined}
     >
-      {recording ? (
-        <span className="keybind-recording">Presiona la combinación (Esc para cancelar)...</span>
+      {isRecording ? (
+        <span className="keybind-recording">Presiona atajo (Esc cancelar)...</span>
       ) : (
         <span className="keybind-value">{display || '—'}</span>
       )}

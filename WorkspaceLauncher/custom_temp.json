@@ -1,0 +1,102 @@
+﻿{
+  "custom-layouts": [
+    {
+      "uuid": "{3F733CD1-3B0A-407D-B961-963B188DB689}",
+      "name": "div 2 dere grande",
+      "type": "grid",
+      "info": {
+        "rows": 1,
+        "columns": 2,
+        "rows-percentage": [
+          10000
+        ],
+        "columns-percentage": [
+          3781,
+          6219
+        ],
+        "cell-child-map": [
+          [
+            0,
+            1
+          ]
+        ],
+        "show-spacing": true,
+        "spacing": 2,
+        "sensitivity-radius": 20
+      }
+    },
+    {
+      "uuid": "{2F210E07-86AC-4ED1-A8B1-380CC80AE0E8}",
+      "name": "div 2 igual",
+      "type": "grid",
+      "info": {
+        "rows": 1,
+        "columns": 2,
+        "rows-percentage": [
+          10000
+        ],
+        "columns-percentage": [
+          5004,
+          4996
+        ],
+        "cell-child-map": [
+          [
+            0,
+            1
+          ]
+        ],
+        "show-spacing": true,
+        "spacing": 2,
+        "sensitivity-radius": 20
+      }
+    },
+    {
+      "uuid": "{B999536D-97FF-4176-A1DE-9414438E2616}",
+      "name": "div 2 izq grande",
+      "type": "grid",
+      "info": {
+        "rows": 1,
+        "columns": 2,
+        "rows-percentage": [
+          10000
+        ],
+        "columns-percentage": [
+          6388,
+          3612
+        ],
+        "cell-child-map": [
+          [
+            0,
+            1
+          ]
+        ],
+        "show-spacing": true,
+        "spacing": 2,
+        "sensitivity-radius": 0
+      }
+    },
+    {
+      "uuid": "{50D69198-AD9D-451E-9BBC-6C82932BA3D9}",
+      "name": "entero",
+      "type": "grid",
+      "info": {
+        "rows": 1,
+        "columns": 1,
+        "rows-percentage": [
+          10000
+        ],
+        "columns-percentage": [
+          10000
+        ],
+        "cell-child-map": [
+          [
+            0
+          ]
+        ],
+        "show-spacing": true,
+        "spacing": 2,
+        "sensitivity-radius": 20
+      }
+    }
+  ]
+}

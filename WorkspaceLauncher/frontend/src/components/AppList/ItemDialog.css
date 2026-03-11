@@ -440,6 +440,37 @@
   background: rgba(255, 234, 0, 0.2);
 }
 
+/* ── FancyZones Selector Improvements ─────────────────────────────────── */
+.fz-select-row select optgroup {
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-weight: 700;
+  font-style: normal;
+}
+
+.fz-select-row select option {
+  background: var(--bg-main);
+  color: var(--text-primary);
+  padding: 8px;
+}
+
+.fz-select-active {
+  border-color: var(--success) !important;
+  box-shadow: 0 0 0 2px var(--success-dim) !important;
+}
+
+.template-warning {
+  background: rgba(255, 120, 0, 0.08) !important;
+  border-color: rgba(255, 120, 0, 0.3) !important;
+  animation: pulse-warning 2s infinite ease-in-out;
+}
+
+@keyframes pulse-warning {
+  0% { border-color: rgba(255, 120, 0, 0.3); }
+  50% { border-color: rgba(255, 120, 0, 0.6); }
+  100% { border-color: rgba(255, 120, 0, 0.3); }
+}
+
 /* ── Tab Manager ──────────────────────────────────────────────────────── */
 .tab-manager {
   display: flex;
@@ -605,4 +636,36 @@
   background: var(--accent-dim);
   border-color: var(--accent);
   border-style: solid;
+}
+
+/* ── No Preview State ─────────────────────────────────────────────────── */
+.fz-no-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #666;
+  text-align: center;
+  gap: 8px;
+}
+
+.fz-no-preview p {
+  margin: 0;
+  font-weight: 500;
+  color: #888;
+}
+
+.fz-no-preview span {
+  font-size: 0.8rem;
+  opacity: 0.6;
+}
+
+.template-warning {
+  background: rgba(255, 120, 0, 0.04) !important;
+  border-color: rgba(255, 120, 0, 0.1) !important;
+}
+
+.template-warning strong {
+  color: #ff9d00;
 }

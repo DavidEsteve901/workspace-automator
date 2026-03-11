@@ -236,6 +236,7 @@ export default function App() {
         <div className="main-content">
           {view === 'config' ? (
             <ConfigPanel
+              hotkeys={state.hotkeys}
               pipWatcher={state.pipWatcher}
               fzCustomPath={state.fzCustomPath}
               fzDetectedPath={state.fzDetectedPath}
@@ -244,19 +245,38 @@ export default function App() {
               onClose={() => setView('main')}
             />
           ) : (
-            <AppList
-              category={activeCategory}
-              items={currentItems}
-              onAddItem={() => setItemDialog({ category: activeCategory, index: -1, item: null })}
-              onEditItem={(idx) => setItemDialog({ category: activeCategory, index: idx, item: currentItems[idx] })}
-              onDeleteItem={(idx) => handleDeleteItem(activeCategory, idx)}
-              onMoveItem={(from, to) => handleMoveItem(activeCategory, from, to)}
-              onLaunch={handleLaunch}
-              onRestore={handleRestore}
-              onClean={handleClean}
-              launchStatus={launchStatus}
-            />
+            <>
+              <AppList
+                category={activeCategory}
+                items={currentItems}
+                onAddItem={() => setItemDialog({ category: activeCategory, index: -1, item: null })}
+                onEditItem={(idx) => setItemDialog({ category: activeCategory, index: idx, item: currentItems[idx] })}
+                onDeleteItem={(idx) => handleDeleteItem(activeCategory, idx)}
+                onMoveItem={(from, to) => handleMoveItem(activeCategory, from, to)}
+                onLaunch={handleLaunch}
+                onRestore={handleRestore}
+                onClean={handleClean}
+                launchStatus={launchStatus}
+              />
+
+              {validation && !validation.valid && !itemDialog && !cleanModal && !syncModal && !confirmAction && (
+                <div
+                  className="sync-alert"
+                  onClick={() => setSyncModal({ category: activeCategory, validation })}
+                  title="Ver conflictos y soluciones"
+                >
+                  <AlertTriangle size={18} />
+                  <div className="sync-alert-text">
+                    <strong>Conflictos detectados</strong>
+                    <span>Configuración no coincide con el equipo</span>
+                  </div>
+                  <div className="sync-alert-badge">!</div>
+                </div>
+              )}
+            </>
           )}
+
+          {state.hotkeys?.show_system_console && <LogConsole />}
         </div>
 
         {itemDialog && (
@@ -264,6 +284,7 @@ export default function App() {
             category={itemDialog.category}
             index={itemDialog.index}
             item={itemDialog.item}
+            validation={validation}
             onSave={(item) => handleSaveItem(itemDialog.category, itemDialog.index, item)}
             onClose={() => setItemDialog(null)}
           />
@@ -288,21 +309,6 @@ export default function App() {
           />
         )}
 
-        {validation && !validation.valid && view !== 'config' && (
-          <div
-            className="sync-alert"
-            onClick={() => setSyncModal({ category: activeCategory, validation })}
-            title="Ver conflictos y soluciones"
-          >
-            <AlertTriangle size={18} />
-            <div className="sync-alert-text">
-              <strong>Conflictos detectados</strong>
-              <span>Configuración no coincide con el equipo</span>
-            </div>
-            <div className="sync-alert-badge">!</div>
-          </div>
-        )}
-
         {confirmAction && (
           <ConfirmModal
             title={confirmAction.title}
@@ -311,8 +317,6 @@ export default function App() {
             onCancel={() => setConfirmAction(null)}
           />
         )}
-
-        {state.hotkeys?.show_system_console && <LogConsole />}
       </div>
     </div>
   )

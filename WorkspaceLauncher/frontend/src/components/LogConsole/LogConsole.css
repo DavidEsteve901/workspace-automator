@@ -1,13 +1,14 @@
 .log-console {
-  position: fixed;
+  position: absolute;
   bottom: 0;
-  right: 0;
-  width: 350px;
-  background: var(--sidebar-bg);
-  border-left: 1px solid var(--border-color);
-  border-top: 1px solid var(--border-color);
-  border-radius: 8px 0 0 0;
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.4);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 450px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  box-shadow: 0 -8px 20px rgba(0, 0, 0, 0.4);
   z-index: 1000;
   display: flex;
   flex-direction: column;
@@ -18,7 +19,7 @@
 .log-console.expanded {
   height: 40vh;
   max-height: 500px;
-  width: 600px;
+  width: 650px;
 }
 
 .log-header {
@@ -29,12 +30,14 @@
   align-items: center;
   justify-content: space-between;
   cursor: pointer;
-  background: var(--sidebar-bg);
-  border-radius: 8px 0 0 0;
+  background: var(--bg-hover);
+  border-radius: 8px 8px 0 0;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.2s;
 }
 
 .log-header:hover {
-  background: var(--main-bg);
+  background: var(--bg-active);
 }
 
 .log-title {
@@ -43,12 +46,13 @@
   gap: 10px;
   font-size: 0.85rem;
   font-weight: 500;
-  color: var(--text-main);
+  color: var(--text-primary);
 }
 
 .log-badge {
-  background: var(--border-color);
+  background: var(--bg-active);
   color: var(--text-muted);
+  border: 1px solid var(--border);
   padding: 1px 6px;
   border-radius: 10px;
   font-size: 0.7rem;
@@ -74,19 +78,19 @@
 }
 
 .log-actions button:hover {
-  background: var(--card-bg);
-  color: var(--accent-cyan);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--accent);
 }
 
 .log-body {
   flex: 1;
   overflow-y: auto;
   padding: 12px;
-  background: #050505;
+  background: #000;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 0.75rem;
   line-height: 1.5;
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid #111;
 }
 
 .log-line {
@@ -114,10 +118,10 @@
   color: var(--text-muted);
 }
 
-.log-line.success .log-msg { color: var(--accent-launch); }
-.log-line.warn .log-msg { color: #FFEA00; }
-.log-line.error .log-msg { color: var(--accent-danger); }
-.log-line.info .log-msg { color: var(--text-main); }
+.log-line.success .log-msg { color: var(--success); }
+.log-line.warn .log-msg { color: #fbbf24; }
+.log-line.error .log-msg { color: var(--danger); }
+.log-line.info .log-msg { color: var(--text-primary); }
 
 /* Scrollbar styling for log-body */
 .log-body::-webkit-scrollbar {

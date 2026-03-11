@@ -21,6 +21,7 @@ public sealed class GlobalHookManager : IDisposable
 
     private bool _suppressedX1;
     private bool _suppressedX2;
+    private bool _suppressedMiddle;
 
     // ── Public events ──────────────────────────────────────────────────────
     // Modifiers are captured at hook time (on the hook thread) and passed here
@@ -28,8 +29,10 @@ public sealed class GlobalHookManager : IDisposable
     // where the keys may have already been released.
     public event Action<bool, bool, bool, bool>? OnX1Down; // alt, ctrl, shift, win
     public event Action<bool, bool, bool, bool>? OnX2Down; // alt, ctrl, shift, win
+    public event Action<bool, bool, bool, bool>? OnMiddleDown; // alt, ctrl, shift, win
     public event Action? OnX1Up;
     public event Action? OnX2Up;
+    public event Action? OnMiddleUp;
     public event Action<int, bool, bool, bool, bool>? OnKeyDown; // vkCode, alt, ctrl, shift, win
 
     /// Optional predicate: given (button="x1"|"x2", alt, ctrl, shift, win) → true if the combo is mapped.
@@ -94,7 +97,8 @@ public sealed class GlobalHookManager : IDisposable
     private nint MouseHookProc(int nCode, nuint wParam, nint lParam)
     {
         if (nCode == User32.HC_ACTION &&
-            (wParam == User32.WM_XBUTTONDOWN || wParam == User32.WM_XBUTTONUP))
+            (wParam == User32.WM_XBUTTONDOWN || wParam == User32.WM_XBUTTONUP ||
+             wParam == User32.WM_MBUTTONDOWN || wParam == User32.WM_MBUTTONUP))
         {
             var data   = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
             int button = (int)((data.mouseData >> 16) & 0xFFFF);
@@ -103,13 +107,31 @@ public sealed class GlobalHookManager : IDisposable
             bool ctrl  = (User32.GetAsyncKeyState(User32.VK_CTRL)  & 0x8000) != 0;
             bool shift = (User32.GetAsyncKeyState(User32.VK_SHIFT) & 0x8000) != 0;
             bool win   = (User32.GetAsyncKeyState(User32.VK_LWIN)  & 0x8000) != 0 || (User32.GetAsyncKeyState(User32.VK_RWIN) & 0x8000) != 0;
-            bool hasMod = alt || ctrl || shift || win;
+
+            if (wParam == User32.WM_MBUTTONDOWN)
+            {
+                if (!(CheckXMapped?.Invoke("mbutton", alt, ctrl, shift, win) ?? false))
+                    return User32.CallNextHookEx(_hookMouse, nCode, wParam, lParam);
+                _suppressedMiddle = true;
+                bool am = alt, cm = ctrl, sm = shift, wm = win;
+                Task.Run(() => OnMiddleDown?.Invoke(am, cm, sm, wm));
+                return 1;
+            }
+            else if (wParam == User32.WM_MBUTTONUP)
+            {
+                if (_suppressedMiddle)
+                {
+                    _suppressedMiddle = false;
+                    Task.Run(() => OnMiddleUp?.Invoke());
+                    return 1;
+                }
+            }
 
             if (wParam == User32.WM_XBUTTONDOWN)
             {
                 if (button == User32.XBUTTON1)
                 {
-                    if (hasMod && !(CheckXMapped?.Invoke("x1", alt, ctrl, shift, win) ?? false))
+                    if (!(CheckXMapped?.Invoke("x1", alt, ctrl, shift, win) ?? false))
                         return User32.CallNextHookEx(_hookMouse, nCode, wParam, lParam);
                     _suppressedX1 = true;
                     bool a1 = alt, c1 = ctrl, s1 = shift, w1 = win;
@@ -118,7 +140,7 @@ public sealed class GlobalHookManager : IDisposable
                 }
                 if (button == User32.XBUTTON2)
                 {
-                    if (hasMod && !(CheckXMapped?.Invoke("x2", alt, ctrl, shift, win) ?? false))
+                    if (!(CheckXMapped?.Invoke("x2", alt, ctrl, shift, win) ?? false))
                         return User32.CallNextHookEx(_hookMouse, nCode, wParam, lParam);
                     _suppressedX2 = true;
                     bool a2 = alt, c2 = ctrl, s2 = shift, w2 = win;

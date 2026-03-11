@@ -123,7 +123,7 @@
 .hotkey-table {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .hotkey-row {
@@ -131,13 +131,31 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 4px 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  border: 1px solid transparent;
+  transition: all 0.2s;
+}
+
+.hotkey-row:hover {
+  background: var(--bg-card);
+  border-color: rgba(255, 255, 255, 0.05);
 }
 
 .hotkey-label {
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--text-primary);
+  font-weight: 500;
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hotkey-icon {
+  color: var(--accent);
+  opacity: 0.8;
 }
 
 /* ── Keybind recorder button ─────────────────────────────────────────── */
@@ -156,10 +174,12 @@
   flex-shrink: 0;
   transition: all var(--transition);
   cursor: pointer;
+  color: var(--text-primary);
 }
 
 .keybind-btn:hover {
   border-color: var(--accent);
+  background: rgba(0, 210, 255, 0.05);
 }
 
 .keybind-btn.recording {
@@ -301,7 +321,7 @@
   padding: 14px 16px;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -309,7 +329,6 @@
 .fz-status-btn:hover {
   background: var(--bg-hover);
   border-color: var(--accent);
-  transform: translateY(-1px);
 }
 
 .fz-status-btn-content {

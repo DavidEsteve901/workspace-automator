@@ -201,9 +201,9 @@ public static class DwmHelper
 
             RECT checkRect = hr == 0 ? actualVisual : GetLogicalRectFallback(hwnd);
 
-            if (VisualRectsClose(checkRect, zoneRect, threshold: 5))
+            if (VisualRectsClose(checkRect, zoneRect, threshold: 1))
             {
-                Logger.Info($"[DwmHelper] Snap converged on attempt {attempt + 1} (precision <= 5px).");
+                Logger.Info($"[DwmHelper] Snap converged on attempt {attempt + 1} (precision <= 1px).");
                 return true;
             }
 

@@ -508,7 +508,7 @@ public sealed class WorkspaceOrchestrator
                 var  target = zoneRect.Value;
 
                 // Tolerance: lenient on pass 1 (catches real drift), tight on pass 2 (fine-tune)
-                int tolerance = pass == 2 ? 8 : 30;
+                int tolerance = pass == 2 ? 2 : 10;
 
                 bool hasDrifted =
                     Math.Abs(actual.Left   - target.Left)   > tolerance ||

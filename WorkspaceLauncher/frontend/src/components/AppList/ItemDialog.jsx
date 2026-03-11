@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { FolderOpen, X, Globe, Terminal, Code2, FileCode, MonitorSmartphone, Cog, ArrowLeft, RotateCw, AlertCircle, CheckCircle2, Plus, Trash2, GripVertical } from 'lucide-react'
-import { bridge, onEvent, offEvent } from '../../api/bridge.js'
+import { bridge } from '../../api/bridge.js'
+import { renderZones } from '../../utils/fzUtils.jsx'
 import './ItemDialog.css'
 
 const ITEM_TYPES = [
@@ -34,7 +35,7 @@ const DEFAULT_ITEM = {
   delay: '0'
 }
 
-export default function ItemDialog({ category, index, item, onSave, onClose }) {
+export default function ItemDialog({ category, index, item, validation, onSave, onClose }) {
   // Wizard state: 1 = Type selection, 2 = Form details
   const [step, setStep] = useState(item ? 2 : 1)
   // Ensure we don't pick up null values from item that might break the state
@@ -79,13 +80,18 @@ export default function ItemDialog({ category, index, item, onSave, onClose }) {
   // Derived data from fzStatus
   const monitors = useMemo(() => fzStatus?.monitors || [], [fzStatus])
   const desktops = useMemo(() => fzStatus?.desktops || [], [fzStatus])
-  const availableLayouts = useMemo(() => (fzStatus?.layouts || []).map(l => ({
-    uuid: l.uuid,
-    name: l.name,
-    zoneCount: l.zoneCount,
-    type: l.type,
-    info: l.info
-  })), [fzStatus])
+  const availableLayouts = useMemo(() => {
+    const raw = fzStatus?.layouts || []
+    return {
+      custom: raw.filter(l => l.isCustom).map(l => ({ ...l })),
+      templates: raw.filter(l => !l.isCustom).map(l => ({ ...l }))
+    }
+  }, [fzStatus])
+
+  const flatLayouts = useMemo(() => [
+    ...(availableLayouts.custom || []),
+    ...(availableLayouts.templates || [])
+  ], [availableLayouts])
 
   function set(key, value) {
     setForm(f => ({ ...f, [key]: value }))
@@ -136,35 +142,34 @@ export default function ItemDialog({ category, index, item, onSave, onClose }) {
     }
 
     if (match?.activeLayoutUuid) {
-      const layout = availableLayouts.find(l =>
-        l.uuid.replace(/[{}]/g, '').toLowerCase() === match.activeLayoutUuid.replace(/[{}]/g, '').toLowerCase()
-      )
-      if (layout) {
+      const layoutInfo = match.activeLayout;
+      if (layoutInfo) {
         setDetectedLayout({
-          uuid: layout.uuid,
-          name: layout.name,
+          uuid: layoutInfo.uuid,
+          name: layoutInfo.name,
+          isCustom: layoutInfo.isCustom,
           monitorLabel: match.monitorLabel,
           desktopName: match.desktopName
         })
 
-        // Auto-select the detected layout only if the user hasn't picked one yet
-        setForm(f => {
-          // If a layout is already selected manually, don't overwrite it
-          if (f.fancyzone_uuid && f.fancyzone_uuid !== '') return f;
-          
-          return {
-            ...f,
-            fancyzone_uuid: layout.uuid,
-            fancyzone: `${layout.name} - Zona 1`
-          }
-        })
+        // Auto-select the detected layout only if it's CUSTOM and the user hasn't picked one yet
+        if (layoutInfo.isCustom) {
+          setForm(f => {
+            if (f.fancyzone_uuid && f.fancyzone_uuid !== '') return f;
+            return {
+              ...f,
+              fancyzone_uuid: layoutInfo.uuid,
+              fancyzone: `${layoutInfo.name} - Zona 1`
+            }
+          })
+        }
       } else {
         setDetectedLayout(null)
       }
     } else {
       setDetectedLayout(null)
     }
-  }, [form.monitor, form.desktop, fzStatus, monitors, desktops, availableLayouts])
+  }, [form.monitor, form.desktop, fzStatus, monitors, desktops, flatLayouts])
 
   // Trigger refresh when monitor/desktop changes
   const handleEnvChange = async (key, val) => {
@@ -326,8 +331,10 @@ export default function ItemDialog({ category, index, item, onSave, onClose }) {
             form={form}
             set={set}
             availableLayouts={availableLayouts}
+            flatLayouts={flatLayouts}
             detectedLayout={detectedLayout}
             onRefresh={loadFzStatus}
+            validation={validation}
           />
 
           {/* Delay */}
@@ -376,9 +383,17 @@ function ActiveLayoutIndicator({ detectedLayout, syncState, onRefresh }) {
           </>
         ) : detectedLayout ? (
           <>
-            <CheckCircle2 size={14} style={{ color: 'var(--success)' }} />
+            {detectedLayout.isCustom ? (
+              <CheckCircle2 size={14} style={{ color: 'var(--success)' }} />
+            ) : (
+              <AlertCircle size={14} style={{ color: 'var(--warning)' }} />
+            )}
             <span className="fz-indicator-text">
-              Layout activo: <strong>{detectedLayout.name}</strong>
+              {detectedLayout.isCustom ? (
+                <>Layout activo: <strong>{detectedLayout.name}</strong></>
+              ) : (
+                <>Detectado layout por defecto: <strong>{detectedLayout.name}</strong>. Se recomienda asignar uno personalizado.</>
+              )}
               <span className="fz-indicator-sub">
                 {detectedLayout.monitorLabel} · {detectedLayout.desktopName}
               </span>
@@ -403,9 +418,9 @@ function ActiveLayoutIndicator({ detectedLayout, syncState, onRefresh }) {
 }
 
 // ── Mini-Motor Renderizador de FancyZones ──────────────────────────────────
-function FancyZonesVisualizer({ form, set, availableLayouts, detectedLayout, onRefresh }) {
+function FancyZonesVisualizer({ form, set, availableLayouts, flatLayouts, detectedLayout, onRefresh, validation }) {
   // Obtener el layout actual
-  const currentLayout = availableLayouts.find(l => l.uuid === form.fancyzone_uuid) || null
+  const currentLayout = flatLayouts.find(l => l.uuid === form.fancyzone_uuid) || null
 
   const handleZoneClick = (idx) => {
     if (!currentLayout) return;
@@ -419,7 +434,7 @@ function FancyZonesVisualizer({ form, set, availableLayouts, detectedLayout, onR
       set('fancyzone_uuid', "");
       return;
     }
-    const layout = availableLayouts.find(l => l.uuid === uuid);
+    const layout = flatLayouts.find(l => l.uuid === uuid);
     if (layout) {
       set('fancyzone_uuid', layout.uuid);
       set('fancyzone', `${layout.name} - Zona 1`);
@@ -448,11 +463,26 @@ function FancyZonesVisualizer({ form, set, availableLayouts, detectedLayout, onR
               className={isActiveLayout ? 'fz-select-active' : ''}
             >
               <option value="Ninguna">Ninguno / Libre</option>
-              {availableLayouts.map(l => (
-                <option key={l.uuid} value={l.uuid}>
-                  {l.name} {detectedLayout?.uuid === l.uuid ? '✓ ACTIVO' : ''}
-                </option>
-              ))}
+              
+              {availableLayouts.custom.length > 0 && (
+                <optgroup label="Diseños Personalizados">
+                  {availableLayouts.custom.map(l => (
+                    <option key={l.uuid} value={l.uuid}>
+                      {l.name} {detectedLayout?.uuid === l.uuid ? '✓ ACTIVO' : ''}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+
+              {availableLayouts.templates.length > 0 && (
+                <optgroup label="Plantillas de FancyZones">
+                  {availableLayouts.templates.map(l => (
+                    <option key={l.uuid} value={l.uuid}>
+                      {l.name} (Plantilla) {detectedLayout?.uuid === l.uuid ? '✓ ACTIVO' : ''}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
             {isActiveLayout && (
               <span className="fz-active-badge">ACTIVO</span>
@@ -482,7 +512,15 @@ function FancyZonesVisualizer({ form, set, availableLayouts, detectedLayout, onR
             : 'inset 0 0 30px rgba(0,0,0,0.6)',
           boxSizing: 'border-box'
         }}>
-          {renderZones(currentLayout.info, activeZoneIdx, handleZoneClick)}
+          {currentLayout.info ? (
+            renderZones(currentLayout.info, activeZoneIdx, handleZoneClick)
+          ) : (
+            <div className="fz-no-preview">
+              <AlertCircle size={24} />
+              <p>Previsualización no disponible para plantillas estándar</p>
+              <span>El anclaje funcionará, pero no podemos dibujar las zonas</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -501,113 +539,42 @@ function FancyZonesVisualizer({ form, set, availableLayouts, detectedLayout, onR
           </button>
         </div>
       )}
+
+      {currentLayout && currentLayout.isCustom && validation?.missingLayouts?.includes((form.fancyzone_uuid || '').replace(/\{|\}/g, '').toLowerCase()) && (
+        <div className="fz-warning-bar" style={{ background: 'rgba(16, 185, 129, 0.15)', borderColor: 'rgba(16, 185, 129, 0.3)' }}>
+          <AlertCircle size={14} color="#10b981" />
+          <span style={{ color: '#10b981' }}>
+            Este diseño existe en el workspace pero <strong>no está en este PC</strong>.
+          </span>
+          <button
+            className="fz-warning-btn"
+            style={{ background: '#10b981', color: '#000', border: 'none', fontWeight: 'bold' }}
+            onClick={async () => {
+              const res = await bridge.syncWorkspaceLayouts([form.fancyzone_uuid]);
+              if (res?.success) {
+                // Background poll will catch it up
+                loadFzStatus();
+              }
+            }}
+          >
+            Importar
+          </button>
+        </div>
+      )}
+
+      {currentLayout && !currentLayout.isCustom && (
+        <div className="fz-warning-bar template-warning">
+          <AlertCircle size={14} />
+          <span>
+            Estás usando una <strong>plantilla estándar</strong>. 
+            Para un control total, crea un "Layout Personalizado" en FancyZones.
+          </span>
+        </div>
+      )}
     </div>
   )
 }
 
-function renderZones(info, activeIdx, onClick) {
-  if (!info) return null;
-  const type = info.type || "grid";
-
-  if (type === "grid") {
-    const rowsMap = info["cell-child-map"] || [[0]];
-    const rowsPerc = info["rows-percentage"] || [10000];
-    const colsPerc = info["columns-percentage"] || [10000];
-
-    const zones = {};
-    rowsMap.forEach((row, rIdx) => {
-      row.forEach((zId, cIdx) => {
-        if (!zones[zId]) zones[zId] = { minR: rIdx, maxR: rIdx, minC: cIdx, maxC: cIdx };
-        else {
-          zones[zId].minR = Math.min(zones[zId].minR, rIdx);
-          zones[zId].maxR = Math.max(zones[zId].maxR, rIdx);
-          zones[zId].minC = Math.min(zones[zId].minC, cIdx);
-          zones[zId].maxC = Math.max(zones[zId].maxC, cIdx);
-        }
-      })
-    });
-
-    const gridStyle = {
-      gridTemplateRows: rowsPerc.map(p => `${p}fr`).join(' '),
-      gridTemplateColumns: colsPerc.map(p => `${p}fr`).join(' ')
-    };
-
-    return (
-      <div style={{ ...gridStyle, width: '100%', height: '100%', display: 'grid', gap: info.spacing ? '4px' : '2px' }}>
-        {Object.entries(zones).map(([zId, span]) => {
-          const id = parseInt(zId);
-          const isSelected = activeIdx === id;
-          return (
-            <button
-              key={id}
-              className={`fz-zone-btn ${isSelected ? 'selected' : ''}`}
-              style={{
-                gridRow: `${span.minR + 1} / ${span.maxR + 2}`,
-                gridColumn: `${span.minC + 1} / ${span.maxC + 2}`,
-                border: isSelected ? '2px solid var(--accent)' : '1px solid rgba(255,255,255,0.1)',
-                background: isSelected ? 'var(--accent-low)' : 'rgba(255,255,255,0.05)',
-                color: isSelected ? 'var(--accent)' : '#888',
-                cursor: 'pointer',
-                fontWeight: 'bold',
-                transition: 'all 0.2s',
-                borderRadius: '4px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '1rem'
-              }}
-              onClick={() => onClick(id)}
-            >
-              {id + 1}
-            </button>
-          )
-        })}
-      </div>
-    )
-  }
-
-  if (type === "canvas") {
-    const zones = info.zones || [];
-    return (
-      <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-        {zones.map((z, idx) => {
-          const isSelected = activeIdx === idx;
-          const refW = info["ref-width"] || 10000;
-          const refH = info["ref-height"] || 10000;
-          const x = (z.X / refW) * 100;
-          const y = (z.Y / refH) * 100;
-          const w = (z.width / refW) * 100;
-          const h = (z.height / refH) * 100;
-
-          return (
-            <button
-              key={idx}
-              className={`fz-zone-btn ${isSelected ? 'selected' : ''}`}
-              style={{
-                position: 'absolute',
-                left: `${x}%`, top: `${y}%`, width: `${w}%`, height: `${h}%`,
-                border: isSelected ? '2px solid var(--accent)' : '1px solid rgba(255,255,255,0.2)',
-                background: isSelected ? 'var(--accent-low)' : 'rgba(255,255,255,0.1)',
-                color: isSelected ? 'var(--accent)' : '#fff',
-                opacity: 0.9,
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontWeight: 'bold',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-              onClick={() => onClick(idx)}
-            >
-              {idx + 1}
-            </button>
-          )
-        })}
-      </div>
-    )
-  }
-  return null;
-}
 
 // ── Tab Manager Component ──────────────────────────────────────────────
 const TAB_SEPARATOR = '--- NUEVA PESTAÑA ---'

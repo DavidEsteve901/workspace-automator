@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { X, RefreshCcw, AlertCircle, Monitor, Layout, CheckCircle2 } from 'lucide-react'
+import { X, RefreshCcw, AlertCircle, Monitor, Layout, CheckCircle2, ChevronDown, ChevronRight, Share2 } from 'lucide-react'
 import { bridge } from '../../api/bridge.js'
+import { renderZones } from '../../utils/fzUtils.jsx'
 import './SyncModal.css'
 
 export default function SyncModal({ category, validation, onClose, onSynced }) {
@@ -8,6 +9,7 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
   const [done, setDone] = useState(false)
   const [resolutions, setResolutions] = useState({})
   const [layoutResolutions, setLayoutResolutions] = useState({})
+  const [expandedWarnings, setExpandedWarnings] = useState({})
 
   const handleMonitorSelect = (index, monitor) => {
     setResolutions(prev => ({ ...prev, [index]: monitor }))
@@ -15,6 +17,10 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
 
   const handleLayoutSelect = (warningIndex, layoutUuid) => {
     setLayoutResolutions(prev => ({ ...prev, [warningIndex]: layoutUuid }))
+  }
+
+  const toggleExpand = (index) => {
+    setExpandedWarnings(prev => ({ ...prev, [index]: !prev[index] }))
   }
 
   const handleSyncAll = async () => {
@@ -93,26 +99,85 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
                 <p>Se han detectado inconsistencias entre la configuración guardada y el entorno actual (monitores o PowerToys).</p>
               </div>
 
+              {validation?.missingLayouts?.length > 0 && (
+                <div className="sync-intro" style={{ background: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.3)', marginTop: '-8px' }}>
+                  <Share2 size={20} color="#10b981" />
+                  <p style={{ color: '#10b981' }}>
+                    <strong>Aviso de Portabilidad:</strong> Este workspace contiene layouts diseñados en otro equipo. Aparecerán listados abajo como "Diseños a Importar" y se crearán automáticamente en tu FancyZones local al sincronizar.
+                  </p>
+                </div>
+              )}
+
               <div className="sync-warnings-list">
-                {warnings.map((w, i) => {
-                  let solution = "";
-                  const isMonitor = w.type.includes('monitor');
-                  
-                  if (w.type === 'monitor_missing') {
-                    solution = "Se adaptará la posición al monitor seleccionado.";
-                  } else if (w.type === 'layout_mismatch') {
-                    const selectedUuid = layoutResolutions[i] || w.layoutUuid;
-                    const layoutObj = (validation.availableLayouts || []).find(l => l.uuid === selectedUuid);
-                    const name = layoutObj ? layoutObj.name : "Ninguno / Libre";
-                    solution = `Cambiar layout activo en monitor a '${name}'.`;
-                  } else if (w.type === 'desktop_missing') {
-                    solution = "Se crearán automáticamente al levantar el workspace.";
-                  } else {
-                    solution = "Se creará e inyectará el Layout faltante en PowerToys.";
-                  }
-                  
-                  return (
-                    <div key={i} className="sync-warning-item">
+                {warnings.filter(w => w.type === 'layout_missing').length > 0 && (
+                  <div className="sync-warnings-group">
+                    <div className="sync-warnings-group-title">
+                      <Share2 size={16} /> Diseños a Importar (Portabilidad)
+                    </div>
+                    {warnings.map((w, i) => {
+                      if (w.type !== 'layout_missing') return null;
+                      return renderWarning(w, i);
+                    })}
+                  </div>
+                )}
+
+                {warnings.filter(w => w.type !== 'layout_missing').length > 0 && (
+                  <div className="sync-warnings-group">
+                    <div className="sync-warnings-group-title">
+                      <AlertCircle size={16} /> Conflictos de Entorno
+                    </div>
+                    {warnings.map((w, i) => {
+                      if (w.type === 'layout_missing') return null;
+                      return renderWarning(w, i);
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="sync-footer-info">
+                Al sincronizar, se intentarán crear los layouts faltantes en PowerToys utilizando las definiciones guardadas en el caché de la aplicación.
+              </div>
+            </>
+          )}
+        </div>
+
+        {!done && (
+          <div className="dialog-footer">
+            <button className="btn-secondary" onClick={onClose} disabled={syncing}>
+              Cancelar
+            </button>
+            <button 
+              className="btn-launch" 
+              onClick={handleSyncAll}
+              disabled={syncing || warnings.length === 0}
+            >
+              {syncing ? 'Sincronizando...' : 'Sincronizar y Adaptar'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
+  function renderWarning(w, i) {
+    let solution = "";
+    const isMonitor = w.type.includes('monitor');
+    
+    if (w.type === 'monitor_missing') {
+      solution = "Se adaptará la posición al monitor seleccionado.";
+    } else if (w.type === 'layout_mismatch') {
+      const selectedUuid = layoutResolutions[i] || w.layoutUuid;
+      const layoutObj = (validation.availableLayouts || []).find(l => l.uuid === selectedUuid);
+      const name = layoutObj ? layoutObj.name : "Ninguno / Libre";
+      solution = `Cambiar layout activo en monitor a '${name}'.`;
+    } else if (w.type === 'desktop_missing') {
+      solution = "Se crearán automáticamente al levantar el workspace.";
+    } else {
+      solution = "Se creará e inyectará el Layout faltante en PowerToys.";
+    }
+    
+    return (
+      <div key={i} className="sync-warning-item">
                       <div className="sync-warning-icon">
                         {isMonitor ? <Monitor size={16} /> : <Layout size={16} />}
                       </div>
@@ -158,34 +223,63 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
                         {w.itemPath && (
                           <div className="sync-warning-app">App: {w.itemPath.split('\\').pop() || 'Sistema'}</div>
                         )}
+
+                        {/* Layout Details / Visualization */}
+                        {(w.type === 'layout_mismatch' || w.type === 'layout_missing') && (
+                          <>
+                            <button 
+                              className="sync-details-toggle"
+                              onClick={() => toggleExpand(i)}
+                            >
+                              {expandedWarnings[i] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                              {expandedWarnings[i] ? 'Ocultar detalles' : 'Ver detalles del diseño'}
+                              {w.type === 'layout_missing' && (
+                                <span className="portability-badge">
+                                  <Share2 size={10} /> Portabilidad
+                                </span>
+                              )}
+                            </button>
+
+                            {expandedWarnings[i] && (
+                              <div className="sync-layout-details">
+                                <div className="sync-layout-preview-container">
+                                  {w.type === 'layout_mismatch' && (
+                                    <>
+                                      <div className="sync-layout-preview-item">
+                                        <div className="sync-layout-preview-label">Activo actualmente</div>
+                                        <div className="sync-layout-preview-name">{w.activeLayout}</div>
+                                        <div className="sync-layout-preview-box">
+                                          {renderZones(w.activeInfo, -1)}
+                                          {!w.activeInfo && <div className="fz-no-preview">Sin zonas</div>}
+                                        </div>
+                                      </div>
+                                      <div className="sync-layout-arrow">
+                                        <ChevronRight size={20} />
+                                      </div>
+                                    </>
+                                  )}
+                                  <div className="sync-layout-preview-item">
+                                    <div className="sync-layout-preview-label">Requerido por Workspace</div>
+                                    <div className="sync-layout-preview-name">{w.assignedLayout || w.layoutName}</div>
+                                    <div className="sync-layout-preview-box">
+                                      {renderZones(w.assignedInfo || w.info, -1)}
+                                      {!(w.assignedInfo || w.info) && <div className="fz-no-preview">Cargando...</div>}
+                                    </div>
+                                  </div>
+                                </div>
+                                
+                                {w.type === 'layout_missing' && (
+                                  <div className="sync-portability-info">
+                                    Este diseño fue creado en otro equipo pero está guardado en el caché de la aplicación. 
+                                    Al sincronizar, se creará automáticamente en este equipo.
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        )}
                       </div>
                     </div>
                   );
-                })}
-              </div>
-
-              <div className="sync-footer-info">
-                Al sincronizar, se intentarán crear los layouts faltantes en PowerToys utilizando las definiciones guardadas en el caché de la aplicación.
-              </div>
-            </>
-          )}
-        </div>
-
-        {!done && (
-          <div className="dialog-footer">
-            <button className="btn-secondary" onClick={onClose} disabled={syncing}>
-              Cancelar
-            </button>
-            <button 
-              className="btn-launch" 
-              onClick={handleSyncAll}
-              disabled={syncing || warnings.length === 0}
-            >
-              {syncing ? 'Sincronizando...' : 'Sincronizar y Adaptar'}
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  )
+  }
 }

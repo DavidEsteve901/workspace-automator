@@ -24,6 +24,7 @@ public sealed class HotkeyProcessor
         // Connect side buttons (modifiers captured at hook time)
         _hookManager.OnX1Down += HandleX1;
         _hookManager.OnX2Down += HandleX2;
+        _hookManager.OnMiddleDown += HandleMiddle;
         _hookManager.OnKeyDown += HandleKeyDown;
 
         _hookManager.CheckXMapped = (button, alt, ctrl, shift, win) =>
@@ -34,9 +35,12 @@ public sealed class HotkeyProcessor
             // Ctrl-only = browser back/forward passthrough (don't suppress)
             if (ctrl && !alt && !shift && !win) return false;
 
-            // Bare X = desktop cycling
-            if (config.Hotkeys.DesktopCycleEnabled && !alt && !ctrl && !shift && !win)
-                return true;
+            // Check Desktop Cycle
+            if (config.Hotkeys.DesktopCycleEnabled)
+            {
+                if (IsHotKeyActive(config.Hotkeys.DesktopCycleFwd, button, alt, ctrl, shift, win)) return true;
+                if (IsHotKeyActive(config.Hotkeys.DesktopCycleBwd, button, alt, ctrl, shift, win)) return true;
+            }
 
             // Alt-only + X = hover zone cycling
             if (config.Hotkeys.ZoneCycleEnabled && alt && !ctrl && !shift && !win)
@@ -100,11 +104,21 @@ public sealed class HotkeyProcessor
             return;
         }
 
-        // Bare X1 → desktop forward
-        if (config.Hotkeys.DesktopCycleEnabled && !alt && !ctrl && !shift && !win)
+        // Desktop cycling
+        if (config.Hotkeys.DesktopCycleEnabled)
         {
-            Console.WriteLine("[HotkeyProcessor] X1 -> SwitchNextDesktop");
-            VirtualDesktopManager.Instance.SwitchNextDesktop();
+            if (IsHotKeyActive(config.Hotkeys.DesktopCycleFwd, "x1", alt, ctrl, shift, win))
+            {
+                Console.WriteLine("[HotkeyProcessor] X1 -> SwitchNextDesktop");
+                VirtualDesktopManager.Instance.SwitchNextDesktop();
+                return;
+            }
+            if (IsHotKeyActive(config.Hotkeys.DesktopCycleBwd, "x1", alt, ctrl, shift, win))
+            {
+                Console.WriteLine("[HotkeyProcessor] X1 -> SwitchPreviousDesktop");
+                VirtualDesktopManager.Instance.SwitchPreviousDesktop();
+                return;
+            }
         }
     }
 
@@ -138,11 +152,69 @@ public sealed class HotkeyProcessor
             return;
         }
 
-        // Bare X2 → desktop backward
-        if (config.Hotkeys.DesktopCycleEnabled && !alt && !ctrl && !shift && !win)
+        // Desktop cycling
+        if (config.Hotkeys.DesktopCycleEnabled)
         {
-            Console.WriteLine("[HotkeyProcessor] X2 -> SwitchPreviousDesktop");
-            VirtualDesktopManager.Instance.SwitchPreviousDesktop();
+            if (IsHotKeyActive(config.Hotkeys.DesktopCycleFwd, "x2", alt, ctrl, shift, win))
+            {
+                Console.WriteLine("[HotkeyProcessor] X2 -> SwitchNextDesktop");
+                VirtualDesktopManager.Instance.SwitchNextDesktop();
+                return;
+            }
+            if (IsHotKeyActive(config.Hotkeys.DesktopCycleBwd, "x2", alt, ctrl, shift, win))
+            {
+                Console.WriteLine("[HotkeyProcessor] X2 -> SwitchPreviousDesktop");
+                VirtualDesktopManager.Instance.SwitchPreviousDesktop();
+                return;
+            }
+        }
+    }
+
+    private void HandleMiddle(bool alt, bool ctrl, bool shift, bool win)
+    {
+        if (!Enabled) return;
+        var config = ConfigManager.Instance.Config;
+
+        // Hover zone cycling
+        if (config.Hotkeys.ZoneCycleEnabled && alt && !ctrl && !shift && !win)
+        {
+            Console.WriteLine("[HotkeyProcessor] Alt+MButton -> CycleZoneForward (hover)");
+            var key = GetZoneKeyUnderCursor() ?? ZoneCycler.Instance.DetectActiveWindowZoneKey();
+            if (key != null) ZoneCycler.Instance.CycleForward(key);
+            return;
+        }
+
+        // Configured modifier combos
+        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActive(config.Hotkeys.CycleForward, "mbutton", alt, ctrl, shift, win))
+        {
+            Console.WriteLine("[HotkeyProcessor] mbutton -> CycleZoneForward");
+            var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
+            if (key != null) ZoneCycler.Instance.CycleForward(key);
+            return;
+        }
+        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActive(config.Hotkeys.CycleBackward, "mbutton", alt, ctrl, shift, win))
+        {
+            Console.WriteLine("[HotkeyProcessor] mbutton -> CycleZoneBackward");
+            var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
+            if (key != null) ZoneCycler.Instance.CycleBackward(key);
+            return;
+        }
+
+        // Desktop cycling
+        if (config.Hotkeys.DesktopCycleEnabled)
+        {
+            if (IsHotKeyActive(config.Hotkeys.DesktopCycleFwd, "mbutton", alt, ctrl, shift, win))
+            {
+                Console.WriteLine("[HotkeyProcessor] mbutton -> SwitchNextDesktop");
+                VirtualDesktopManager.Instance.SwitchNextDesktop();
+                return;
+            }
+            if (IsHotKeyActive(config.Hotkeys.DesktopCycleBwd, "mbutton", alt, ctrl, shift, win))
+            {
+                Console.WriteLine("[HotkeyProcessor] mbutton -> SwitchPreviousDesktop");
+                VirtualDesktopManager.Instance.SwitchPreviousDesktop();
+                return;
+            }
         }
     }
 

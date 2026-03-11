@@ -50,7 +50,7 @@ public static class ZoneCalculator
         for (int i = 0; i < cols; i++)
         {
             accumC += layout.ColumnsPercentage[i];
-            colBounds[i + 1] = workArea.Left + (int)(accumC / totalColPct * totalW);
+            colBounds[i + 1] = workArea.Left + (int)Math.Round(accumC / totalColPct * totalW);
         }
 
         rowBounds[0] = workArea.Top;
@@ -58,7 +58,7 @@ public static class ZoneCalculator
         for (int i = 0; i < rows; i++)
         {
             accumR += layout.RowsPercentage[i];
-            rowBounds[i + 1] = workArea.Top + (int)(accumR / totalRowPct * totalH);
+            rowBounds[i + 1] = workArea.Top + (int)Math.Round(accumR / totalRowPct * totalH);
         }
 
         // Find the bounding box of cells belonging to this zoneIndex
@@ -118,10 +118,10 @@ public static class ZoneCalculator
         // PORT NOTE: Python calculates Width and Height independently and then
         // uses them in SetWindowPos. Calculating Right/Bottom directly in C#
         // and then deriving Width/Height can lead to 1px discrepancies due to truncation.
-        int x = workArea.Left + (int)(zone.X * scaleX);
-        int y = workArea.Top  + (int)(zone.Y * scaleY);
-        int w = (int)(zone.Width  * scaleX);
-        int h = (int)(zone.Height * scaleY);
+        int x = workArea.Left + (int)Math.Round(zone.X * scaleX);
+        int y = workArea.Top  + (int)Math.Round(zone.Y * scaleY);
+        int w = (int)Math.Round(zone.Width  * scaleX);
+        int h = (int)Math.Round(zone.Height * scaleY);
 
         var result = new RECT
         {

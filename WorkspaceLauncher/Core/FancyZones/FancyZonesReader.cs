@@ -11,6 +11,16 @@ namespace WorkspaceLauncher.Core.FancyZones;
 /// Port of the Python FancyZones reading logic.
 /// </summary>
 
+public class FzLayoutInfo
+{
+    public string uuid { get; set; } = "";
+    public string name { get; set; } = "";
+    public string type { get; set; } = "custom";
+    public bool isCustom { get; set; } = true;
+    public int zoneCount { get; set; } = 1;
+    public object? info { get; set; }
+}
+
 public class AppliedLayoutEntry
 {
     [JsonPropertyName("deviceId")]
@@ -33,6 +43,9 @@ public class AppliedLayoutEntry
 
     [JsonPropertyName("layoutUuid")]
     public string LayoutUuid { get; set; } = "";
+
+    [JsonPropertyName("type")]
+    public string LayoutType { get; set; } = "custom";
 
     /// <summary>Spacing override from applied-layouts.json (-1 = not set, use layout default)</summary>
     public int Spacing { get; set; } = -1;
@@ -82,6 +95,7 @@ public static class FancyZonesReader
 
     public static string AppliedLayoutsPath => Path.Combine(FzBasePath, "applied-layouts.json");
     public static string CustomLayoutsPath  => Path.Combine(FzBasePath, "custom-layouts.json");
+    public static string SettingsPath       => Path.Combine(FzBasePath, "settings.json");
 
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
@@ -113,6 +127,163 @@ public static class FancyZonesReader
             Console.WriteLine($"[FancyZonesReader] ReadCustomLayouts error: {ex.Message}");
         }
         return result;
+    }
+
+    /// <summary>
+    /// Returns a consolidated list of all layouts (custom + settings templates).
+    /// </summary>
+    public static List<FzLayoutInfo> GetAvailableLayouts()
+    {
+        SyncCacheFromDisk();
+        var config = ConfigManager.Instance.Config;
+        var layoutsCache = config?.FzLayoutsCache ?? new Dictionary<string, LayoutCacheEntry>();
+
+        var availableLayouts = layoutsCache.Values.Select(l => {
+            int zones = 0;
+            try {
+                if (l.Info.TryGetProperty("cell-child-map", out var map))
+                {
+                    var allCells = new HashSet<int>();
+                    for (int rr = 0; rr < map.GetArrayLength(); rr++)
+                        foreach (var cell in map[rr].EnumerateArray())
+                            allCells.Add(cell.GetInt32());
+                    zones = allCells.Count;
+                }
+                else if (l.Info.TryGetProperty("zones", out var zArray))
+                    zones = zArray.GetArrayLength();
+            } catch { }
+
+            return new FzLayoutInfo {
+                uuid = l.Uuid.Trim('{', '}').ToLowerInvariant(),
+                name = l.Name,
+                type = l.Type,
+                isCustom = true,
+                zoneCount = zones > 0 ? zones : 1,
+                info = l.Info
+            };
+        }).ToList();
+
+        // Add Default PowerToys Templates (Only if not already overridden by custom layouts)
+        var ptTemplates = ReadTemplatesFromSettings();
+        foreach (var template in ptTemplates)
+        {
+            string cleanUuid = template.Uuid.Trim('{', '}').ToLowerInvariant();
+            if (!availableLayouts.Any(l => l.uuid.Equals(cleanUuid, StringComparison.OrdinalIgnoreCase)))
+            {
+                var info = GetDefaultTemplateInfo(template.Type);
+                availableLayouts.Add(new FzLayoutInfo {
+                    uuid = cleanUuid,
+                    name = template.Name,
+                    type = template.Type,
+                    isCustom = false,
+                    zoneCount = template.Type == "focus" ? 1 : 3,
+                    info = info
+                });
+            }
+        }
+
+        return availableLayouts;
+    }
+
+    private static JsonElement? GetDefaultTemplateInfo(string type)
+    {
+        string json = "";
+        if (type == "grid") json = "{\"type\":\"grid\",\"rows\":1,\"columns\":3,\"rows-percentage\":[10000],\"columns-percentage\":[3333,3333,3334],\"cell-child-map\":[[0,1,2]]}";
+        else if (type == "rows") json = "{\"type\":\"grid\",\"rows\":3,\"columns\":1,\"rows-percentage\":[3333,3333,3334],\"columns-percentage\":[10000],\"cell-child-map\":[[0],[1],[2]]}";
+        else if (type == "columns") json = "{\"type\":\"grid\",\"rows\":1,\"columns\":3,\"rows-percentage\":[10000],\"columns-percentage\":[3333,3333,3334],\"cell-child-map\":[[0,1,2]]}";
+        else if (type == "priority-grid") json = "{\"type\":\"grid\",\"rows\":3,\"columns\":3,\"rows-percentage\":[3333,3333,3334],\"columns-percentage\":[2500,5000,2500],\"cell-child-map\":[[0,1,2],[0,1,2],[0,1,2]]}";
+        else if (type == "focus") json = "{\"type\":\"canvas\",\"zones\":[{\"X\":2500, \"Y\":2500, \"width\":5000, \"height\":5000}]}";
+        
+        if (string.IsNullOrEmpty(json)) return null;
+        try { return JsonSerializer.Deserialize<JsonElement>(json); } catch { return null; }
+    }
+
+
+    /// <summary>
+    /// Reads standard PowerToys templates from settings.json.
+    /// This avoids hardcoding UUIDs and improves portability.
+    /// </summary>
+    public static List<FzTemplateInfo> ReadTemplatesFromSettings()
+    {
+        var result = new List<FzTemplateInfo>();
+
+        // 1. Add hardcoded standard templates as fallbacks
+        // These are consistent across PowerToys versions
+        var hardcoded = new List<FzTemplateInfo>
+        {
+            new FzTemplateInfo { Uuid = "grid", Name = "Cuadrícula", Type = "grid" },
+            new FzTemplateInfo { Uuid = "rows", Name = "Filas", Type = "rows" },
+            new FzTemplateInfo { Uuid = "columns", Name = "Columnas", Type = "columns" },
+            new FzTemplateInfo { Uuid = "focus", Name = "Foco", Type = "focus" },
+            new FzTemplateInfo { Uuid = "priority-grid", Name = "Cuadrícula de prioridad", Type = "priority-grid" }
+        };
+        result.AddRange(hardcoded);
+
+        if (!File.Exists(SettingsPath)) return result;
+
+        try
+        {
+            string json = File.ReadAllText(SettingsPath);
+            var root = JsonNode.Parse(json);
+            var templates = root?["properties"]?["templates"]?.AsArray();
+            
+            if (templates != null)
+            {
+                foreach (var t in templates)
+                {
+                    if (t is not JsonObject obj) continue;
+                    string? uuid = obj["uuid"]?.GetValue<string>();
+                    string? name = obj["name"]?.GetValue<string>();
+                    if (!string.IsNullOrEmpty(uuid) && !string.IsNullOrEmpty(name))
+                    {
+                        string cleanUuid = uuid.Trim('{', '}').ToLowerInvariant();
+                        string displayName = name;
+                        string type = "grid"; // Default type
+
+                        // Standardize type and name
+                        if (displayName.Equals("Grid", StringComparison.OrdinalIgnoreCase)) { displayName = "Cuadrícula"; type = "grid"; }
+                        else if (displayName.Equals("Priority Grid", StringComparison.OrdinalIgnoreCase)) { displayName = "Cuadrícula de prioridad"; type = "priority-grid"; }
+                        else if (displayName.Equals("Rows", StringComparison.OrdinalIgnoreCase)) { displayName = "Filas"; type = "rows"; }
+                        else if (displayName.Equals("Columns", StringComparison.OrdinalIgnoreCase)) { displayName = "Columnas"; type = "columns"; }
+                        else if (displayName.Equals("Focus", StringComparison.OrdinalIgnoreCase)) { displayName = "Foco"; type = "focus"; }
+                        else type = displayName.Replace(" ", "-").ToLowerInvariant();
+
+                        // Deduplicate: Check if we already have this UUID OR this TYPE (for standard templates)
+                        var existing = result.FirstOrDefault(r => 
+                            r.Uuid.Equals(cleanUuid, StringComparison.OrdinalIgnoreCase) ||
+                            (type != "custom" && r.Type.Equals(type, StringComparison.OrdinalIgnoreCase)));
+
+                        if (existing != null)
+                        {
+                            // Favor the settings UUID if it's a real GUID, but keep shorthand if that's what we have
+                            if (cleanUuid.Contains("-")) existing.Uuid = cleanUuid; 
+                            existing.Name = displayName;
+                            existing.Type = type;
+                        }
+                        else
+                        {
+                            result.Add(new FzTemplateInfo {
+                                Uuid = cleanUuid,
+                                Name = displayName,
+                                Type = type
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FancyZonesReader] ReadTemplatesFromSettings error: {ex.Message}");
+        }
+        return result;
+    }
+
+    public class FzTemplateInfo 
+    {
+        public string Uuid { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Type { get; set; } = "";
     }
 
     /// <summary>
@@ -149,6 +320,7 @@ public static class FancyZonesReader
                 
                 var appliedLayoutNode = obj["applied-layout"];
                 var layout = appliedLayoutNode?["uuid"]?.GetValue<string>();
+                string type = appliedLayoutNode?["type"]?.GetValue<string>() ?? "custom";
                 int spacing = -1;
                 bool showSpacing = true;
                 if (appliedLayoutNode != null)
@@ -169,6 +341,7 @@ public static class FancyZonesReader
                         MonitorNumber = monitorNumber,
                         SerialNumber = serialNumber ?? "",
                         LayoutUuid = layout.Trim('{', '}').ToLowerInvariant(),
+                        LayoutType = type,
                         Spacing = spacing,
                         ShowSpacing = showSpacing
                     };
@@ -239,10 +412,24 @@ public static class FancyZonesReader
             var arr = root?["applied-layouts"]?.AsArray();
             if (arr == null) return false;
 
-            string wrappedLayoutUuid = $"{{{layoutUuid.ToUpperInvariant()}}}";
+            string wrappedLayoutUuid = $"{{{layoutUuid.Trim('{', '}').ToUpperInvariant()}}}";
             string wrappedDesktopId = !string.IsNullOrEmpty(virtualDesktopId) 
                 ? $"{{{virtualDesktopId.Trim('{', '}').ToUpperInvariant()}}}" 
                 : "{00000000-0000-0000-0000-000000000000}";
+
+            // Detect template type and handle zeros-GUID for standard templates
+            var templates = ReadTemplatesFromSettings();
+            var template = templates.FirstOrDefault(t => t.Uuid.Equals(layoutUuid, StringComparison.OrdinalIgnoreCase));
+            if (template != null)
+            {
+                type = template.Type;
+                // Standard templates are best activated via the all-zeros GUID + the correct type string.
+                // This works universally across PowerToys versions for default layouts.
+                if (type != "custom")
+                {
+                    wrappedLayoutUuid = "{00000000-0000-0000-0000-000000000000}";
+                }
+            }
 
             bool found = false;
             foreach (var entry in arr)
