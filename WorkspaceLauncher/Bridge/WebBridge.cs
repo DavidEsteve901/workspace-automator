@@ -691,7 +691,10 @@ public sealed class WebBridge
                                 }
                                 else
                                 {
-                                    Logger.Warn($"[FzDebug] Layout {rawUuid} found in PT but NOT in cache!");
+                                    Logger.Warn($"[FzDebug] Layout {rawUuid} found in PT but NOT in cache — recording UUID anyway.");
+                                    // Still record the UUID so the frontend knows something is active here.
+                                    // The layout name won't be available, but UUID-based matching in the UI will work.
+                                    matchedLayoutUuid = rawUuid;
                                 }
                                 break; // Perfect match found
                             }

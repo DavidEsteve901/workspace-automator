@@ -116,17 +116,39 @@ public static class DwmHelper
         return adjusted;
     }
     /// <summary>
+    /// Returns the VISUAL bounds of a window (DWM extended frame, excluding shadow).
+    /// Falls back to logical GetWindowRect if DWM is unavailable.
+    /// Use this for drift comparisons — NOT GetWindowRect which returns logical (shadow-inclusive) coords.
+    /// </summary>
+    public static RECT GetVisualBounds(nint hwnd)
+    {
+        int hr = Dwmapi.DwmGetWindowAttribute(
+            hwnd,
+            Dwmapi.DWMWA_EXTENDED_FRAME_BOUNDS,
+            out RECT visual,
+            (uint)Marshal.SizeOf<RECT>());
+
+        if (hr == 0) return visual;
+
+        // DWM unavailable (rare — e.g. remote desktop) — fall back to logical rect
+        User32.GetWindowRect(hwnd, out RECT logical);
+        return logical;
+    }
+
+    /// <summary>
     /// Public entry point: restore → focus → snap with DWM compensation.
     /// Sequence mirrors the Python script: SW_RESTORE → ALT hack → SetWindowPos compensated.
     /// If 'silent' is true, it avoids forcing focus to prevent virtual desktop jumps.
     /// </summary>
     public static async Task<bool> ApplyZoneRect(nint hwnd, RECT zoneRect, int retries = 3, bool silent = false)
     {
-        // 1. Restore if minimized (only if not silent or it's absolutely necessary)
-        if (IsIconic(hwnd))
+        // 1. Restore if minimized OR maximized — both prevent SetWindowPos from working correctly.
+        //    A maximized window ignores explicit size/position calls on some Windows builds.
+        bool needsRestore = IsIconic(hwnd) || IsZoomed(hwnd);
+        if (needsRestore)
         {
             User32.ShowWindow(hwnd, silent ? User32.SW_SHOWNOACTIVATE : User32.SW_RESTORE);
-            await Task.Delay(250);
+            await Task.Delay(silent ? 150 : 280);
         }
 
         // 2. Force foreground (only if NOT silent)

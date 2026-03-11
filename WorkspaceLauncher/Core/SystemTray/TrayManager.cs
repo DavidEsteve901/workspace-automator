@@ -16,9 +16,12 @@ public sealed class TrayManager : IDisposable
     private NotifyIcon? _notifyIcon;
     private bool _disposed;
 
+    public static TrayManager? Instance { get; private set; }
+
     public TrayManager(Window mainWindow)
     {
         _mainWindow = mainWindow;
+        Instance = this;
     }
 
     public void Initialize()
@@ -29,12 +32,9 @@ public sealed class TrayManager : IDisposable
             Visible = true,
         };
 
-        // Try to load icon from base directory
-        string iconPath = Path.Combine(AppContext.BaseDirectory, "launcher_icon.ico");
-        if (File.Exists(iconPath))
-            _notifyIcon.Icon = new Icon(iconPath);
-        else
-            _notifyIcon.Icon = SystemIcons.Application;
+        // Load icon: prefer embedded WPF resource (works in dev + single-file publish),
+        // fall back to file on disk, then to the system default.
+        _notifyIcon.Icon = LoadIcon();
 
         // Context menu
         var menu = new ContextMenuStrip();
@@ -45,6 +45,27 @@ public sealed class TrayManager : IDisposable
         _notifyIcon.ContextMenuStrip = menu;
 
         _notifyIcon.DoubleClick += (_, _) => ShowWindow();
+    }
+
+    private static Icon LoadIcon()
+    {
+        // 1. Embedded WPF Resource (pack URI) — works in dev and in single-file publish
+        try
+        {
+            var sri = System.Windows.Application.GetResourceStream(
+                new Uri("pack://application:,,,/launcher_icon.ico"));
+            if (sri != null)
+                return new Icon(sri.Stream);
+        }
+        catch { }
+
+        // 2. File next to exe — useful if someone runs the exe directly from publish folder
+        string filePath = Path.Combine(AppContext.BaseDirectory, "launcher_icon.ico");
+        if (File.Exists(filePath))
+            return new Icon(filePath);
+
+        // 3. Last resort: generic Windows app icon
+        return SystemIcons.Application;
     }
 
     public void ShowBalloon(string title, string text, int timeoutMs = 2000)

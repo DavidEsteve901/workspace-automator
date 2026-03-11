@@ -12,10 +12,19 @@ namespace WorkspaceLauncher.Core.NativeInterop;
 public sealed class VirtualDesktopManager : IDisposable
 {
     private object? _manager;    // Typed as object since the interface varies by build
+    private IServiceProvider? _shell; // Shell reference for querying additional services
     private bool _initialized;
     private bool _initAttempted;
     private BuildVariant _variant = BuildVariant.Unknown;
     private List<Guid> _cachedDesktops = new();
+    private DateTime _desktopsCacheTime = DateTime.MinValue;
+    private IApplicationViewCollection? _viewCollection;
+    private IVirtualDesktopPinnedApps? _pinnedApps;
+    private readonly object _pinLock = new();
+    // Cache desktop list for 600ms — avoids repeated COM round-trips during validation/launch
+    // (ResolveDesktopGuid is called per item and would otherwise do a COM call each time).
+    // Invalidated on CreateDesktop/SwitchToDesktop calls.
+    private static readonly TimeSpan DesktopsCacheTtl = TimeSpan.FromMilliseconds(600);
 
     public static readonly VirtualDesktopManager Instance = new();
 
@@ -88,6 +97,7 @@ public sealed class VirtualDesktopManager : IDisposable
         try
         {
             var shell = (IServiceProvider)new ImmersiveShell22H2();
+            _shell = shell;
             var mgrGuid = typeof(IVirtualDesktopManagerInternal_22H2).GUID;
             shell.QueryService(ref mgrGuid, ref mgrGuid, out object mgrObj);
             _manager = (IVirtualDesktopManagerInternal_22H2)mgrObj;
@@ -106,6 +116,7 @@ public sealed class VirtualDesktopManager : IDisposable
         try
         {
             var shell = (IServiceProvider)new ImmersiveShell24H2();
+            _shell = shell;
             var mgrGuid = typeof(IVirtualDesktopManagerInternal_24H2).GUID;
             shell.QueryService(ref mgrGuid, ref mgrGuid, out object mgrObj);
             _manager = (IVirtualDesktopManagerInternal_24H2)mgrObj;
@@ -119,11 +130,60 @@ public sealed class VirtualDesktopManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// Lazily initializes the IApplicationViewCollection and IVirtualDesktopPinnedApps
+    /// COM services needed for window pinning. Stable across all Windows 11 builds.
+    /// </summary>
+    private bool EnsurePinningServices()
+    {
+        if (_viewCollection != null && _pinnedApps != null) return true;
+        EnsureInitialized();
+        if (_shell == null) return false;
+
+        lock (_pinLock)
+        {
+            if (_viewCollection == null)
+            {
+                try
+                {
+                    var vcGuid = typeof(IApplicationViewCollection).GUID;
+                    _shell.QueryService(ref vcGuid, ref vcGuid, out object vcObj);
+                    _viewCollection = (IApplicationViewCollection)vcObj;
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"[VDM] IApplicationViewCollection init failed: {ex.Message}");
+                    return false;
+                }
+            }
+            if (_pinnedApps == null)
+            {
+                try
+                {
+                    var paGuid = typeof(IVirtualDesktopPinnedApps).GUID;
+                    _shell.QueryService(ref paGuid, ref paGuid, out object paObj);
+                    _pinnedApps = (IVirtualDesktopPinnedApps)paObj;
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"[VDM] IVirtualDesktopPinnedApps init failed: {ex.Message}");
+                    return false;
+                }
+            }
+            return _viewCollection != null && _pinnedApps != null;
+        }
+    }
+
     // ── Public API ───────────────────────────────────────────────────────────
 
     public List<Guid> GetDesktops()
     {
         EnsureInitialized();
+
+        // Return cached list if still fresh — avoids COM round-trips on repeated calls
+        if (_cachedDesktops.Count > 0 && (DateTime.UtcNow - _desktopsCacheTime) < DesktopsCacheTtl)
+            return new List<Guid>(_cachedDesktops);
+
         var result = new List<Guid>();
         try
         {
@@ -178,6 +238,7 @@ public sealed class VirtualDesktopManager : IDisposable
         if (result.Count == 0) result = regDesktops;
 
         _cachedDesktops = result;
+        _desktopsCacheTime = DateTime.UtcNow;
         Logger.Info($"[VirtualDesktopManager] Found {result.Count} desktops total.");
         return result;
     }
@@ -435,6 +496,7 @@ public sealed class VirtualDesktopManager : IDisposable
     {
         EnsureInitialized();
         if (_manager == null) return null;
+        _desktopsCacheTime = DateTime.MinValue; // Invalidate cache — a new desktop was created
         try
         {
             object newDesktop;
@@ -458,9 +520,59 @@ public sealed class VirtualDesktopManager : IDisposable
         }
     }
 
-    public bool IsWindowPinned(nint hwnd) => false; // Simplified - pin APIs require IApplicationView
-    public void PinWindow(nint hwnd) { }
-    public void UnpinWindow(nint hwnd) { }
+    public bool IsWindowPinned(nint hwnd)
+    {
+        if (!User32.IsWindow(hwnd)) return false;
+        if (!EnsurePinningServices()) return false;
+        try
+        {
+            int hr = _viewCollection!.GetViewForHwnd(hwnd, out object view);
+            if (hr != 0 || view == null) return false;
+            _pinnedApps!.IsPinnedView(view, out bool isPinned);
+            return isPinned;
+        }
+        catch { return false; }
+    }
+
+    public void PinWindow(nint hwnd)
+    {
+        if (!User32.IsWindow(hwnd)) return;
+        if (!EnsurePinningServices()) return;
+        try
+        {
+            int hr = _viewCollection!.GetViewForHwnd(hwnd, out object view);
+            if (hr != 0 || view == null)
+            {
+                Logger.Warn($"[VDM] PinWindow: no IApplicationView for HWND {hwnd} (hr=0x{hr:X})");
+                return;
+            }
+            hr = _pinnedApps!.PinView(view);
+            if (hr == 0)
+                Logger.Success($"[VDM] Window {hwnd} pinned to all desktops.");
+            else
+                Logger.Warn($"[VDM] PinView returned hr=0x{hr:X} for HWND {hwnd}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"[VDM] PinWindow failed for HWND {hwnd}: {ex.Message}");
+        }
+    }
+
+    public void UnpinWindow(nint hwnd)
+    {
+        if (!User32.IsWindow(hwnd)) return;
+        if (!EnsurePinningServices()) return;
+        try
+        {
+            int hr = _viewCollection!.GetViewForHwnd(hwnd, out object view);
+            if (hr != 0 || view == null) return;
+            _pinnedApps!.UnpinView(view);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"[VDM] UnpinWindow failed for HWND {hwnd}: {ex.Message}");
+        }
+    }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
 
@@ -727,7 +839,7 @@ public sealed class VirtualDesktopManager : IDisposable
     // ══════════════════════════════════════════════════════════════════════════
     // Standard IVirtualDesktopManager (Public COM Interface)
     // ══════════════════════════════════════════════════════════════════════════
-    
+
     [ComImport, Guid("aa509086-5d76-480e-80f2-19352c335693")]
     private class VirtualDesktopManagerClass { }
 
@@ -737,5 +849,40 @@ public sealed class VirtualDesktopManager : IDisposable
         [PreserveSig] int IsWindowOnCurrentVirtualDesktop(nint topLevelWindow, [MarshalAs(UnmanagedType.Bool)] out bool onCurrentDesktop);
         [PreserveSig] int GetWindowDesktopId(nint topLevelWindow, out Guid desktopId);
         [PreserveSig] int MoveWindowToDesktop(nint topLevelWindow, ref Guid desktopId);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Window Pinning COM Interfaces (stable across all Windows 11 builds)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Retrieves the IApplicationView (shell view object) for any top-level HWND.
+    /// Required to call IVirtualDesktopPinnedApps.PinView().
+    /// </summary>
+    [ComImport, Guid("1841C6D7-4F9D-42C0-AF41-8747538F10E5"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IApplicationViewCollection
+    {
+        [PreserveSig] int GetViews(out IObjectArray views);
+        [PreserveSig] int GetViewsByZOrder(out IObjectArray views);
+        [PreserveSig] int GetViewsByAppUserModelId([MarshalAs(UnmanagedType.LPWStr)] string id, out IObjectArray views);
+        [PreserveSig] int GetViewForHwnd(nint hwnd, [MarshalAs(UnmanagedType.IUnknown)] out object view);
+        [PreserveSig] int GetViewForApplication([MarshalAs(UnmanagedType.IUnknown)] object application, [MarshalAs(UnmanagedType.IUnknown)] out object view);
+        [PreserveSig] int GetViewForAppUserModelId([MarshalAs(UnmanagedType.LPWStr)] string id, [MarshalAs(UnmanagedType.IUnknown)] out object view);
+        [PreserveSig] int GetViewInFocus([MarshalAs(UnmanagedType.IUnknown)] out object view);
+    }
+
+    /// <summary>
+    /// Pins/unpins IApplicationView objects to all virtual desktops (PiP, sticky windows).
+    /// Vtable: IsPinnedView, PinView, UnpinView, IsPinnedApp, PinApp, UnpinApp.
+    /// </summary>
+    [ComImport, Guid("4CE81583-1E4C-4632-A621-07A53543148F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IVirtualDesktopPinnedApps
+    {
+        [PreserveSig] int IsPinnedView([MarshalAs(UnmanagedType.IUnknown)] object view, [MarshalAs(UnmanagedType.Bool)] out bool isPinned);
+        [PreserveSig] int PinView([MarshalAs(UnmanagedType.IUnknown)] object view);
+        [PreserveSig] int UnpinView([MarshalAs(UnmanagedType.IUnknown)] object view);
+        [PreserveSig] int IsPinnedApp([MarshalAs(UnmanagedType.LPWStr)] string appId, [MarshalAs(UnmanagedType.Bool)] out bool isPinned);
+        [PreserveSig] int PinApp([MarshalAs(UnmanagedType.LPWStr)] string appId);
+        [PreserveSig] int UnpinApp([MarshalAs(UnmanagedType.LPWStr)] string appId);
     }
 }

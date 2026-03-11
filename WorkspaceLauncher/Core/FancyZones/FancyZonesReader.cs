@@ -33,6 +33,10 @@ public class AppliedLayoutEntry
 
     [JsonPropertyName("layoutUuid")]
     public string LayoutUuid { get; set; } = "";
+
+    /// <summary>Spacing override from applied-layouts.json (-1 = not set, use layout default)</summary>
+    public int Spacing { get; set; } = -1;
+    public bool ShowSpacing { get; set; } = true;
 }
 
 public static class FancyZonesReader
@@ -143,8 +147,18 @@ public static class FancyZonesReader
                 var desktopNode = obj["virtual-desktop-id"] ?? device?["virtual-desktop"];
                 string? desktopId = desktopNode?.GetValue<string>()?.Trim('{', '}').ToLowerInvariant();
                 
-                var layout = obj["applied-layout"]?["uuid"]?.GetValue<string>();
-                
+                var appliedLayoutNode = obj["applied-layout"];
+                var layout = appliedLayoutNode?["uuid"]?.GetValue<string>();
+                int spacing = -1;
+                bool showSpacing = true;
+                if (appliedLayoutNode != null)
+                {
+                    if (appliedLayoutNode["spacing"] is { } sp && sp.GetValueKind() == System.Text.Json.JsonValueKind.Number)
+                        spacing = sp.GetValue<int>();
+                    if (appliedLayoutNode["show-spacing"] is { } ss && (ss.GetValueKind() == System.Text.Json.JsonValueKind.True || ss.GetValueKind() == System.Text.Json.JsonValueKind.False))
+                        showSpacing = ss.GetValue<bool>();
+                }
+
                 if (!string.IsNullOrEmpty(deviceId) && !string.IsNullOrEmpty(layout))
                 {
                     var item = new AppliedLayoutEntry {
@@ -154,7 +168,9 @@ public static class FancyZonesReader
                         DesktopId = desktopId ?? "",
                         MonitorNumber = monitorNumber,
                         SerialNumber = serialNumber ?? "",
-                        LayoutUuid = layout.Trim('{', '}').ToLowerInvariant()
+                        LayoutUuid = layout.Trim('{', '}').ToLowerInvariant(),
+                        Spacing = spacing,
+                        ShowSpacing = showSpacing
                     };
                     result.Add(item);
                 }

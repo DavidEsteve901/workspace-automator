@@ -62,7 +62,7 @@ public sealed class WorkspaceOrchestrator
             Report($"Escritorio: {desktopName}", 10 + (int)((double)processedCount / total * 80));
 
             // 1. Switch to the target desktop and WAIT for OS confirmation
-            if (!await PrepareDesktopAsync(desktopName)) 
+            if (!await PrepareDesktopAsync(desktopName))
             {
                 Logger.Error($"[Orchestrator] Saltando escritorio {desktopName} por error en cambio.");
                 processedCount += group.Count();
@@ -75,14 +75,24 @@ public sealed class WorkspaceOrchestrator
                 processedCount++;
                 Report($"Abriendo: {GetItemDisplayName(item)}", 10 + (int)((double)processedCount / total * 80));
 
-                if (int.TryParse(item.Delay, out int d) && d > 0) 
+                if (int.TryParse(item.Delay, out int d) && d > 0)
                     await Task.Delay(d);
 
                 // Launch and WAIT for the window to appear
                 nint hwnd = await LaunchOnlyAsync(item);
-                
+
                 if (hwnd != 0)
                 {
+                    // Track the HWND for reliable integrity sweeps later
+                    hwndsByItem[item] = hwnd;
+
+                    // ── APP READINESS WAIT ──
+                    // The window handle exists but the app may still be loading.
+                    // Browsers render pages, VSCode loads extensions, Obsidian opens vaults —
+                    // if we snap before they finish initializing they override our position.
+                    int readiness = GetReadinessDelay(item);
+                    if (readiness > 0) await Task.Delay(readiness);
+
                     // ── CRITICAL ISOLATION SAFEGUARD ──
                     // Avoid checking against 'current' desktop, as the user might have switched manually.
                     // We check if the window is on the SPECIFIC target desktop.
@@ -94,9 +104,9 @@ public sealed class WorkspaceOrchestrator
                         {
                             Logger.Warn($"[Orchestrator] {GetItemDisplayName(item)} apareció en escritorio {currentDeskId}, pero debería estar en {targetId}. Moviendo...");
                             VirtualDesktopManager.Instance.MoveWindowToDesktop(hwnd, targetId.Value);
-                            
+
                             // Give the OS time to verify the move
-                            await Task.Delay(500); 
+                            await Task.Delay(500);
                         }
                     }
 
@@ -105,17 +115,17 @@ public sealed class WorkspaceOrchestrator
                     if (zoneRect.HasValue)
                     {
                         Logger.Info($"[Orchestrator] Ajustando {GetItemDisplayName(item)} en {desktopName}...");
-                        
+
                         // ── SMART SILENCE ──
                         // If the window is NOT on the current view, we use silent mode.
                         // This prevents the SWP_SHOWWINDOW flag from forcing the OS to switch desktops.
                         bool isHere = VirtualDesktopManager.Instance.IsWindowOnCurrentDesktop(hwnd);
                         bool ok = await DwmHelper.ApplyZoneRect(hwnd, zoneRect.Value, retries: 4, silent: !isHere);
-                        
+
                         if (ok) RegisterInZoneStack(item, hwnd, config);
                     }
 
-                    await Task.Delay(400); // Breathe
+                    await Task.Delay(250); // Brief pause between items
                 }
                 else
                 {
@@ -123,20 +133,28 @@ public sealed class WorkspaceOrchestrator
                 }
             }
 
-            await Task.Delay(600); // Breathe between desktops
+            await Task.Delay(500); // Breathe between desktops
         }
 
         // --- PHASE 3: Global Integrity Sweep ---
+        // Three passes with increasing strictness. Handles apps that:
+        //   - Were still animating when we first snapped
+        //   - Resized themselves after loading content (browsers, IDEs)
+        //   - Were moved by the user during launch
         Report("Auditoría final de integridad global...", 95);
-        await Task.Delay(1000); 
-        
-        // We do a final "Deep Convergence" phase: check everything twice with gaps.
-        // This handles windows that were still animating or being pulled by the user.
-        await FinalIntegritySweep(items, config, silent: true);
-        await Task.Delay(1500);
-        await FinalIntegritySweep(items, config, silent: true);
+        await Task.Delay(800);
+        await FinalIntegritySweep(items, config, silent: true,  trackedHwnds: hwndsByItem);
+        await Task.Delay(1200);
+        await FinalIntegritySweep(items, config, silent: true,  trackedHwnds: hwndsByItem);
+        await Task.Delay(2000);
+        // Third pass: slower apps (browsers, VSCode, IDEs) should have finished loading by now
+        await FinalIntegritySweep(items, config, silent: false, trackedHwnds: hwndsByItem);
 
         Report("Workspace estabilizado correctamente.", 100);
+        Core.SystemTray.TrayManager.Instance?.ShowBalloon(
+            "Workspace lanzado",
+            $"'{category}' iniciado correctamente.",
+            timeoutMs: 3000);
     }
 
     private async Task<bool> PrepareDesktopAsync(string desktopLabel)
@@ -183,15 +201,18 @@ public sealed class WorkspaceOrchestrator
         var process = ProcessLauncher.Launch(item);
         nint hwnd = 0;
 
+        // Type-specific timeout: slow apps (VSCode, IDE, Obsidian) may take longer to open
+        int timeout = GetDetectionTimeout(item);
+
         if (process != null)
         {
-            try { hwnd = await WindowDetector.WaitForWindowAsync(process, timeoutMs: 6_000); } catch { }
+            try { hwnd = await WindowDetector.WaitForWindowAsync(process, timeoutMs: timeout); } catch { }
         }
 
         if (hwnd == 0)
         {
             hwnd = await WindowDetector.WaitForNewWindowAsync(
-                before, typeHint: item.Type, pathHint: item.Path, timeoutMs: 6_000);
+                before, typeHint: item.Type, pathHint: item.Path, timeoutMs: timeout);
         }
 
         // --- Convergence Fallback ---
@@ -205,6 +226,37 @@ public sealed class WorkspaceOrchestrator
 
         return hwnd;
     }
+
+    /// <summary>
+    /// Time to wait after window detection before snapping.
+    /// Apps continue loading after their window handle appears — this gives them time
+    /// to finish so they don't override our position.
+    /// </summary>
+    private static int GetReadinessDelay(AppItem item) => item.Type switch
+    {
+        "url"        => 650,  // Browser: page render + layout stabilization
+        "vscode"     => 550,  // VSCode: extension activation + workspace load
+        "ide"        => 550,  // Other IDEs: project indexing
+        "obsidian"   => 500,  // Obsidian: vault open + plugin load
+        "powershell" => 200,  // Terminal: starts fast
+        "exe"        => 150,  // Generic executable
+        _            => 150
+    };
+
+    /// <summary>
+    /// How long to wait for a window to appear after launch.
+    /// Heavy apps need more time, especially on slow machines or first-launch.
+    /// </summary>
+    private static int GetDetectionTimeout(AppItem item) => item.Type switch
+    {
+        "vscode"     => 14_000, // VSCode: slow on first launch or large workspace
+        "ide"        => 14_000, // IDEs: project scanning
+        "url"        => 12_000, // Browser: may need to start cold
+        "obsidian"   => 12_000, // Obsidian: vault loading
+        "powershell" => 8_000,
+        "exe"        => 8_000,
+        _            => 8_000
+    };
 
     // ── PHASE 6: Recovery Mode ───────────────────────────────────────────────
 
@@ -236,6 +288,7 @@ public sealed class WorkspaceOrchestrator
 
         int total = items.Count;
         int matched = 0;
+        var hwndsByItem = new Dictionary<AppItem, nint>();
 
         for (int i = 0; i < total; i++)
         {
@@ -246,15 +299,22 @@ public sealed class WorkspaceOrchestrator
             nint hwnd = WindowDetector.ScoreMatchBestWindow(item, allWindows);
             if (hwnd == 0) continue;
 
-            // Switch to target desktop if needed
+            hwndsByItem[item] = hwnd;
+
+            // Move to target desktop if needed (verify first to avoid unnecessary desktop switches)
             var vdm = VirtualDesktopManager.Instance;
             var desktops = vdm.GetDesktops();
             if (item.Desktop != "Por defecto" && TryParseDesktopIndex(item.Desktop, out int dIdx))
             {
                 if (dIdx - 1 < desktops.Count)
                 {
-                    vdm.SwitchToDesktop(desktops[dIdx - 1]);
-                    await Task.Delay(300);
+                    var targetDesk = desktops[dIdx - 1];
+                    var actualDesk = vdm.GetWindowDesktopId(hwnd);
+                    if (actualDesk.HasValue && actualDesk != targetDesk)
+                    {
+                        vdm.MoveWindowToDesktop(hwnd, targetDesk);
+                        await Task.Delay(300);
+                    }
                 }
             }
 
@@ -266,13 +326,22 @@ public sealed class WorkspaceOrchestrator
                 matched++;
             }
         }
-        
-        // Final Sweep to ensure everything is perfect
-        Report("Verificando integridad final...", 95);
-        await Task.Delay(1000);
-        await FinalIntegritySweep(items, config);
 
-        Report($"Workspace restaurado: {matched}/{total} ventanas reposicionadas.", 100);
+        // Final sweep — uses tracked HWNDs (no re-scoring needed) + visual drift detection
+        Report("Verificando integridad final...", 95);
+        await Task.Delay(800);
+        await FinalIntegritySweep(items, config, trackedHwnds: hwndsByItem);
+        await Task.Delay(1200);
+        await FinalIntegritySweep(items, config, trackedHwnds: hwndsByItem);
+
+        string restoreMsg = matched == total
+            ? $"'{category}' restaurado: {matched}/{total} ventanas."
+            : $"'{category}': {matched}/{total} ventanas restauradas. {total - matched} no encontradas.";
+        Report(restoreMsg, 100);
+        Core.SystemTray.TrayManager.Instance?.ShowBalloon(
+            matched == total ? "Workspace restaurado" : "Restauración parcial",
+            restoreMsg,
+            timeoutMs: 4000);
     }
 
     /// <summary>
@@ -371,16 +440,29 @@ public sealed class WorkspaceOrchestrator
 
     // ── PHASE 7: Final integrity sweep ───────────────────────────────────────
 
-    private async Task FinalIntegritySweep(List<AppItem> items, AppConfig config, bool silent = false)
+    /// <summary>
+    /// Verifies that every workspace window is on the correct desktop and in the correct zone.
+    /// Uses tracked HWNDs from the launch phase when available (more reliable than re-scoring).
+    /// Falls back to the scoring system for windows that weren't tracked.
+    ///
+    /// IMPORTANT: Uses DWM visual bounds (DWMWA_EXTENDED_FRAME_BOUNDS) for drift comparison,
+    /// NOT GetWindowRect. GetWindowRect returns logical coords that include the invisible
+    /// DWM shadow border (~8px per side), which would cause false drift detections.
+    /// </summary>
+    private async Task FinalIntegritySweep(
+        List<AppItem> items,
+        AppConfig config,
+        bool silent = false,
+        Dictionary<AppItem, nint>? trackedHwnds = null)
     {
         var currentWindows = WindowManager.GetVisibleWindows().ToList();
         var vdm = VirtualDesktopManager.Instance;
 
-        // Perform two internal passes for each sweep call
+        // Two internal passes per sweep call: first lenient, second strict
         for (int pass = 1; pass <= 2; pass++)
         {
             Logger.Info($"[Orchestrator] Integridad (silent={silent}): Pase {pass}/2...");
-            
+
             foreach (var item in items)
             {
                 if (item.Fancyzone == "Ninguna" || string.IsNullOrEmpty(item.FancyzoneUuid)) continue;
@@ -388,10 +470,24 @@ public sealed class WorkspaceOrchestrator
                 RECT? zoneRect = ResolveZoneRect(item, config);
                 if (!zoneRect.HasValue) continue;
 
-                nint hwnd = WindowDetector.ScoreMatchBestWindow(item, currentWindows);
+                // Prefer tracked HWND (from launch phase) — it's more reliable than scoring.
+                // Only fall back to scoring if no tracked HWND exists or the window was closed.
+                nint hwnd = 0;
+                if (trackedHwnds != null &&
+                    trackedHwnds.TryGetValue(item, out nint tracked) &&
+                    tracked != 0 &&
+                    User32.IsWindow(tracked))
+                {
+                    hwnd = tracked;
+                }
+                else
+                {
+                    hwnd = WindowDetector.ScoreMatchBestWindow(item, currentWindows);
+                }
+
                 if (hwnd == 0) continue;
 
-                // 1. Verify Desktop - CRITICAL for portability
+                // 1. Verify Desktop placement
                 Guid? targetDesktopId = ResolveDesktopGuid(item);
                 if (targetDesktopId.HasValue && targetDesktopId != Guid.Empty)
                 {
@@ -404,28 +500,33 @@ public sealed class WorkspaceOrchestrator
                     }
                 }
 
-                // 2. Verify Position (Visual bounds)
-                RECT actual = WindowManager.GetWindowRect(hwnd);
-                var target = zoneRect.Value;
+                // 2. Verify Position using VISUAL bounds (not logical / shadow-inclusive bounds).
+                //    GetWindowRect returns logical coords which include the ~8px DWM shadow per side.
+                //    Comparing logical vs. our visual zone target would cause false drift detections
+                //    (logical.Width ≈ visual.Width + 16, always exceeding tight tolerances).
+                RECT actual = DwmHelper.GetVisualBounds(hwnd);
+                var  target = zoneRect.Value;
 
-                // Tolerance becomes tighter in second pass
-                int tolerance = pass == 2 ? 10 : 35; 
+                // Tolerance: lenient on pass 1 (catches real drift), tight on pass 2 (fine-tune)
+                int tolerance = pass == 2 ? 8 : 30;
 
-                bool hasDrifted = Math.Abs(actual.Left - target.Left) > tolerance ||
-                                  Math.Abs(actual.Top - target.Top) > tolerance ||
-                                  Math.Abs(actual.Width - target.Width) > tolerance ||
-                                  Math.Abs(actual.Height - target.Height) > tolerance;
+                bool hasDrifted =
+                    Math.Abs(actual.Left   - target.Left)   > tolerance ||
+                    Math.Abs(actual.Top    - target.Top)    > tolerance ||
+                    Math.Abs(actual.Width  - target.Width)  > tolerance ||
+                    Math.Abs(actual.Height - target.Height) > tolerance;
 
                 if (hasDrifted)
                 {
-                    Logger.Info($"[Orchestrator] Integridad: Re-ajuste de {GetItemDisplayName(item)}");
-                    // Use the 'silent' parameter to avoid fighting with the user's active view
-                    await DwmHelper.ApplyZoneRect(hwnd, target, retries: 2, silent: silent);
-                    RegisterInZoneStack(item, hwnd, config);
+                    Logger.Info($"[Orchestrator] Integridad: Re-ajuste de '{GetItemDisplayName(item)}'" +
+                                $" — actual [{actual.Left},{actual.Top} {actual.Width}x{actual.Height}]" +
+                                $" → target [{target.Left},{target.Top} {target.Width}x{target.Height}]");
+                    bool ok = await DwmHelper.ApplyZoneRect(hwnd, target, retries: 3, silent: silent);
+                    if (ok) RegisterInZoneStack(item, hwnd, config);
                 }
             }
-            
-            if (pass == 1) await Task.Delay(500);
+
+            if (pass == 1) await Task.Delay(400);
         }
     }
 
@@ -522,7 +623,24 @@ public sealed class WorkspaceOrchestrator
         var layoutInfo = ParseLayoutInfo(cacheEntry);
         if (layoutInfo == null) return null;
 
-        return ZoneCalculator.CalculateZoneRect(layoutInfo, zoneIdx, workArea.Value);
+        // FancyZones stores per-monitor-desktop spacing overrides in applied-layouts.json.
+        // These can differ from the base spacing in custom-layouts.json (cache).
+        // Using the wrong spacing produces zones that don't match FancyZones' visual overlays.
+        var appliedEntry = GetAppliedLayoutEntry(item, uuid);
+        if (appliedEntry != null && appliedEntry.Spacing >= 0)
+        {
+            if (layoutInfo.Spacing != appliedEntry.Spacing || layoutInfo.ShowSpacing != appliedEntry.ShowSpacing)
+            {
+                Console.WriteLine($"[Orchestrator] Spacing override for '{uuid}': cache={layoutInfo.Spacing}(show={layoutInfo.ShowSpacing}) → applied={appliedEntry.Spacing}(show={appliedEntry.ShowSpacing})");
+                layoutInfo.Spacing = appliedEntry.Spacing;
+                layoutInfo.ShowSpacing = appliedEntry.ShowSpacing;
+            }
+        }
+
+        var zoneRect = ZoneCalculator.CalculateZoneRect(layoutInfo, zoneIdx, workArea.Value);
+        if (zoneRect.HasValue)
+            Console.WriteLine($"[Orchestrator] ZoneRect for '{item.Fancyzone}' on monitor '{item.Monitor}': [{zoneRect.Value.Left},{zoneRect.Value.Top},{zoneRect.Value.Right},{zoneRect.Value.Bottom}] Size={zoneRect.Value.Width}x{zoneRect.Value.Height}");
+        return zoneRect;
     }
 
     internal static int ParseZoneIndex(string zoneName)
@@ -656,5 +774,63 @@ public sealed class WorkspaceOrchestrator
     {
         Console.WriteLine($"[Orchestrator] {percent}% {msg}");
         ProgressChanged?.Invoke(msg, percent);
+    }
+
+    /// <summary>
+    /// Finds the applied-layouts.json entry for the given item and layout UUID,
+    /// to read per-monitor-desktop spacing overrides that FancyZones applies
+    /// on top of the base layout definition.
+    /// </summary>
+    private static AppliedLayoutEntry? GetAppliedLayoutEntry(AppItem item, string layoutUuid)
+    {
+        try
+        {
+            var appliedLayouts = FancyZonesReader.ReadAppliedLayouts();
+            var monitors = MonitorManager.GetActiveMonitors();
+
+            // Find the monitor that matches this item's monitor label
+            MonitorInfo? mon = null;
+            if (!string.IsNullOrEmpty(item.Monitor) && item.Monitor != "Por defecto")
+            {
+                mon = monitors.FirstOrDefault(m =>
+                    m.PtName == item.Monitor || m.Name == item.Monitor ||
+                    m.Name.StartsWith(item.Monitor, StringComparison.OrdinalIgnoreCase) ||
+                    item.Monitor.StartsWith(m.Name, StringComparison.OrdinalIgnoreCase) ||
+                    m.PtInstance == item.Monitor);
+            }
+
+            // Resolve the target desktop GUID string
+            string? desktopGuidStr = null;
+            var desktopId = ResolveDesktopGuid(item);
+            if (desktopId.HasValue && desktopId != Guid.Empty)
+                desktopGuidStr = desktopId.Value.ToString("D", System.Globalization.CultureInfo.InvariantCulture).ToLowerInvariant();
+
+            // Find the best matching applied-layout entry
+            foreach (var entry in appliedLayouts)
+            {
+                if (!entry.LayoutUuid.Equals(layoutUuid, StringComparison.OrdinalIgnoreCase)) continue;
+
+                bool monMatch = mon == null
+                    || entry.MonitorName == mon.PtName
+                    || entry.Instance == mon.PtInstance;
+                if (!monMatch) continue;
+
+                bool deskMatch = desktopGuidStr == null
+                    || entry.DesktopId.Equals(desktopGuidStr, StringComparison.OrdinalIgnoreCase)
+                    || string.IsNullOrEmpty(entry.DesktopId);
+
+                if (monMatch && deskMatch) return entry;
+            }
+
+            // Fallback: any entry for this monitor (ignore desktop)
+            return appliedLayouts.FirstOrDefault(e =>
+                e.LayoutUuid.Equals(layoutUuid, StringComparison.OrdinalIgnoreCase) &&
+                (mon == null || e.MonitorName == mon.PtName || e.Instance == mon.PtInstance));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Orchestrator] GetAppliedLayoutEntry error: {ex.Message}");
+            return null;
+        }
     }
 }

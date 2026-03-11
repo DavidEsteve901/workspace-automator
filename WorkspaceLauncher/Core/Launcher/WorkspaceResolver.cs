@@ -57,9 +57,13 @@ public static class WorkspaceResolver
 
             if (changed)
             {
-                // Auto-save the updated configuration so it works consistently natively
-                Console.WriteLine("[Resolver] Updated configuration with new environment adaptations.");
-                ConfigManager.Instance.Save();
+                // NOTE: Intentionally NOT saving here.
+                // Remappings are applied in memory for this launch session only.
+                // Auto-saving would overwrite the portable config with hardware-specific
+                // monitor names, breaking the workspace when switching between setups
+                // (e.g. home monitor ↔ work monitor ↔ laptop standalone).
+                // Users can permanently update assignments via the item editor in the UI.
+                Console.WriteLine("[Resolver] Runtime environment adaptations applied (session only, not saved to disk).");
             }
         }
         catch (Exception ex)

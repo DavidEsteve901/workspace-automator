@@ -99,7 +99,13 @@ export default function ItemDialog({ category, index, item, onSave, onClose }) {
     }
 
     const entries = fzStatus.entries || []
-    const monitor = monitors.find(m => m.label === form.monitor || m.id === form.monitor)
+    const monitor = monitors.find(m =>
+      m.ptName === form.monitor ||
+      m.name === form.monitor ||
+      m.label === form.monitor ||
+      String(m.id) === String(form.monitor) ||
+      (m.displayLabel && (m.displayLabel === form.monitor || m.displayLabel.replace(' ★', '').trim() === form.monitor))
+    )
     if (!monitor) {
       setDetectedLayout(null)
       return

@@ -24,7 +24,12 @@ public static class MonitorManager
     public static List<MonitorInfo> GetActiveMonitors()
     {
         var monitors = new List<MonitorInfo>();
-        
+
+        // Ensure physical pixel coordinates regardless of which thread calls this.
+        // Without this, background threads may get DPI-scaled logical coordinates instead
+        // of physical pixels, causing zone calculations to be off on high-DPI monitors.
+        nint prevCtx = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
         User32.EnumDisplayMonitors(nint.Zero, nint.Zero, (nint hMonitor, nint hdcMonitor, ref RECT lprcMonitor, nint dwData) =>
         {
             var mi = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
@@ -132,11 +137,18 @@ public static class MonitorManager
                     info.Name = $"{info.Name} ({resolution})";
                 }
 
-                Console.WriteLine($"[MonitorManager] Monitor: {info.Name} | PtName={info.PtName} | PtInstance={info.PtInstance} | DeviceName={info.DeviceName} | Primary={info.IsPrimary}");
+                GetDpiForMonitor(hMonitor, 0 /* MDT_EFFECTIVE_DPI */, out uint dpiX, out uint dpiY);
+                Console.WriteLine($"[MonitorManager] Monitor: {info.Name} | PtName={info.PtName} | DPI={dpiX} | Bounds=[{lprcMonitor.Left},{lprcMonitor.Top},{lprcMonitor.Width}x{lprcMonitor.Height}] | WorkArea=[{mi.rcWork.Left},{mi.rcWork.Top},{mi.rcWork.Width}x{mi.rcWork.Height}] | Primary={info.IsPrimary}");
                 monitors.Add(info);
             }
             return true;
         }, nint.Zero);
+
+        // Restore previous DPI context
+        if (prevCtx != nint.Zero) SetThreadDpiAwarenessContext(prevCtx);
+
+        foreach (var m in monitors)
+            Console.WriteLine($"[MonitorManager] Confirmed: {m.Name} WorkArea=[{m.WorkArea.Left},{m.WorkArea.Top},{m.WorkArea.Right},{m.WorkArea.Bottom}] Size={m.WorkArea.Width}x{m.WorkArea.Height} Primary={m.IsPrimary}");
 
         return monitors;
     }
@@ -164,4 +176,12 @@ public static class MonitorManager
 
     [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", CharSet = CharSet.Unicode)]
     private static extern bool GetMonitorInfoW_Ex(nint hMonitor, ref MONITORINFOEX lpmi);
+
+    [DllImport("user32.dll")]
+    private static extern nint SetThreadDpiAwarenessContext(nint dpiContext);
+    // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+    private static readonly nint DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new(-4);
+
+    [DllImport("shcore.dll")]
+    private static extern int GetDpiForMonitor(nint hMonitor, int dpiType, out uint dpiX, out uint dpiY);
 }
