@@ -155,29 +155,54 @@ public sealed class ZoneCycler
                 : monitors[0].Name;
         }
 
-        // Try each layout in cache
+        // ── Find the active layout for this monitor ──
         var config = ConfigManager.Instance.Config;
-        foreach (var (uuid, cacheEntry) in config.FzLayoutsCache)
+        string desktopIdStr = desktopId.Value.ToString("D", System.Globalization.CultureInfo.InvariantCulture).ToLowerInvariant();
+        var appliedLayouts = FancyZonesReader.ReadAppliedLayouts();
+        
+        // Exact match (Monitor + Desktop)
+        var appliedEntry = appliedLayouts.FirstOrDefault(e =>
+            (e.Instance == monitorName || e.MonitorName == monitorName || e.MonitorName.StartsWith(monitorName) || monitorName.StartsWith(e.MonitorName)) &&
+            (string.IsNullOrEmpty(e.DesktopId) || e.DesktopId.Equals(desktopIdStr, StringComparison.OrdinalIgnoreCase))
+        );
+
+        // Fallback match (Monitor only)
+        if (appliedEntry == null)
         {
-            var layoutInfo = WorkspaceOrchestrator.ParseLayoutInfo(cacheEntry);
-            if (layoutInfo == null) continue;
+            appliedEntry = appliedLayouts.FirstOrDefault(e =>
+                e.Instance == monitorName || e.MonitorName == monitorName || e.MonitorName.StartsWith(monitorName) || monitorName.StartsWith(e.MonitorName));
+        }
 
-            // Calculate all zone rects for this layout
-            int maxZones = (layoutInfo.CellChildMap?.SelectMany(r => r).Distinct().Count())
-                         ?? layoutInfo.CanvasZones?.Length
-                         ?? 1;
+        if (appliedEntry == null) return null;
 
-            for (int zoneIdx = 0; zoneIdx < maxZones; zoneIdx++)
+        string activeUuid = appliedEntry.LayoutUuid.Trim('{', '}').ToLowerInvariant();
+        if (!config.FzLayoutsCache.TryGetValue(activeUuid, out var cacheEntry)) return null;
+
+        var layoutInfo = WorkspaceOrchestrator.ParseLayoutInfo(cacheEntry);
+        if (layoutInfo == null) return null;
+
+        // Apply spacing overrides from applied-layouts.json (crucial for accurate zone calculation)
+        if (appliedEntry.Spacing >= 0)
+        {
+            layoutInfo.Spacing = appliedEntry.Spacing;
+            layoutInfo.ShowSpacing = appliedEntry.ShowSpacing;
+        }
+
+        // Calculate all zone rects for this layout
+        int maxZones = (layoutInfo.CellChildMap?.SelectMany(r => r).Distinct().Count())
+                     ?? layoutInfo.CanvasZones?.Length
+                     ?? 1;
+
+        for (int zoneIdx = 0; zoneIdx < maxZones; zoneIdx++)
+        {
+            RECT? zoneRect = ZoneCalculator.CalculateZoneRect(layoutInfo, zoneIdx, workArea);
+            if (zoneRect == null) continue;
+
+            var zr = zoneRect.Value;
+            // Check if window center falls within this zone (with tolerance)
+            if (cx >= zr.Left - 20 && cx <= zr.Right + 20 && cy >= zr.Top - 20 && cy <= zr.Bottom + 20)
             {
-                RECT? zoneRect = ZoneCalculator.CalculateZoneRect(layoutInfo, zoneIdx, workArea);
-                if (zoneRect == null) continue;
-
-                var zr = zoneRect.Value;
-                // Check if window center falls within this zone (with tolerance)
-                if (cx >= zr.Left - 20 && cx <= zr.Right + 20 && cy >= zr.Top - 20 && cy <= zr.Bottom + 20)
-                {
-                    return new ZoneStack.ZoneKey(desktopId.Value, monitorName, uuid, zoneIdx);
-                }
+                return new ZoneStack.ZoneKey(desktopId.Value, monitorName, activeUuid, zoneIdx);
             }
         }
 

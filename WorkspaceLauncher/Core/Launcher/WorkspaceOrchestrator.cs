@@ -551,10 +551,16 @@ public sealed class WorkspaceOrchestrator
 
     private static string ResolveMonitorPtInstance(string? monitorLabel)
     {
-        if (string.IsNullOrEmpty(monitorLabel) || monitorLabel == "Por defecto") return "default";
+        var monitors = MonitorManager.GetActiveMonitors();
+
+        if (string.IsNullOrEmpty(monitorLabel) || monitorLabel == "Por defecto")
+        {
+            return monitors.FirstOrDefault(m => m.IsPrimary)?.PtInstance 
+                ?? monitors.FirstOrDefault()?.PtInstance 
+                ?? "default";
+        }
 
         // Try to find the active monitor whose label matches what was stored
-        var monitors = MonitorManager.GetActiveMonitors();
         var match = monitors.FirstOrDefault(m =>
             m.Name == monitorLabel ||
             m.PtInstance == monitorLabel ||
