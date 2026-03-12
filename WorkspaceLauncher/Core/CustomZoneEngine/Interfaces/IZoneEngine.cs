@@ -9,6 +9,9 @@ public interface IZoneEngine
     /// <summary>Get the layout ID active for (monitorPtInstance, desktopId), or null.</summary>
     string? GetActiveLayoutId(string monitorPtInstance, Guid desktopId);
 
+    /// <summary>Get the full layout entry active for (monitorPtInstance, desktopId), or null.</summary>
+    WorkspaceLauncher.Core.Config.CzeLayoutEntry? GetActiveLayout(string monitorPtInstance, Guid desktopId);
+
     /// <summary>Calculate pixel RECT for a zone within a layout, given the monitor work area.</summary>
     RECT? CalculateZoneRect(string layoutId, int zoneIndex, RECT workArea);
 

@@ -25,10 +25,37 @@ namespace WorkspaceLauncher.Bridge;
 /// For request/response (invoke): JS sends { action, payload, requestId },
 ///   C# responds with { event: "invoke_response", data: { requestId, result } }.
 /// </summary>
+[ComVisible(true)]
 public sealed class WebBridge
 {
     private readonly CoreWebView2 _webView;
-    private readonly MainWindow   _window;
+    private readonly System.Windows.Window _window;
+
+    // ── Broadcast registry (all active bridge instances, weak refs) ───────────
+    private static readonly List<WeakReference<WebBridge>> _allBridges = [];
+    private static readonly object _broadcastLock = new();
+
+    public static void BroadcastCzeState(string state)
+    {
+        lock (_broadcastLock)
+        {
+            _allBridges.RemoveAll(wr => !wr.TryGetTarget(out _));
+            foreach (var wr in _allBridges)
+                if (wr.TryGetTarget(out var b))
+                    b.SendEvent("cze_state_changed", new { state });
+        }
+    }
+
+    public static void BroadcastCanvasAction(string action)
+    {
+        lock (_broadcastLock)
+        {
+            _allBridges.RemoveAll(wr => !wr.TryGetTarget(out _));
+            foreach (var wr in _allBridges)
+                if (wr.TryGetTarget(out var b))
+                    b.SendEvent("cze_remote_action", new { action });
+        }
+    }
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -43,7 +70,7 @@ public sealed class WebBridge
     [DllImport("user32.dll")]
     private static extern int GetWindowTextLengthW(nint hWnd);
 
-    public WebBridge(CoreWebView2 webView, MainWindow window)
+    public WebBridge(CoreWebView2 webView, System.Windows.Window window)
     {
         _webView = webView;
         _window  = window;
@@ -52,6 +79,11 @@ public sealed class WebBridge
     public void Initialize()
     {
         _webView.WebMessageReceived += OnWebMessageReceived;
+        lock (_broadcastLock)
+        {
+            _allBridges.RemoveAll(wr => !wr.TryGetTarget(out _));
+            _allBridges.Add(new WeakReference<WebBridge>(this));
+        }
 
         // Wire up orchestrator progress events
         WorkspaceOrchestrator.Instance.ProgressChanged += (msg, pct) =>
@@ -69,7 +101,12 @@ public sealed class WebBridge
             using var doc = JsonDocument.Parse(e.WebMessageAsJson);
             var root      = doc.RootElement;
             string action = root.TryGetProperty("action", out var a) ? a.GetString() ?? "" : "";
+            if (string.IsNullOrEmpty(action))
+                action = root.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
+
             string? reqId = root.TryGetProperty("requestId", out var r) ? r.GetString() : null;
+
+            Logger.Info($"[Bridge] Received action: {action} (requestId: {reqId ?? "none"})");
 
             // Extract payload (for actions that send nested payload)
             JsonElement payload = root.TryGetProperty("payload", out var p) ? p : root;
@@ -149,9 +186,8 @@ public sealed class WebBridge
                             : System.Windows.WindowState.Maximized;
                     });
                     break;
-
                 case "window_close":
-                    _window.Dispatcher.Invoke(() => _window.Hide());
+                    _window.Dispatcher.Invoke(() => _window.Close());
                     break;
                 
                 case "window_drag":
@@ -267,12 +303,37 @@ public sealed class WebBridge
                     ReplyInvoke(reqId, HandleCzeDeleteLayout(payload));
                     break;
 
+                case "cze_get_state":
+                    ReplyInvoke(reqId, new { state = WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.State.ToString().ToLowerInvariant() });
+                    break;
+
                 case "cze_get_active_layouts":
                     ReplyInvoke(reqId, HandleCzeGetActiveLayouts());
                     break;
 
                 case "cze_set_active_layout":
                     ReplyInvoke(reqId, HandleCzeSetActiveLayout(payload));
+                    break;
+
+                case "cze_open_canvas":
+                    HandleCzeOpenCanvas(payload);
+                    break;
+
+                case "cze_canvas_saved":
+                case "cze_canvas_discard":
+                    WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.CloseAll();
+                    break;
+
+                case "cze_request_save":
+                     WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.RequestCanvasSave();
+                     break;
+
+                case "cze_request_discard":
+                     WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.RequestCanvasDiscard();
+                     break;
+
+                case "cze_activate_manager":
+                    WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.ActivateManager();
                     break;
 
                 default:
@@ -525,14 +586,19 @@ public sealed class WebBridge
         var monitors = MonitorManager.GetActiveMonitors();
         return monitors.Select(m => new
         {
-            id         = m.Handle,
-            deviceName = m.DeviceName,
-            hardwareId = m.HardwareId,
-            ptName     = m.PtName,
-            ptInstance = m.PtInstance,
-            name       = m.Name,
-            label      = $"{m.Name}{(m.IsPrimary ? " ★" : "")}",
-            isPrimary  = m.IsPrimary,
+            id            = m.Handle,
+            deviceName    = m.DeviceName,
+            hardwareId    = m.HardwareId,
+            ptName        = m.PtName,
+            ptInstance    = m.PtInstance,
+            name          = m.Name,
+            label         = $"{m.Name}{(m.IsPrimary ? " ★" : "")}",
+            isPrimary     = m.IsPrimary,
+            monitorNumber = m.MonitorNumber,
+            scale         = m.Scale,
+            bounds        = new { width = m.Bounds.Width,   height = m.Bounds.Height },
+            workArea      = new { width = m.WorkArea.Width, height = m.WorkArea.Height,
+                                  left  = m.WorkArea.Left,  top    = m.WorkArea.Top },
         }).ToArray();
     }
 
@@ -1338,7 +1404,15 @@ public sealed class WebBridge
     private object HandleCzeGetLayouts()
     {
         var layouts = ConfigManager.Instance.Config.CzeLayouts.Values
-            .Select(l => new { id = l.Id, name = l.Name, zones = l.Zones })
+            .Select(l => new {
+                id        = l.Id,
+                name      = l.Name,
+                zones     = l.Zones,
+                spacing   = l.Spacing,
+                gridState = l.GridState,
+                refWidth  = l.RefWidth,
+                refHeight = l.RefHeight,
+            })
             .ToList();
         return new { layouts };
     }
@@ -1347,30 +1421,46 @@ public sealed class WebBridge
     {
         try
         {
-            var config = ConfigManager.Instance.Config;
+            var config   = ConfigManager.Instance.Config;
             var layoutEl = payload.TryGetProperty("layout", out var l) ? l : payload;
-            string id = layoutEl.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? Guid.NewGuid().ToString("D") : Guid.NewGuid().ToString("D");
-            string name = layoutEl.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "New Layout" : "New Layout";
+
+            string id   = layoutEl.TryGetProperty("id",   out var idEl)   ? idEl.GetString()   ?? Guid.NewGuid().ToString("D") : Guid.NewGuid().ToString("D");
+            string name = layoutEl.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "New Layout"                 : "New Layout";
 
             var zones = new List<WorkspaceLauncher.Core.Config.CzeZoneEntry>();
             if (layoutEl.TryGetProperty("zones", out var zonesEl) && zonesEl.ValueKind == JsonValueKind.Array)
             {
-                int zoneId = 0;
+                int autoId = 0;
                 foreach (var z in zonesEl.EnumerateArray())
                 {
                     zones.Add(new WorkspaceLauncher.Core.Config.CzeZoneEntry
                     {
-                        Id = z.TryGetProperty("id", out var zid) ? zid.GetInt32() : zoneId,
-                        X  = z.TryGetProperty("x", out var zx) ? zx.GetDouble() : 0,
-                        Y  = z.TryGetProperty("y", out var zy) ? zy.GetDouble() : 0,
-                        W  = z.TryGetProperty("w", out var zw) ? zw.GetDouble() : 1,
-                        H  = z.TryGetProperty("h", out var zh) ? zh.GetDouble() : 1,
+                        Id = z.TryGetProperty("id", out var zid) ? zid.GetInt32() : autoId,
+                        X  = z.TryGetProperty("x",  out var zx)  ? zx.GetInt32()  : 0,
+                        Y  = z.TryGetProperty("y",  out var zy)  ? zy.GetInt32()  : 0,
+                        W  = z.TryGetProperty("w",  out var zw)  ? zw.GetInt32()  : 10000,
+                        H  = z.TryGetProperty("h",  out var zh)  ? zh.GetInt32()  : 10000,
                     });
-                    zoneId++;
+                    autoId++;
                 }
             }
 
-            var entry = new WorkspaceLauncher.Core.Config.CzeLayoutEntry { Id = id, Name = name, Zones = zones };
+            int spacing   = layoutEl.TryGetProperty("spacing",   out var spEl)  ? spEl.GetInt32()  : 0;
+            int refWidth  = layoutEl.TryGetProperty("refWidth",  out var rwEl)  ? rwEl.GetInt32()  : 0;
+            int refHeight = layoutEl.TryGetProperty("refHeight", out var rhEl)  ? rhEl.GetInt32()  : 0;
+            string? gridState = layoutEl.TryGetProperty("gridState", out var gsEl) && gsEl.ValueKind == JsonValueKind.String
+                ? gsEl.GetString() : null;
+
+            var entry = new WorkspaceLauncher.Core.Config.CzeLayoutEntry
+            {
+                Id        = id,
+                Name      = name,
+                Zones     = zones,
+                Spacing   = spacing,
+                GridState = gridState,
+                RefWidth  = refWidth,
+                RefHeight = refHeight,
+            };
             config.CzeLayouts[id] = entry;
             ConfigManager.Instance.Save();
 
@@ -1408,21 +1498,23 @@ public sealed class WebBridge
     {
         var config = ConfigManager.Instance.Config;
         var desktops = VirtualDesktopManager.Instance.GetDesktops();
-        var monitors = Utils.MonitorManager.GetActiveMonitors();
+        var monitors = MonitorManager.GetActiveMonitors();
 
         var entries = new List<object>();
-        foreach (var monitor in monitors)
+        for (int m = 0; m < monitors.Count; m++)
         {
-            foreach (var desktop in desktops)
+            var monitor = monitors[m];
+            for (int d = 0; d < desktops.Count; d++)
             {
-                string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(monitor.PtInstance, desktop.Id);
+                var desktopId = desktops[d];
+                string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(monitor.PtInstance, desktopId);
                 config.CzeActiveLayouts.TryGetValue(key, out string? layoutId);
                 entries.Add(new
                 {
                     monitorPtInstance = monitor.PtInstance,
                     monitorName       = monitor.PtName,
-                    desktopId         = desktop.Id.ToString("D"),
-                    desktopName       = desktop.Name,
+                    desktopId         = desktopId.ToString("D"),
+                    desktopName       = $"Escritorio {d + 1}",
                     layoutId          = layoutId ?? "",
                 });
             }
@@ -1456,6 +1548,13 @@ public sealed class WebBridge
         {
             return new { ok = false, error = ex.Message };
         }
+    }
+
+    private void HandleCzeOpenCanvas(JsonElement payload)
+    {
+        string monitorHardwareId = payload.TryGetProperty("monitorHardwareId", out var mid) ? mid.GetString() ?? "" : "";
+        string layoutId = payload.TryGetProperty("layoutId", out var lid) ? lid.GetString() ?? "" : "";
+        WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.OpenCanvas(monitorHardwareId, layoutId);
     }
 
     // ── Outgoing to JS ─────────────────────────────────────────────────────

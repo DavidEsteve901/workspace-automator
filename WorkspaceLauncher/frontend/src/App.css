@@ -1,10 +1,71 @@
+:root {
+  /* FancyZones Theme Tokens - Premium Overhaul */
+  --fz-red: #ff3b30;       
+  --fz-red-hover: #ff2d55;
+  --fz-glass: rgba(30, 30, 30, 0.6);
+  --fz-glass-border: rgba(255, 255, 255, 0.08);
+  --fz-bg: #0f0f0f;       
+  --fz-card: rgba(43, 43, 43, 0.4);     
+  --fz-card-hover: rgba(55, 55, 55, 0.6);
+  --fz-border: rgba(255, 255, 255, 0.06);
+  --fz-text: #ffffff;
+  --fz-text-muted: #a0a0a0;
+  --radius-fz: 12px;
+  --fz-shadow: 0 12px 40px rgba(0,0,0,0.4);
+  --fz-blur: blur(20px);
+
+  /* Legacy & Core Theme Aliases */
+  --bg-base: var(--fz-bg);
+  --bg-main: var(--fz-bg);
+  --bg-sidebar: #141414;
+  --bg-card: var(--fz-card);
+  --bg-hover: rgba(255,255,255,0.08);
+  
+  --accent: var(--fz-red);
+  --accent-dim: rgba(255, 59, 48, 0.15);
+  --accent-glow: rgba(255, 59, 48, 0.3);
+  --accent-low: rgba(255, 59, 48, 0.05);
+  --accent-light: #ff7b72;
+  
+  --text-primary: var(--fz-text);
+  --text-secondary: #e0e0e0;
+  --text-muted: var(--fz-text-muted);
+  
+  --border: var(--fz-border);
+  --border-accent: rgba(255, 59, 48, 0.3);
+  
+  --radius-md: 12px;
+  --radius-sm: 6px;
+  --sidebar-w: 260px;
+  --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  
+  --danger: #ff3b30;
+  --danger-dim: rgba(255, 59, 48, 0.1);
+  --success: #34c759;
+  --success-dim: rgba(52, 199, 89, 0.15);
+}
+
+.fz-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100%;
+  color: var(--fz-text);
+  overflow: hidden;
+  background: var(--fz-bg) !important;
+  box-sizing: border-box;
+  /* Defining the window boundary since the 7px WPF margin is transparent */
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+}
+
 /* ── App Shell ─────────────────────────────────────────────────────────── */
 .app-layout {
   display: flex;
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
-  background: var(--bg-base);
+  background: var(--fz-bg);
 }
 
 /* Body below the title bar */
@@ -87,3 +148,236 @@
     opacity: 1;
   }
 }
+
+/* ── FancyZones Components ─────────────────────────────────────────────── */
+.fz-monitor-bar {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  padding: 30px;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.03), transparent);
+}
+
+.fz-monitor-item {
+  width: 120px;
+  padding: 16px;
+  background: var(--fz-card);
+  backdrop-filter: var(--fz-blur);
+  border: 1px solid var(--fz-glass-border);
+  border-radius: var(--radius-fz);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all var(--transition);
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+.fz-monitor-item:hover {
+  transform: translateY(-2px);
+  background: var(--fz-card-hover);
+  border-color: rgba(255,255,255,0.15);
+}
+
+.fz-monitor-item.active {
+  background: var(--accent-low);
+  border-color: var(--fz-red);
+  box-shadow: 0 0 20px var(--accent-low);
+}
+
+.fz-monitor-number {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--fz-text-muted);
+  transition: color var(--transition);
+}
+
+.fz-monitor-item.active .fz-monitor-number {
+  color: var(--fz-red);
+  text-shadow: 0 0 10px var(--accent-glow);
+}
+
+/* ── Typography & Base ───────────────────────────────────────────────── */
+:root {
+  font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark;
+  color: var(--fz-text);
+  background: transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.fz-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 32px 0 16px;
+  color: var(--fz-text-muted);
+  opacity: 0.8;
+}
+
+.fz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 24px;
+  padding: 10px 0;
+}
+
+.fz-layout-card {
+  background: var(--fz-card);
+  backdrop-filter: var(--fz-blur);
+  border: 1px solid var(--fz-glass-border);
+  padding: 16px;
+  border-radius: var(--radius-fz);
+  cursor: pointer;
+  position: relative;
+  transition: all var(--transition);
+  overflow: hidden;
+}
+
+.fz-layout-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.05), transparent);
+  pointer-events: none;
+}
+
+.fz-layout-card:hover {
+  transform: translateY(-4px) scale(1.02);
+  background: var(--fz-card-hover);
+  border-color: rgba(255,255,255,0.2);
+  box-shadow: var(--fz-shadow);
+}
+
+.fz-layout-card.active {
+  background: var(--accent-low);
+  border-color: var(--fz-red);
+  box-shadow: 0 0 30px var(--accent-low);
+}
+
+.fz-layout-card.selected {
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.fz-layout-card:hover .fz-card-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.fz-card-actions {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: all var(--transition);
+  z-index: 10;
+}
+
+.fz-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.1);
+  transition: all 0.2s;
+}
+
+.fz-icon-btn:hover {
+  background: var(--fz-red);
+  border-color: var(--fz-red);
+  transform: scale(1.1);
+}
+
+.fz-btn-primary {
+  background: var(--fz-red);
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 14px;
+  transition: all var(--transition);
+  box-shadow: 0 8px 20px var(--accent-low);
+}
+
+.fz-btn-primary:hover {
+  background: var(--fz-red-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 25px var(--accent-glow);
+}
+
+.fz-btn-primary:active {
+  transform: translateY(0);
+}
+
+.fz-btn-secondary {
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 12px 24px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all var(--transition);
+}
+
+.fz-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* ── Properties Dialog ─────────────────────────────────────────────────── */
+.fz-dialog-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: fadeIn 0.3s ease;
+}
+
+.fz-dialog {
+  width: 450px;
+  background: #1c1c1e;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 20px;
+  padding: 32px;
+  box-shadow: 0 30px 60px rgba(0,0,0,0.6);
+  animation: scaleUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes scaleUp { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }

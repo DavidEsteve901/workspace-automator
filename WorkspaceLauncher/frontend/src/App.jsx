@@ -10,9 +10,17 @@ import ConfigPanel from './components/ConfigPanel/ConfigPanel.jsx'
 import TitleBar from './components/TitleBar/TitleBar.jsx'
 import LogConsole from './components/LogConsole/LogConsole.jsx'
 import ConfirmModal from './components/AppList/ConfirmModal.jsx'
+import { ZoneEditorModal } from './components/ZoneEditor/ZoneEditorModal.jsx'
 import './App.css'
 
 export default function App() {
+  const getRoute = () => {
+    const hash = window.location.hash || ''
+    // Remove hash and leading slash to get a clean route name
+    const base = hash.split('?')[0].replace(/^#\/?/, '')
+    return base || 'main'
+  }
+  const [route, setRoute] = useState(getRoute())
   const [state, setState] = useState(null)
   const [activeCategory, setActiveCategory] = useState(null)
   const [view, setView] = useState('main') // 'main' | 'config'
@@ -33,9 +41,16 @@ export default function App() {
       setState(data)
       if (!activeCategory) setActiveCategory(data.lastCategory || Object.keys(data.categories)[0])
     }
+    const hashHandler = () => setRoute(getRoute())
+    
     onEvent('state_update', handler)
+    window.addEventListener('hashchange', hashHandler)
     load()
-    return () => offEvent('state_update', handler)
+    
+    return () => {
+      offEvent('state_update', handler)
+      window.removeEventListener('hashchange', hashHandler)
+    }
   }, [load])
 
   useEffect(() => {
@@ -64,6 +79,7 @@ export default function App() {
     onEvent('launch_progress', handler)
     return () => offEvent('launch_progress', handler)
   }, [])
+
 
   // ── Category switch ──────────────────────────────────────────────────
   const handleCategorySelect = useCallback((cat) => {
@@ -205,10 +221,44 @@ export default function App() {
     setCleanModal(activeCategory)
   }, [activeCategory])
 
+  // Standalone Routing (Highest Priority)
+  if (route === 'zone-editor') {
+    return <ZoneEditorModal standalone onClose={() => window.close()} />
+  }
+
+  if (route === 'zone-canvas') {
+    const params = new URLSearchParams(window.location.hash.split('?')[1]);
+    const monitorId = params.get('monitor');
+    const layoutId = params.get('layout');
+    const canvasMode = params.get('mode') || 'preview';
+    return (
+      <div style={{ background: 'transparent', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+        <style>{`
+          html, body, #root { background: transparent !important; }
+        `}</style>
+        <ZoneEditorModal standalone canvasOnly canvasMode={canvasMode} initialMonitorId={monitorId} initialLayoutId={layoutId} onClose={() => window.close()} />
+      </div>
+    )
+  }
+
+  if (route === 'zone-control') {
+    const params = new URLSearchParams(window.location.hash.split('?')[1]);
+    const monitorId = params.get('monitor');
+    const layoutId = params.get('layout');
+    return (
+      <div style={{ background: 'transparent', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+        <style>{`
+          html, body, #root { background: transparent !important; }
+        `}</style>
+        <ZoneEditorModal standalone controlOnly initialMonitorId={monitorId} initialLayoutId={layoutId} onClose={() => window.close()} />
+      </div>
+    )
+  }
+
   if (!state) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-        <div style={{ color: 'var(--text-muted)' }}>Cargando...</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--fz-bg)' }}>
+        <div style={{ color: 'var(--fz-text-muted)' }}>Cargando...</div>
       </div>
     )
   }
@@ -216,10 +266,10 @@ export default function App() {
   const currentItems = state.categories[activeCategory] || []
 
   return (
-    <div className="app-layout" style={{ flexDirection: 'column' }}>
+    <div className="app-layout">
       <TitleBar />
       
-      <div className="layout-body" style={{ display: 'flex', flexGrow: 1, overflow: 'hidden' }}>
+      <div className="app-body">
         <Sidebar
           categories={state.categoryOrder || Object.keys(state.categories)}
           activeCategory={activeCategory}
@@ -317,6 +367,7 @@ export default function App() {
             onCancel={() => setConfirmAction(null)}
           />
         )}
+
       </div>
     </div>
   )

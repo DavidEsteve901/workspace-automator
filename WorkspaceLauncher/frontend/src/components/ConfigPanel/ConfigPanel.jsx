@@ -9,18 +9,29 @@ const HOTKEY_LABELS = {
   desktop_cycle_fwd: { label: 'Cambiar escritorio →', icon: ArrowRightSquare },
   desktop_cycle_bwd: { label: 'Cambiar escritorio ←', icon: ArrowLeftSquare },
   util_reload_layouts: { label: 'Recargar layouts', icon: RefreshCcw },
+  open_zone_editor: { label: 'Abrir Editor de Zonas', icon: LayoutGrid },
 }
 
 export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetectedPath, configPath, onSave, onClose }) {
   const [hk, setHk] = useState({ ...hotkeys })
   const [pip, setPip] = useState(pipWatcher)
   const [fzPath, setFzPath] = useState(fzCustomPath || '')
+  const [engine, setEngine] = useState('FancyZones')
   const [saved, setSaved] = useState(false)
   const [fzModalOpen, setFzModalOpen] = useState(false)
   const [activeRecordingKey, setActiveRecordingKey] = useState(null)
 
-  function handleSave() {
+  useEffect(() => {
+    async function loadEngine() {
+      const e = await bridge.czeGetZoneEngine()
+      setEngine(e.engine)
+    }
+    loadEngine()
+  }, [])
+
+  async function handleSave() {
     onSave({ hotkeys: hk, pipWatcherEnabled: pip, fzCustomPath: fzPath })
+    await bridge.czeSetZoneEngine(engine)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
@@ -61,6 +72,28 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
       </div>
 
       <div className="config-body">
+        <Section title="Motor de Zonas (Engine)" icon={<LayoutGrid size={14} />}>
+          <div className="engine-toggle-group">
+            <button 
+              className={`engine-btn ${engine === 'FancyZones' ? 'active' : ''}`}
+              onClick={() => setEngine('FancyZones')}
+            >
+              FancyZones (PowerToys)
+            </button>
+            <button 
+              className={`engine-btn ${engine === 'CustomZoneEngine' ? 'active' : ''}`}
+              onClick={() => setEngine('CustomZoneEngine')}
+            >
+              CustomZoneEngine (Propio)
+            </button>
+          </div>
+          <p className="fz-path-help">
+            {engine === 'CustomZoneEngine' 
+              ? "Usa el motor integrado. Permite edición visual avanzada y es independiente de PowerToys."
+              : "Usa el motor oficial de Microsoft PowerToys (requiere tenerlo instalado)."}
+          </p>
+        </Section>
+
         {/* Zone cycling toggles */}
         <Section title="Cycling de zonas y escritorios" icon={<Monitor size={14} />}>
           <Toggle
@@ -169,13 +202,20 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
       </div>
 
       <div className="config-footer">
-        {saved && (
-          <span className="config-saved">
-            <Check size={14} /> Guardado
-          </span>
-        )}
-        <button className="btn-launch" onClick={handleSave}>
-          <Save size={14} /> Guardar configuración
+        <button 
+          className={`btn-launch ${saved ? 'btn-success' : ''}`} 
+          onClick={handleSave}
+          disabled={saved}
+        >
+          {saved ? (
+            <>
+              <Check size={14} /> Aplicado correctamente
+            </>
+          ) : (
+            <>
+              <Save size={14} /> Guardar configuración
+            </>
+          )}
         </button>
       </div>
 

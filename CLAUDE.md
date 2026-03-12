@@ -136,6 +136,22 @@ FASE 4: 3 FinalIntegritySweep() con delays:
   - `IApplicationViewCollection`: `1841C6D7-4F9D-42C0-AF41-8747538F10E5`
   - `IVirtualDesktopPinnedApps`: `4CE81583-1E4C-4632-A621-07A53543148F`
 
+### CustomZoneEngine — arquitectura de ventanas
+- `OverlayWindow(blocking=true)` cubre exactamente el `WorkArea` (rcWork) de cada monitor
+  - Background `#01000000` (alpha=1): visible pero captura hit-test → bloquea el escritorio
+  - Sin `WS_EX_TRANSPARENT` → el OS envía todos los clicks a la overlay, no a ventanas detrás
+  - `WS_EX_LAYERED | WS_EX_TOOLWINDOW` (no aparece en Alt-Tab ni barra de tareas)
+  - `blocking=false` (default) = drag-preview, click-through → mantiene compat con `ZoneInteractionManager`
+- Jerarquía Owner: `OverlayWindow` → `ZoneEditorManagerWindow` (Admin) / `ZoneCanvasEditorWindow` (Editing)
+  - Owner garantiza que el hijo siempre queda encima del padre
+  - Los overlays duran desde `OpenManager()` hasta `CloseAll()` → escritorio siempre bloqueado
+- Zonas CZE en unidades base-10000 (int): 10000 = 100% del WorkArea. Portabilidad total sin Sync
+  - `ToPixelRect`: `Left = workArea.Left + X * workArea.Width / 10000` (int)
+  - Al guardar: React envía `Math.round(frac * 10000)`. Al cargar: `int / 10000` en React
+  - `RefWidth`/`RefHeight` en `CzeLayoutEntry` → badge `∝` si resolución difiere (cosmético, no bloquea)
+- Estado CZE: `Closed → Admin → Editing → Admin → Closed`
+  - `WebBridge.BroadcastCzeState()` envía `cze_state_changed` a todos los bridges activos (WeakRef list)
+
 ### LayoutSyncer — portabilidad canvas
 - Canvas layouts tienen `ref-width`/`ref-height` de la máquina original
 - Si monitor actual tiene resolución diferente → `RescaleCanvasLayoutInfo()` escala coords
@@ -205,6 +221,11 @@ delay: "500" (ms como string) | ""
 | 14 | UUID activo no se grababa si layout no en cache | `WebBridge.cs:694` | `matchedLayoutUuid = rawUuid` aunque no esté en cache |
 | 15 | `handleChangeLayout` en FzStatusModal pasaba args en orden incorrecto | `ConfigPanel.jsx:217` | Faltaba `monitorSerial`; `desktopId` y `layoutUuid` swapeados → escrituras basura en applied-layouts.json |
 | 16 | Monitor "fantasma" con misma PnP instance sobreescribía layout correcto | `WebBridge.cs:HandleGetFzStatus` | Añadido `bestMatchQuality` — entry instMatch-only (q=50) no puede overridear nameMatch+instMatch (q=160) |
+| 17 | `OverlayWindow` era click-through (`WS_EX_TRANSPARENT`) → no bloqueaba el escritorio | `OverlayWindow.xaml.cs` | Nuevo param `blocking=true`: sin `WS_EX_TRANSPARENT`, background `#01000000` (alpha=1 captura hit-test) |
+| 18 | `CzeZoneEntry` guardaba coords como `double` 0-1 → no portables entre resoluciones | `Models.cs`, `CZEZone.cs` | Cambio a `int` base-10000; `ToPixelRect` usa `X * width / 10000` |
+| 19 | `CzeLayoutEntry` no registraba resolución de referencia → badge de adaptación imposible | `Models.cs` | Añadido `RefWidth`/`RefHeight`; `HandleListMonitors` expone `workArea`; badge `∝` en LayoutCard |
+| 20 | `ZoneEditorManagerWindow` y canvas eran ventanas independientes → manager podía quedar detrás | `ZoneEditorLauncher.cs` | Jerarquía Owner: `OverlayWindow` (raíz) → `Manager`/`Canvas` como owned. `ZoneEditorLauncher` tiene máquina de estados `Closed/Admin/Editing` |
+| 21 | No había forma de notificar estado CZE a todos los WebBridge activos | `WebBridge.cs` | Añadido registro estático `_allBridges` (WeakReference) + `BroadcastCzeState()`; estado accesible con `cze_get_state` |
 
 ### Monitores activos en esta máquina
 ```
@@ -221,7 +242,8 @@ VirtualDesktops: 2 (Build24H2 COM).
 - [ ] **Probar launch real** con el nuevo sistema de 3 sweeps + readiness delays
 - [ ] **Probar PiP**: abrir Chrome/Edge PiP, verificar que en ~2s se ancla y permanece en todos los escritorios virtuales
 - [ ] **Probar portabilidad**: desconectar AUS2723 → lanzar workspace → verificar remapeo a SDC41B6 SIN guardar
-- [ ] **Canvas layout scaling**: crear item con canvas layout en AUS2723, verificar escala en pantalla única
+- [ ] **Probar CZE completo**: hotkey → overlays bloquean escritorio → manager abre como hijo → editar → guardar → vuelve a admin
+- [ ] **Verificar badge ∝**: guardar layout en AUS2723, abrir manager en SDC41B6, confirmar que aparece el indicador de adaptación
 
 ### Deuda técnica media
 - [ ] `HandleValidateWorkspace` muta `items` en memoria durante validación → debería clonar antes de `ResolveEnvironment`
@@ -248,11 +270,14 @@ VirtualDesktops: 2 (Build24H2 COM).
 `list_monitors`, `list_desktops`, `list_fancyzones`, `get_fz_status`,
 `validate_workspace`, `resolve_monitor_conflicts`, `list_windows`,
 `get_windows_to_clean`, `close_windows`, `open_file_dialog`,
-`change_layout_assignment`, `get_config_path`, `change_config_path`
+`change_layout_assignment`, `get_config_path`, `change_config_path`,
+`cze_get_layouts`, `cze_save_layout`, `cze_delete_layout`, `cze_get_active_layouts`,
+`cze_set_active_layout`, `cze_get_state`
 
 **C# → JS (eventos push):**
 `state_update` → estado completo, `launch_progress` → {status,message,progress%},
-`system_log` → debug, `error` → mensaje de error, `invoke_response` → respuesta a invoke
+`system_log` → debug, `error` → mensaje de error, `invoke_response` → respuesta a invoke,
+`cze_state_changed` → `{state: "admin"|"editing"|"closed"}` (broadcast a todos los bridges)
 
 ---
 

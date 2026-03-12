@@ -4,6 +4,7 @@
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  position: relative;
 }
 
 .config-header {
@@ -221,6 +222,26 @@
   gap: 14px;
   padding: 14px 24px;
   border-top: 1px solid var(--border);
+}
+
+.btn-launch.btn-success {
+  background: var(--success);
+  border-color: var(--success);
+  cursor: default;
+  opacity: 1 !important; /* Prevent darkening from default disabled state */
+  box-shadow: 0 0 20px rgba(0, 230, 118, 0.4);
+  animation: btnSuccessStep 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.btn-launch.btn-success:disabled {
+  opacity: 1 !important;
+  cursor: default;
+}
+
+@keyframes btnSuccessStep {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
 }
 
 .config-saved {
@@ -572,3 +593,5 @@
     transform: translateY(0);
   }
 }
+
+

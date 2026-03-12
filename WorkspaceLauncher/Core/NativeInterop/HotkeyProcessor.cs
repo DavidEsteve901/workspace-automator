@@ -13,9 +13,80 @@ public sealed class HotkeyProcessor
 
     public static readonly HotkeyProcessor Instance = new();
     
+    public event Action? OnOpenZoneEditorRequested;
+    
     public bool Enabled { get; set; } = true;
 
     private HotkeyProcessor() { }
+    
+    private struct ParsedHotkey
+    {
+        public int Vk;
+        public bool Alt, Ctrl, Shift, Win;
+        public string? Button; // for mouse buttons
+    }
+
+    private readonly Dictionary<string, ParsedHotkey> _parsedCache = [];
+    private string _lastConfigHash = "";
+
+    private void RefreshCacheIfNeeded()
+    {
+        var config = ConfigManager.Instance.Config;
+        // Simple hash of current hotkey strings to detect changes
+        var currentHash = $"{config.Hotkeys.CycleForward}|{config.Hotkeys.CycleBackward}|{config.Hotkeys.DesktopCycleFwd}|{config.Hotkeys.DesktopCycleBwd}|{config.Hotkeys.UtilReloadLayouts}|{config.Hotkeys.OpenZoneEditor}";
+        
+        if (currentHash == _lastConfigHash) return;
+        
+        _parsedCache.Clear();
+        ParseAndCache(config.Hotkeys.CycleForward);
+        ParseAndCache(config.Hotkeys.CycleBackward);
+        ParseAndCache(config.Hotkeys.DesktopCycleFwd);
+        ParseAndCache(config.Hotkeys.DesktopCycleBwd);
+        ParseAndCache(config.Hotkeys.UtilReloadLayouts);
+        ParseAndCache(config.Hotkeys.OpenZoneEditor);
+        
+        _lastConfigHash = currentHash;
+    }
+
+    private void ParseAndCache(string? combo)
+    {
+        if (string.IsNullOrEmpty(combo) || _parsedCache.ContainsKey(combo)) return;
+        
+        var parts = combo.ToLowerInvariant().Split('+').Select(p => p.Trim()).ToArray();
+        var parsed = new ParsedHotkey
+        {
+            Alt = parts.Contains("alt"),
+            Ctrl = parts.Contains("ctrl"),
+            Shift = parts.Contains("shift"),
+            Win = parts.Contains("win")
+        };
+
+        string key = parts.Last();
+        if (key is "x1" or "x2" or "mbutton" or "mouse_left" or "mouse_right")
+        {
+            parsed.Button = key;
+        }
+        else
+        {
+            parsed.Vk = key switch
+            {
+                "pagedown" => User32.VK_NEXT,
+                "pageup" => User32.VK_PRIOR,
+                "l" => 0x4C,
+                "left" => User32.VK_LEFT,
+                "right" => User32.VK_RIGHT,
+                "up" => 0x26,
+                "down" => 0x28,
+                "tab" => 0x09,
+                "space" => 0x20,
+                "z" => 0x5A,
+                "enter" or "return" => 0x0D,
+                _ when key.Length == 1 && char.IsLetterOrDigit(key[0]) => char.ToUpper(key[0]),
+                _ => 0
+            };
+        }
+        _parsedCache[combo] = parsed;
+    }
 
     public void Initialize(GlobalHookManager hookManager)
     {
@@ -35,11 +106,13 @@ public sealed class HotkeyProcessor
             // Ctrl-only = browser back/forward passthrough (don't suppress)
             if (ctrl && !alt && !shift && !win) return false;
 
+            RefreshCacheIfNeeded();
+
             // Check Desktop Cycle
             if (config.Hotkeys.DesktopCycleEnabled)
             {
-                if (IsHotKeyActive(config.Hotkeys.DesktopCycleFwd, button, alt, ctrl, shift, win)) return true;
-                if (IsHotKeyActive(config.Hotkeys.DesktopCycleBwd, button, alt, ctrl, shift, win)) return true;
+                if (IsHotKeyActiveCached(config.Hotkeys.DesktopCycleFwd, button, alt, ctrl, shift, win)) return true;
+                if (IsHotKeyActiveCached(config.Hotkeys.DesktopCycleBwd, button, alt, ctrl, shift, win)) return true;
             }
 
             // Alt-only + X = hover zone cycling
@@ -49,8 +122,8 @@ public sealed class HotkeyProcessor
             // Any other configured combo for zone cycling
             if (config.Hotkeys.ZoneCycleEnabled)
             {
-                if (IsHotKeyActive(config.Hotkeys.CycleForward, button, alt, ctrl, shift, win)) return true;
-                if (IsHotKeyActive(config.Hotkeys.CycleBackward, button, alt, ctrl, shift, win)) return true;
+                if (IsHotKeyActiveCached(config.Hotkeys.CycleForward, button, alt, ctrl, shift, win)) return true;
+                if (IsHotKeyActiveCached(config.Hotkeys.CycleBackward, button, alt, ctrl, shift, win)) return true;
             }
             return false;
         };
@@ -58,25 +131,102 @@ public sealed class HotkeyProcessor
         _hookManager.CheckKeyMapped = (vk, alt, ctrl, shift, win) =>
         {
             if (!Enabled) return false;
+            RefreshCacheIfNeeded();
+            
             var config = ConfigManager.Instance.Config;
             if (config.Hotkeys.ZoneCycleEnabled)
             {
-                if (IsHotKeyMatch(config.Hotkeys.CycleForward, vk, alt, ctrl, shift, win)) return true;
-                if (IsHotKeyMatch(config.Hotkeys.CycleBackward, vk, alt, ctrl, shift, win)) return true;
+                if (IsHotKeyMatchCached(config.Hotkeys.CycleForward, vk, alt, ctrl, shift, win)) return true;
+                if (IsHotKeyMatchCached(config.Hotkeys.CycleBackward, vk, alt, ctrl, shift, win)) return true;
             }
             if (config.Hotkeys.DesktopCycleEnabled)
             {
-                if (IsHotKeyMatch(config.Hotkeys.DesktopCycleFwd, vk, alt, ctrl, shift, win)) return true;
-                if (IsHotKeyMatch(config.Hotkeys.DesktopCycleBwd, vk, alt, ctrl, shift, win)) return true;
+                if (IsHotKeyMatchCached(config.Hotkeys.DesktopCycleFwd, vk, alt, ctrl, shift, win)) return true;
+                if (IsHotKeyMatchCached(config.Hotkeys.DesktopCycleBwd, vk, alt, ctrl, shift, win)) return true;
             }
-            if (IsHotKeyMatch(config.Hotkeys.UtilReloadLayouts, vk, alt, ctrl, shift, win)) return true;
+            if (IsHotKeyMatchCached(config.Hotkeys.UtilReloadLayouts, vk, alt, ctrl, shift, win)) return true;
+            if (IsHotKeyMatchCached(config.Hotkeys.OpenZoneEditor, vk, alt, ctrl, shift, win)) return true;
             return false;
         };
+    }
+
+    private bool IsHotKeyMatchCached(string? combo, int vk, bool alt, bool ctrl, bool shift, bool win)
+    {
+        if (string.IsNullOrEmpty(combo) || !_parsedCache.TryGetValue(combo, out var p)) return false;
+        if (p.Button != null) return false; // Keyboard match only
+        
+        return p.Vk == vk && p.Alt == alt && p.Ctrl == ctrl && p.Shift == shift && p.Win == win;
+    }
+
+    private bool IsHotKeyActiveCached(string? combo, string button, bool alt, bool ctrl, bool shift, bool win)
+    {
+        if (string.IsNullOrEmpty(combo) || !_parsedCache.TryGetValue(combo, out var p)) return false;
+        if (p.Button == null) return false; // Mouse match only
+        
+        return p.Button == button.ToLowerInvariant() && p.Alt == alt && p.Ctrl == ctrl && p.Shift == shift && p.Win == win;
+    }
+
+    private void HandleKeyDown(int vk, bool alt, bool ctrl, bool shift, bool win)
+    {
+        if (!Enabled) return;
+        RefreshCacheIfNeeded();
+        
+        var config = ConfigManager.Instance.Config;
+
+        // Zone cycling (keyboard)
+        if (config.Hotkeys.ZoneCycleEnabled)
+        {
+            if (IsHotKeyMatchCached(config.Hotkeys.CycleForward, vk, alt, ctrl, shift, win))
+            {
+                Console.WriteLine("[HotkeyProcessor] CycleForward hotkey detected");
+                var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
+                if (key != null) ZoneCycler.Instance.CycleForward(key);
+                return;
+            }
+            if (IsHotKeyMatchCached(config.Hotkeys.CycleBackward, vk, alt, ctrl, shift, win))
+            {
+                Console.WriteLine("[HotkeyProcessor] CycleBackward hotkey detected");
+                var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
+                if (key != null) ZoneCycler.Instance.CycleBackward(key);
+                return;
+            }
+        }
+
+        // Desktop cycling (keyboard)
+        if (config.Hotkeys.DesktopCycleEnabled)
+        {
+            if (IsHotKeyMatchCached(config.Hotkeys.DesktopCycleFwd, vk, alt, ctrl, shift, win))
+            {
+                VirtualDesktopManager.Instance.SwitchNextDesktop();
+                return;
+            }
+            if (IsHotKeyMatchCached(config.Hotkeys.DesktopCycleBwd, vk, alt, ctrl, shift, win))
+            {
+                VirtualDesktopManager.Instance.SwitchPreviousDesktop();
+                return;
+            }
+        }
+
+        // Utility: reload layouts
+        if (IsHotKeyMatchCached(config.Hotkeys.UtilReloadLayouts, vk, alt, ctrl, shift, win))
+        {
+            Console.WriteLine("[HotkeyProcessor] Reloading layouts...");
+            FancyZones.FancyZonesReader.SyncCacheFromDisk();
+            ConfigManager.Instance.Load();
+        }
+
+        // Utility: open zone editor
+        if (IsHotKeyMatchCached(config.Hotkeys.OpenZoneEditor, vk, alt, ctrl, shift, win))
+        {
+            Console.WriteLine("[HotkeyProcessor] Opening Zone Editor...");
+            OnOpenZoneEditorRequested?.Invoke();
+        }
     }
 
     private void HandleX1(bool alt, bool ctrl, bool shift, bool win)
     {
         if (!Enabled) return;
+        RefreshCacheIfNeeded();
         var config = ConfigManager.Instance.Config;
 
         // Alt-only + X1 → hover zone cycling (window under cursor)
@@ -89,14 +239,14 @@ public sealed class HotkeyProcessor
         }
 
         // Configured modifier combos (keyboard-style zone cycling via x1)
-        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActive(config.Hotkeys.CycleForward, "x1", alt, ctrl, shift, win))
+        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActiveCached(config.Hotkeys.CycleForward, "x1", alt, ctrl, shift, win))
         {
             Console.WriteLine("[HotkeyProcessor] X1+mod -> CycleZoneForward");
             var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
             if (key != null) ZoneCycler.Instance.CycleForward(key);
             return;
         }
-        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActive(config.Hotkeys.CycleBackward, "x1", alt, ctrl, shift, win))
+        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActiveCached(config.Hotkeys.CycleBackward, "x1", alt, ctrl, shift, win))
         {
             Console.WriteLine("[HotkeyProcessor] X1+mod -> CycleZoneBackward");
             var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
@@ -107,13 +257,13 @@ public sealed class HotkeyProcessor
         // Desktop cycling
         if (config.Hotkeys.DesktopCycleEnabled)
         {
-            if (IsHotKeyActive(config.Hotkeys.DesktopCycleFwd, "x1", alt, ctrl, shift, win))
+            if (IsHotKeyActiveCached(config.Hotkeys.DesktopCycleFwd, "x1", alt, ctrl, shift, win))
             {
                 Console.WriteLine("[HotkeyProcessor] X1 -> SwitchNextDesktop");
                 VirtualDesktopManager.Instance.SwitchNextDesktop();
                 return;
             }
-            if (IsHotKeyActive(config.Hotkeys.DesktopCycleBwd, "x1", alt, ctrl, shift, win))
+            if (IsHotKeyActiveCached(config.Hotkeys.DesktopCycleBwd, "x1", alt, ctrl, shift, win))
             {
                 Console.WriteLine("[HotkeyProcessor] X1 -> SwitchPreviousDesktop");
                 VirtualDesktopManager.Instance.SwitchPreviousDesktop();
@@ -125,6 +275,7 @@ public sealed class HotkeyProcessor
     private void HandleX2(bool alt, bool ctrl, bool shift, bool win)
     {
         if (!Enabled) return;
+        RefreshCacheIfNeeded();
         var config = ConfigManager.Instance.Config;
 
         // Alt-only + X2 → hover zone cycling backward (window under cursor)
@@ -137,14 +288,14 @@ public sealed class HotkeyProcessor
         }
 
         // Configured modifier combos
-        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActive(config.Hotkeys.CycleForward, "x2", alt, ctrl, shift, win))
+        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActiveCached(config.Hotkeys.CycleForward, "x2", alt, ctrl, shift, win))
         {
             Console.WriteLine("[HotkeyProcessor] X2+mod -> CycleZoneForward");
             var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
             if (key != null) ZoneCycler.Instance.CycleForward(key);
             return;
         }
-        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActive(config.Hotkeys.CycleBackward, "x2", alt, ctrl, shift, win))
+        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActiveCached(config.Hotkeys.CycleBackward, "x2", alt, ctrl, shift, win))
         {
             Console.WriteLine("[HotkeyProcessor] X2+mod -> CycleZoneBackward");
             var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
@@ -155,13 +306,13 @@ public sealed class HotkeyProcessor
         // Desktop cycling
         if (config.Hotkeys.DesktopCycleEnabled)
         {
-            if (IsHotKeyActive(config.Hotkeys.DesktopCycleFwd, "x2", alt, ctrl, shift, win))
+            if (IsHotKeyActiveCached(config.Hotkeys.DesktopCycleFwd, "x2", alt, ctrl, shift, win))
             {
                 Console.WriteLine("[HotkeyProcessor] X2 -> SwitchNextDesktop");
                 VirtualDesktopManager.Instance.SwitchNextDesktop();
                 return;
             }
-            if (IsHotKeyActive(config.Hotkeys.DesktopCycleBwd, "x2", alt, ctrl, shift, win))
+            if (IsHotKeyActiveCached(config.Hotkeys.DesktopCycleBwd, "x2", alt, ctrl, shift, win))
             {
                 Console.WriteLine("[HotkeyProcessor] X2 -> SwitchPreviousDesktop");
                 VirtualDesktopManager.Instance.SwitchPreviousDesktop();
@@ -173,6 +324,7 @@ public sealed class HotkeyProcessor
     private void HandleMiddle(bool alt, bool ctrl, bool shift, bool win)
     {
         if (!Enabled) return;
+        RefreshCacheIfNeeded();
         var config = ConfigManager.Instance.Config;
 
         // Hover zone cycling
@@ -185,14 +337,14 @@ public sealed class HotkeyProcessor
         }
 
         // Configured modifier combos
-        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActive(config.Hotkeys.CycleForward, "mbutton", alt, ctrl, shift, win))
+        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActiveCached(config.Hotkeys.CycleForward, "mbutton", alt, ctrl, shift, win))
         {
             Console.WriteLine("[HotkeyProcessor] mbutton -> CycleZoneForward");
             var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
             if (key != null) ZoneCycler.Instance.CycleForward(key);
             return;
         }
-        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActive(config.Hotkeys.CycleBackward, "mbutton", alt, ctrl, shift, win))
+        if (config.Hotkeys.ZoneCycleEnabled && IsHotKeyActiveCached(config.Hotkeys.CycleBackward, "mbutton", alt, ctrl, shift, win))
         {
             Console.WriteLine("[HotkeyProcessor] mbutton -> CycleZoneBackward");
             var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
@@ -203,13 +355,13 @@ public sealed class HotkeyProcessor
         // Desktop cycling
         if (config.Hotkeys.DesktopCycleEnabled)
         {
-            if (IsHotKeyActive(config.Hotkeys.DesktopCycleFwd, "mbutton", alt, ctrl, shift, win))
+            if (IsHotKeyActiveCached(config.Hotkeys.DesktopCycleFwd, "mbutton", alt, ctrl, shift, win))
             {
                 Console.WriteLine("[HotkeyProcessor] mbutton -> SwitchNextDesktop");
                 VirtualDesktopManager.Instance.SwitchNextDesktop();
                 return;
             }
-            if (IsHotKeyActive(config.Hotkeys.DesktopCycleBwd, "mbutton", alt, ctrl, shift, win))
+            if (IsHotKeyActiveCached(config.Hotkeys.DesktopCycleBwd, "mbutton", alt, ctrl, shift, win))
             {
                 Console.WriteLine("[HotkeyProcessor] mbutton -> SwitchPreviousDesktop");
                 VirtualDesktopManager.Instance.SwitchPreviousDesktop();
@@ -237,97 +389,5 @@ public sealed class HotkeyProcessor
         if (registered != null) return registered;
         // Slow path: detect by position (catches windows dragged to a zone but not yet in stack)
         return ZoneCycler.DetectZoneByPosition(hwnd);
-    }
-
-    private void HandleKeyDown(int vk, bool alt, bool ctrl, bool shift, bool win)
-    {
-        if (!Enabled) return;
-        var config = ConfigManager.Instance.Config;
-
-        // Zone cycling (keyboard)
-        if (config.Hotkeys.ZoneCycleEnabled)
-        {
-            if (IsHotKeyMatch(config.Hotkeys.CycleForward, vk, alt, ctrl, shift, win))
-            {
-                Console.WriteLine("[HotkeyProcessor] CycleForward hotkey detected");
-                var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
-                if (key != null) ZoneCycler.Instance.CycleForward(key);
-                return;
-            }
-            if (IsHotKeyMatch(config.Hotkeys.CycleBackward, vk, alt, ctrl, shift, win))
-            {
-                Console.WriteLine("[HotkeyProcessor] CycleBackward hotkey detected");
-                var key = ZoneCycler.Instance.DetectActiveWindowZoneKey();
-                if (key != null) ZoneCycler.Instance.CycleBackward(key);
-                return;
-            }
-        }
-
-        // Desktop cycling (keyboard)
-        if (config.Hotkeys.DesktopCycleEnabled)
-        {
-            if (IsHotKeyMatch(config.Hotkeys.DesktopCycleFwd, vk, alt, ctrl, shift, win))
-            {
-                VirtualDesktopManager.Instance.SwitchNextDesktop();
-                return;
-            }
-            if (IsHotKeyMatch(config.Hotkeys.DesktopCycleBwd, vk, alt, ctrl, shift, win))
-            {
-                VirtualDesktopManager.Instance.SwitchPreviousDesktop();
-                return;
-            }
-        }
-
-        // Utility: reload layouts
-        if (IsHotKeyMatch(config.Hotkeys.UtilReloadLayouts, vk, alt, ctrl, shift, win))
-        {
-            Console.WriteLine("[HotkeyProcessor] Reloading layouts...");
-            FancyZones.FancyZonesReader.SyncCacheFromDisk();
-            ConfigManager.Instance.Load();
-        }
-    }
-
-    private static bool IsHotKeyMatch(string? combo, int vk, bool alt, bool ctrl, bool shift, bool win)
-    {
-        if (string.IsNullOrEmpty(combo)) return false;
-        var parts = combo.ToLowerInvariant().Split('+');
-
-        bool reqCtrl = parts.Contains("ctrl");
-        bool reqAlt = parts.Contains("alt");
-        bool reqShift = parts.Contains("shift");
-        bool reqWin = parts.Contains("win");
-        string key = parts.Last();
-
-        // Skip mouse button combos
-        if (key is "x1" or "x2" or "mouse_left" or "mouse_right" or "mouse_middle") return false;
-
-        if (alt != reqAlt || ctrl != reqCtrl || shift != reqShift || win != reqWin) return false;
-
-        return key switch
-        {
-            "pagedown" => vk == User32.VK_NEXT,
-            "pageup" => vk == User32.VK_PRIOR,
-            "l" => vk == 0x4C,
-            "left" => vk == User32.VK_LEFT,
-            "right" => vk == User32.VK_RIGHT,
-            "up" => vk == 0x26,
-            "down" => vk == 0x28,
-            "tab" => vk == 0x09,
-            "space" => vk == 0x20,
-            "enter" or "return" => vk == 0x0D,
-            _ when key.Length == 1 && char.IsLetterOrDigit(key[0]) => vk == char.ToUpper(key[0]),
-            _ => false
-        };
-    }
-
-    private static bool IsHotKeyActive(string? combo, string button, bool alt, bool ctrl, bool shift, bool win)
-    {
-        if (string.IsNullOrEmpty(combo)) return false;
-        var parts = combo.ToLowerInvariant().Split('+');
-        return parts.Contains(button.ToLowerInvariant()) &&
-               parts.Contains("alt") == alt &&
-               parts.Contains("ctrl") == ctrl &&
-               parts.Contains("shift") == shift &&
-               parts.Contains("win") == win;
     }
 }

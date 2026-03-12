@@ -15,6 +15,44 @@ public sealed class FancyZonesAdapter : IZoneEngine
 
     public string? GetActiveLayoutId(string monitorPtInstance, Guid desktopId)
     {
+        var entry = GetActiveAppliedLayout(monitorPtInstance, desktopId);
+        if (entry == null) return null;
+        return entry.LayoutUuid.Trim('{', '}').ToLowerInvariant();
+    }
+
+    public WorkspaceLauncher.Core.Config.CzeLayoutEntry? GetActiveLayout(string monitorPtInstance, Guid desktopId)
+    {
+        var entry = GetActiveAppliedLayout(monitorPtInstance, desktopId);
+        if (entry == null) return null;
+
+        string layoutId = entry.LayoutUuid.Trim('{', '}').ToLowerInvariant();
+        var config = ConfigManager.Instance.Config;
+
+        if (!config.FzLayoutsCache.TryGetValue(layoutId, out var cacheEntry)) return null;
+        var layoutInfo = WorkspaceOrchestrator.ParseLayoutInfo(cacheEntry);
+        if (layoutInfo == null) return null;
+
+        // Convert FZ layout to CZE format for consistency (0–10000 int units)
+        var dummyWorkArea = new RECT { Right = 10000, Bottom = 10000 };
+        var rects = GetAllZoneRects(layoutId, dummyWorkArea);
+
+        return new WorkspaceLauncher.Core.Config.CzeLayoutEntry
+        {
+            Id = layoutId,
+            Name = cacheEntry.Name,
+            Zones = rects.Select((r, i) => new WorkspaceLauncher.Core.Config.CzeZoneEntry
+            {
+                Id = i,
+                X = r.Left,
+                Y = r.Top,
+                W = r.Width,
+                H = r.Height
+            }).ToList()
+        };
+    }
+
+    private AppliedLayoutEntry? GetActiveAppliedLayout(string monitorPtInstance, Guid desktopId)
+    {
         string desktopIdStr = desktopId.ToString("D", System.Globalization.CultureInfo.InvariantCulture).ToLowerInvariant();
         var appliedLayouts = FancyZonesReader.ReadAppliedLayouts();
 
@@ -27,8 +65,7 @@ public sealed class FancyZonesAdapter : IZoneEngine
             e.Instance == monitorPtInstance || e.MonitorName == monitorPtInstance
                 || e.MonitorName.StartsWith(monitorPtInstance) || monitorPtInstance.StartsWith(e.MonitorName));
 
-        if (entry == null) return null;
-        return entry.LayoutUuid.Trim('{', '}').ToLowerInvariant();
+        return entry;
     }
 
     public RECT? CalculateZoneRect(string layoutId, int zoneIndex, RECT workArea)

@@ -21,6 +21,36 @@ public static class ZoneCalculator
         };
     }
 
+    /// <summary>
+    /// Calculate all zone rectangles for a layout.
+    /// </summary>
+    public static List<RECT> CalculateAllZones(LayoutInfo layout, RECT workArea)
+    {
+        var results = new List<RECT>();
+        int count = 0;
+        
+        if (layout.Type?.ToLowerInvariant() == "grid" && layout.CellChildMap != null)
+        {
+            // Find max zone index in the map
+            int maxIdx = -1;
+            foreach (var row in layout.CellChildMap)
+                foreach (var cell in row)
+                    maxIdx = Math.Max(maxIdx, cell);
+            count = maxIdx + 1;
+        }
+        else if (layout.Type?.ToLowerInvariant() == "canvas" && layout.CanvasZones != null)
+        {
+            count = layout.CanvasZones.Length;
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            var r = CalculateZoneRect(layout, i, workArea);
+            if (r.HasValue) results.Add(r.Value);
+        }
+        return results;
+    }
+
     private static RECT? CalculateGridZone(LayoutInfo layout, int zoneIndex, RECT workArea)
     {
         if (layout.RowsPercentage == null || layout.ColumnsPercentage == null || layout.CellChildMap == null)

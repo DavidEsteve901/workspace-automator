@@ -70,7 +70,6 @@
 html, body, #root {
   height: 100%;
   overflow: hidden;
-  background: var(--bg-base);
   color: var(--text-primary);
   font-family: 'Plus Jakarta Sans', 'Segoe UI', system-ui, sans-serif;
   font-size: 14px;

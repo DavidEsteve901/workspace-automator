@@ -30,6 +30,17 @@ export function ZoneToolbar({ selectedCount, onPreset, onMerge, onReset }) {
         <button style={btnStyle('#4a3f6b')} onClick={onMerge}>Fusionar ({selectedCount})</button>
       )}
       <button style={btnStyle('#5c2d2d')} onClick={onReset}>Resetear</button>
+      
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 10, background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: 4 }}>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>Espaciado:</span>
+        <input 
+          type="range" min="0" max="40" value={spacing} 
+          onChange={e => onSpacingChange(parseInt(e.target.value))}
+          style={{ width: 60, cursor: 'pointer' }}
+        />
+        <span style={{ fontSize: 11, color: '#6db3f2', minWidth: 24 }}>{spacing}px</span>
+      </div>
+
       <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>
         Doble-clic para dividir · Shift+clic para multi-selección
       </span>

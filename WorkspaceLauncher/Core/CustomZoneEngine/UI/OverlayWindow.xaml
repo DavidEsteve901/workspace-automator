@@ -1,0 +1,13 @@
+<Window x:Class="WorkspaceLauncher.Core.CustomZoneEngine.UI.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Zone Overlay"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        ShowInTaskbar="False">
+    <Grid x:Name="RootGrid">
+        <Canvas x:Name="OverlayCanvas" />
+    </Grid>
+</Window>

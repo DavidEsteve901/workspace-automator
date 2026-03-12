@@ -14,6 +14,13 @@ public sealed class CustomZoneEngineImpl : IZoneEngine
 
     private AppConfig Config => ConfigManager.Instance.Config;
 
+    public WorkspaceLauncher.Core.Config.CzeLayoutEntry? GetActiveLayout(string monitorPtInstance, Guid desktopId)
+    {
+        string? layoutId = GetActiveLayoutId(monitorPtInstance, desktopId);
+        if (layoutId == null) return null;
+        return Config.CzeLayouts.TryGetValue(layoutId, out var layout) ? layout : null;
+    }
+
     public string? GetActiveLayoutId(string monitorPtInstance, Guid desktopId)
     {
         string key = ActiveLayoutMap.MakeKey(monitorPtInstance, desktopId);
@@ -24,7 +31,8 @@ public sealed class CustomZoneEngineImpl : IZoneEngine
     {
         if (!Config.CzeLayouts.TryGetValue(layoutId, out var layout)) return null;
         if (zoneIndex < 0 || zoneIndex >= layout.Zones.Count) return null;
-        var zone = new CZEZone { Id = layout.Zones[zoneIndex].Id, X = layout.Zones[zoneIndex].X, Y = layout.Zones[zoneIndex].Y, W = layout.Zones[zoneIndex].W, H = layout.Zones[zoneIndex].H };
+        var ze = layout.Zones[zoneIndex];
+        var zone = new CZEZone { Id = ze.Id, X = ze.X, Y = ze.Y, W = ze.W, H = ze.H };
         return zone.ToPixelRect(workArea);
     }
 
@@ -53,6 +61,8 @@ public sealed class CustomZoneEngineImpl : IZoneEngine
     public IReadOnlyList<RECT> GetAllZoneRects(string layoutId, RECT workArea)
     {
         if (!Config.CzeLayouts.TryGetValue(layoutId, out var layout)) return [];
-        return layout.Zones.Select(ze => new CZEZone { Id = ze.Id, X = ze.X, Y = ze.Y, W = ze.W, H = ze.H }.ToPixelRect(workArea)).ToList();
+        return layout.Zones
+            .Select(ze => new CZEZone { Id = ze.Id, X = ze.X, Y = ze.Y, W = ze.W, H = ze.H }.ToPixelRect(workArea))
+            .ToList();
     }
 }

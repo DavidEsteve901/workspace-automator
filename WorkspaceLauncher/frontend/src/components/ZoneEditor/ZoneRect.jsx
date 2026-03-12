@@ -1,29 +1,40 @@
-export function ZoneRect({ zone, selected, onSelect, onSplit, style = {} }) {
+export function ZoneRect({ zone, spacing, selected, onSelect, onSplit, onMouseMove, canvasW, canvasH, index, style = {} }) {
   const pct = (v) => `${(v * 100).toFixed(3)}%`;
+
+  const pixelW = Math.round(zone.w * canvasW);
+  const pixelH = Math.round(zone.h * canvasH);
+
+  const handleMouseMove = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const fracX = (e.clientX - rect.left) / rect.width;
+    const fracY = (e.clientY - rect.top) / rect.height;
+    if (onMouseMove) onMouseMove(zone.id, fracX, fracY);
+  };
 
   const handleClick = (e) => {
     e.stopPropagation();
     if (e.shiftKey) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const fracX = (e.clientX - rect.left) / rect.width;
+      const fracY = (e.clientY - rect.top) / rect.height;
+      onSplit(zone.id, fracX, fracY);
+    } else if (e.ctrlKey) {
       onSelect(zone.id, true);
-    } else {
-      onSelect(zone.id, false);
     }
   };
 
-  const handleDblClick = (e) => {
+  const handleDoubleClick = (e) => {
     e.stopPropagation();
-    // Get click position relative to this zone
-    const rect = e.currentTarget.getBoundingClientRect();
-    const fracX = (e.clientX - rect.left) / rect.width;
-    const fracY = (e.clientY - rect.top) / rect.height;
-    onSplit(zone.id, fracX, fracY);
+    if (!e.shiftKey && !e.ctrlKey) {
+      onSelect(zone.id, false);
+    }
   };
 
   return (
     <div
       onClick={handleClick}
-      onDoubleClick={handleDblClick}
-      title="Click to select · Shift+click multi-select · Double-click to split"
+      onDoubleClick={handleDoubleClick}
+      onMouseMove={handleMouseMove}
       style={{
         position: 'absolute',
         left: pct(zone.x),
@@ -31,20 +42,35 @@ export function ZoneRect({ zone, selected, onSelect, onSplit, style = {} }) {
         width: pct(zone.w),
         height: pct(zone.h),
         boxSizing: 'border-box',
-        border: selected ? '2px solid #6db3f2' : '1.5px solid rgba(255,255,255,0.18)',
-        background: selected ? 'rgba(109,179,242,0.18)' : 'rgba(255,255,255,0.04)',
-        cursor: 'pointer',
-        transition: 'background 0.12s, border-color 0.12s',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: selected ? '#6db3f2' : 'rgba(255,255,255,0.45)',
-        fontSize: 11,
-        userSelect: 'none',
+        padding: spacing / 2,
+        zIndex: selected ? 10 : 1,
         ...style,
       }}
     >
-      {`${(zone.w * 100).toFixed(0)}×${(zone.h * 100).toFixed(0)}%`}
+      <div style={{
+        width: '100%',
+        height: '100%',
+        border: selected
+          ? '3px solid hsl(3,100%,57%)'
+          : '2px dashed rgba(255,255,255,0.55)',
+        background: selected
+          ? 'hsla(3,100%,57%,0.18)'
+          : 'hsla(0,0%,100%,0.04)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'white',
+        fontWeight: 700,
+        boxShadow: selected ? '0 0 0 1px hsl(3,100%,57%), inset 0 0 40px hsla(3,100%,57%,0.12)' : 'none',
+        transition: 'all 0.12s ease-out',
+        borderRadius: 4,
+      }}>
+        <div style={{ fontSize: 64, opacity: 0.85, letterSpacing: '-0.05em', lineHeight: 1 }}>{index}</div>
+        <div style={{ fontSize: 12, opacity: 0.55, fontWeight: 500, marginTop: 6, letterSpacing: '0.03em' }}>
+          {`${pixelW} × ${pixelH}`}
+        </div>
+      </div>
     </div>
   );
 }

@@ -106,6 +106,9 @@ public class HotkeyConfig
     [JsonPropertyName("util_reload_layouts")]
     public string UtilReloadLayouts { get; set; } = "ctrl+alt+l";
 
+    [JsonPropertyName("open_zone_editor")]
+    public string OpenZoneEditor { get; set; } = "ctrl+space";
+
     [JsonPropertyName("_zone_cycle_enabled")]
     public bool ZoneCycleEnabled { get; set; } = true;
 
@@ -139,8 +142,21 @@ public class CzeLayoutEntry
     [JsonPropertyName("name")]
     public string Name { get; set; } = "New Layout";
 
+    [JsonPropertyName("spacing")]
+    public int Spacing { get; set; } = 0;
+
     [JsonPropertyName("zones")]
     public List<CzeZoneEntry> Zones { get; set; } = [];
+
+    [JsonPropertyName("grid_state")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? GridState { get; set; }
+
+    [JsonPropertyName("ref_width")]
+    public int RefWidth { get; set; } = 0;
+
+    [JsonPropertyName("ref_height")]
+    public int RefHeight { get; set; } = 0;
 }
 
 public class CzeZoneEntry
@@ -149,14 +165,14 @@ public class CzeZoneEntry
     public int Id { get; set; }
 
     [JsonPropertyName("x")]
-    public double X { get; set; }
+    public int X { get; set; }  // 0–10000 units
 
     [JsonPropertyName("y")]
-    public double Y { get; set; }
+    public int Y { get; set; }  // 0–10000 units
 
     [JsonPropertyName("w")]
-    public double W { get; set; }
+    public int W { get; set; }  // 0–10000 units
 
     [JsonPropertyName("h")]
-    public double H { get; set; }
+    public int H { get; set; }  // 0–10000 units
 }

@@ -147,6 +147,8 @@ public static partial class User32
     public delegate bool MonitorEnumProc(nint hMonitor, nint hdcMonitor, ref RECT lprcMonitor, nint dwData);
 
     // Window style constants
+    public const uint SWP_NOSIZE      = 0x0001;
+    public const uint SWP_NOMOVE      = 0x0002;
     public const uint SWP_NOZORDER    = 0x0004;
     public const uint SWP_NOACTIVATE  = 0x0010;
     public const uint SWP_SHOWWINDOW  = 0x0040;
@@ -249,6 +251,37 @@ public static partial class User32
     public const uint EVENT_SYSTEM_MOVESIZESTART = 0x000A;
     public const uint WINEVENT_OUTOFCONTEXT      = 0x0000;
     public const uint WINEVENT_SKIPOWNPROCESS    = 0x0002;
+
+    // Extended window styles
+    public const int GWL_EXSTYLE        = -20;
+    public const nint WS_EX_TOOLWINDOW  = 0x00000080;
+    public const nint WS_EX_TRANSPARENT = 0x00000020;
+    public const nint WS_EX_LAYERED     = 0x00080000;
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    public static extern nint GetWindowLongPtr(nint hWnd, int nIndex);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    public static extern nint SetWindowLongPtr(nint hWnd, int nIndex, nint dwNewLong);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsIconic(nint hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsZoomed(nint hwnd);
+}
+
+public static class DpiHelper
+{
+    private static readonly nint DPI_AWARENESS_CONTEXT_UNAWARE = new(-1);
+
+    [DllImport("user32.dll")]
+    private static extern nint SetThreadDpiAwarenessContext(nint dpiContext);
+
+    public static nint SetUnaware() => SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE);
+    public static void Restore(nint prev) { if (prev != nint.Zero) SetThreadDpiAwarenessContext(prev); }
 }
 
 [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -275,7 +308,11 @@ public static partial class Kernel32
 public static partial class Dwmapi
 {
     public const uint DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+    public const uint DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
 
     [LibraryImport("dwmapi.dll")]
     public static partial int DwmGetWindowAttribute(nint hwnd, uint dwAttribute, out RECT pvAttribute, uint cbAttribute);
+
+    [LibraryImport("dwmapi.dll")]
+    public static partial int DwmSetWindowAttribute(nint hwnd, uint dwAttribute, ref int pvAttribute, uint cbAttribute);
 }

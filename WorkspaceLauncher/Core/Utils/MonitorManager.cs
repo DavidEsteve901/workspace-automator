@@ -16,6 +16,7 @@ public class MonitorInfo
     public string SerialNumber { get; set; } = "";  // Serial from PT if available
     public RECT Bounds { get; set; }
     public RECT WorkArea { get; set; }
+    public int  Scale { get; set; }                // DPI Scale percentage (e.g. 100, 125, 175)
     public bool IsPrimary { get; set; }
 }
 
@@ -101,7 +102,9 @@ public static class MonitorManager
                 info.Name = (string.IsNullOrEmpty(info.Name) ? (info.PtName ?? deviceName) : info.Name) + $" ({resolution})";
 
                 GetDpiForMonitor(hMonitor, 0, out uint dpiX, out uint dpiY);
-                Console.WriteLine($"[MonitorManager] Monitor: {info.Name} | PtName={info.PtName} | Serial={info.SerialNumber} | PtInst={info.PtInstance}");
+                info.Scale = (int)Math.Round(dpiX * 100.0 / 96.0);
+                
+                Console.WriteLine($"[MonitorManager] Monitor: {info.Name} | Scale={info.Scale}% | PtName={info.PtName} | Serial={info.SerialNumber} | PtInst={info.PtInstance}");
                 monitors.Add(info);
             }
             return true;

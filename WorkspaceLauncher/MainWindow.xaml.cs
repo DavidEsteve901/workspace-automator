@@ -98,6 +98,7 @@ public partial class MainWindow : Window
         InitializeHooks();
         PipWatcher.Instance.Start();
         ZoneAutoRegistrar.Instance.Start();
+        WorkspaceLauncher.Core.CustomZoneEngine.Engine.ZoneInteractionManager.Instance.Initialize();
 
         // Check virtual desktop COM availability and surface any errors
         if (!VirtualDesktopManager.Instance.IsAvailable)
@@ -117,32 +118,24 @@ public partial class MainWindow : Window
         
         webView.CoreWebView2.ProcessFailed += OnWebViewProcessFailed;
 
+        // Use the helper for standardized setup
+        WebView2Helper.ApplySettings(webView.CoreWebView2);
+        WebView2Helper.SetMapping(webView.CoreWebView2);
+
         // Hide the white flash during loading
         webView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 10, 10, 10);
-
-        webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
-        webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-        webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
-        webView.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;
 
         _bridge = new WebBridge(webView.CoreWebView2, this);
         _bridge.Initialize();
 
-        // Dev mode: load from Vite dev server
         string? devUrl = Environment.GetEnvironmentVariable("WL_DEV_URL");
         if (!string.IsNullOrEmpty(devUrl))
         {
             Console.WriteLine($"[MainWindow] DEV MODE: Loading {devUrl}");
             webView.CoreWebView2.Navigate(devUrl);
-            return;
         }
-
-        // Production: load embedded frontend
-        string frontendPath = GetFrontendPath();
-        if (frontendPath != null)
+        else
         {
-            webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
-                "launcher.local", frontendPath, CoreWebView2HostResourceAccessKind.Allow);
             webView.CoreWebView2.Navigate("https://launcher.local/index.html");
         }
     }
@@ -226,6 +219,12 @@ public partial class MainWindow : Window
         
         // Connect HotkeyProcessor for actual logic execution
         HotkeyProcessor.Instance.Initialize(_hookManager);
+
+        // Centralized hotkey handling for Zone Editor
+        HotkeyProcessor.Instance.OnOpenZoneEditorRequested += () => {
+            Logger.Info("[MainWindow] Hotkey detected, launching Zone Editor Manager");
+            WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.OpenManager();
+        };
         
         _hookManager.Start();
     }

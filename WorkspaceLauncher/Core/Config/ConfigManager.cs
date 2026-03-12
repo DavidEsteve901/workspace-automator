@@ -10,6 +10,7 @@ namespace WorkspaceLauncher.Core.Config;
 public sealed class ConfigManager
 {
     public static readonly ConfigManager Instance = new();
+    private readonly SemaphoreSlim _saveLock = new(1, 1);
 
     private static readonly string ConfigFileName = "mis_apps_config_v2.json";
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -87,6 +88,7 @@ public sealed class ConfigManager
 
     public void Save()
     {
+        _saveLock.Wait();
         try
         {
             string json = JsonSerializer.Serialize(_config, JsonOptions);
@@ -96,10 +98,15 @@ public sealed class ConfigManager
         {
             Console.WriteLine($"[Config] Save error: {ex.Message}");
         }
+        finally
+        {
+            _saveLock.Release();
+        }
     }
 
     public async Task SaveAsync()
     {
+        await _saveLock.WaitAsync();
         try
         {
             string json = JsonSerializer.Serialize(_config, JsonOptions);
@@ -108,6 +115,10 @@ public sealed class ConfigManager
         catch (Exception ex)
         {
             Console.WriteLine($"[Config] SaveAsync error: {ex.Message}");
+        }
+        finally
+        {
+            _saveLock.Release();
         }
     }
 }

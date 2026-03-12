@@ -15,6 +15,10 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        foreach (Window window in System.Windows.Application.Current.Windows)
+        {
+            try { window.Close(); } catch { /* Ignore */ }
+        }
         base.OnExit(e);
     }
 }

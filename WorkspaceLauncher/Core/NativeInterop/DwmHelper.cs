@@ -308,4 +308,10 @@ public static class DwmHelper
             Console.WriteLine($"[DwmHelper] FocusForCycling error: {ex.Message}");
         }
     }
+
+    public static void UseImmersiveDarkMode(nint hwnd, bool enabled)
+    {
+        int useDarkMode = enabled ? 1 : 0;
+        Dwmapi.DwmSetWindowAttribute(hwnd, Dwmapi.DWMWA_USE_IMMERSIVE_DARK_MODE, ref useDarkMode, (uint)sizeof(int));
+    }
 }
