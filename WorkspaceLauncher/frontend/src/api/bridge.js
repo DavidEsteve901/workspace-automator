@@ -68,8 +68,8 @@ export const bridge = {
   listMonitors: () => invoke("list_monitors"),
   listFancyZones: () => invoke("list_fancyzones"),
   getFzStatus: () => invoke("get_fz_status"),
-  changeLayoutAssignment: (monitorInstance, monitorName, desktopId, layoutUuid, layoutType) =>
-    invoke("change_layout_assignment", { monitorInstance, monitorName, desktopId, layoutUuid, layoutType }),
+  changeLayoutAssignment: (monitorInstance, monitorName, monitorSerial, desktopId, layoutUuid, layoutType) =>
+    invoke("change_layout_assignment", { monitorInstance, monitorName, monitorSerial, desktopId, layoutUuid, layoutType }),
   openFileDialog: (opts = {}) => invoke("open_file_dialog", opts),
   getWindowsToClean: (category) => invoke("get_windows_to_clean", { category }),
   closeWindows: (hwnds) => invoke("close_windows", { hwnds }),
@@ -83,6 +83,16 @@ export const bridge = {
   minimize: () => postMessage("window_minimize"),
   maximize: () => postMessage("window_maximize"),
   close: () => postMessage("window_close"),
+
+  // ── Custom Zone Engine (CZE) ──────────────────────────────────────────
+  czeGetZoneEngine: () => invoke("cze_get_zone_engine"),
+  czeSetZoneEngine: (engine) => postMessage("cze_set_zone_engine", { engine }),
+  czeGetLayouts: () => invoke("cze_get_layouts"),
+  czeSaveLayout: (layout) => invoke("cze_save_layout", { layout }),
+  czeDeleteLayout: (id) => invoke("cze_delete_layout", { id }),
+  czeGetActiveLayouts: () => invoke("cze_get_active_layouts"),
+  czeSetActiveLayout: (monitorPtInstance, desktopId, layoutId) =>
+    invoke("cze_set_active_layout", { monitorPtInstance, desktopId, layoutId }),
 };
 
 const listeners = {};

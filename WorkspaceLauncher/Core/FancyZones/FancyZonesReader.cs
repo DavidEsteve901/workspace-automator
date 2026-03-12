@@ -401,7 +401,7 @@ public static class FancyZonesReader
     /// Inject/update a layout assignment for a specific monitor+desktop combination.
     /// Uses the FancyZones v2 format with device { monitor-instance, monitor, virtual-desktop }.
     /// </summary>
-    public static bool InjectLayoutByDevice(string monitorInstance, string monitorName, string? virtualDesktopId, string layoutUuid, string type = "custom")
+    public static bool InjectLayoutByDevice(string monitorInstance, string monitorName, string? serialNumber, string? virtualDesktopId, string layoutUuid, string type = "custom")
     {
         if (!File.Exists(AppliedLayoutsPath)) return false;
 
@@ -413,18 +413,23 @@ public static class FancyZonesReader
             if (arr == null) return false;
 
             string wrappedLayoutUuid = $"{{{layoutUuid.Trim('{', '}').ToUpperInvariant()}}}";
-            string wrappedDesktopId = !string.IsNullOrEmpty(virtualDesktopId) 
-                ? $"{{{virtualDesktopId.Trim('{', '}').ToUpperInvariant()}}}" 
-                : "{00000000-0000-0000-0000-000000000000}";
+            
+            // Normalize search strings
+            string normInstance = monitorInstance?.Trim('{', '}').ToLowerInvariant() ?? "";
+            string normMonitor = monitorName?.ToLowerInvariant() ?? "";
+            string normSerial = serialNumber?.ToLowerInvariant() ?? "";
+            string normDesktop = virtualDesktopId?.Trim('{', '}').ToLowerInvariant() ?? "00000000-0000-0000-0000-000000000000";
 
-            // Detect template type and handle zeros-GUID for standard templates
+            string wrappedDesktopId = normDesktop == "00000000-0000-0000-0000-000000000000" 
+                ? "{00000000-0000-0000-0000-000000000000}" 
+                : $"{{{normDesktop.ToUpperInvariant()}}}";
+
+            // Detect template type for standard layouts
             var templates = ReadTemplatesFromSettings();
-            var template = templates.FirstOrDefault(t => t.Uuid.Equals(layoutUuid, StringComparison.OrdinalIgnoreCase));
+            var template = templates.FirstOrDefault(t => t.Uuid.Equals(layoutUuid.Trim('{', '}'), StringComparison.OrdinalIgnoreCase));
             if (template != null)
             {
                 type = template.Type;
-                // Standard templates are best activated via the all-zeros GUID + the correct type string.
-                // This works universally across PowerToys versions for default layouts.
                 if (type != "custom")
                 {
                     wrappedLayoutUuid = "{00000000-0000-0000-0000-000000000000}";
@@ -435,21 +440,39 @@ public static class FancyZonesReader
             foreach (var entry in arr)
             {
                 if (entry is not JsonObject obj) continue;
-                var device = obj["device"];
-                if (device == null) continue;
-
-                string? entryInstance = device["monitor-instance"]?.GetValue<string>();
-                string? entryMonitor = device["monitor"]?.GetValue<string>();
-                string? entryDesktop = device["virtual-desktop"]?.GetValue<string>();
-
-                bool monitorMatch = (!string.IsNullOrEmpty(entryInstance) && entryInstance == monitorInstance) ||
-                                   (!string.IsNullOrEmpty(entryMonitor) && entryMonitor == monitorName);
                 
-                bool desktopMatch = string.IsNullOrEmpty(virtualDesktopId)
-                    ? true  
-                    : (entryDesktop?.Trim('{', '}').Equals(virtualDesktopId.Trim('{', '}'), StringComparison.OrdinalIgnoreCase) ?? false);
+                bool isMatch = false;
 
-                if (monitorMatch && desktopMatch)
+                // 1. Try modern PowerToys format (device object)
+                var device = obj["device"];
+                if (device != null)
+                {
+                    string? entryInstance = device["monitor-instance"]?.GetValue<string>()?.Trim('{', '}').ToLowerInvariant();
+                    string? entryMonitor = device["monitor"]?.GetValue<string>()?.ToLowerInvariant();
+                    string? entrySerial = device["serial-number"]?.GetValue<string>()?.ToLowerInvariant();
+                    string? entryDesktop = device["virtual-desktop"]?.GetValue<string>()?.Trim('{', '}').ToLowerInvariant() 
+                                           ?? "00000000-0000-0000-0000-000000000000";
+
+                    bool serialMatch = !string.IsNullOrEmpty(normSerial) && entrySerial == normSerial;
+                    bool monitorMatch = (!string.IsNullOrEmpty(normInstance) && (entryInstance == normInstance || entryInstance?.Contains(normInstance) == true)) ||
+                                       (!string.IsNullOrEmpty(normMonitor) && (entryMonitor == normMonitor || entryMonitor?.Contains(normMonitor) == true));
+                    
+                    bool desktopMatch = entryDesktop == normDesktop || entryDesktop == "00000000-0000-0000-0000-000000000000";
+
+                    if ((serialMatch || monitorMatch) && desktopMatch) isMatch = true;
+                }
+                
+                // 2. Fallback to legacy PowerToys format (device-id string)
+                if (!isMatch && obj["device-id"] != null)
+                {
+                    string entryDeviceId = obj["device-id"]?.GetValue<string>()?.ToLowerInvariant() ?? "";
+                    if (entryDeviceId.Contains(normMonitor) || entryDeviceId.Contains(normInstance))
+                    {
+                        isMatch = true; 
+                    }
+                }
+
+                if (isMatch)
                 {
                     var appliedLayout = obj["applied-layout"] as JsonObject;
                     if (appliedLayout != null)
@@ -466,20 +489,20 @@ public static class FancyZonesReader
                         };
                     }
                     found = true;
-                    break;
                 }
             }
 
             if (!found)
             {
+                // Create modern entry as fallback
                 var newEntry = new JsonObject
                 {
                     ["device"] = new JsonObject
                     {
                         ["monitor"] = monitorName ?? "",
-                        ["monitor-instance"] = monitorInstance ?? "",
+                        ["monitor-instance"] = (monitorInstance ?? "").StartsWith("{") ? monitorInstance : $"{{{monitorInstance?.ToUpperInvariant()}}}",
                         ["monitor-number"] = 0,
-                        ["serial-number"] = "",
+                        ["serial-number"] = serialNumber ?? "",
                         ["virtual-desktop"] = wrappedDesktopId
                     },
                     ["applied-layout"] = new JsonObject
@@ -490,6 +513,7 @@ public static class FancyZonesReader
                 };
                 arr.Add(newEntry);
             }
+
 
             File.WriteAllText(AppliedLayoutsPath, root!.ToJsonString(JsonOpts));
             return true;

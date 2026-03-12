@@ -24,10 +24,19 @@ public class AppConfig
     public HotkeyConfig Hotkeys { get; set; } = new();
 
     [JsonPropertyName("pip_watcher_enabled")]
-    public bool PipWatcherEnabled { get; set; } = true;
+    public bool PipWatcherEnabled { get; set; } = false;
 
     [JsonPropertyName("fz_custom_path")]
     public string? FzCustomPath { get; set; }
+
+    [JsonPropertyName("zone_engine")]
+    public string ZoneEngine { get; set; } = "fancyzones";
+
+    [JsonPropertyName("cze_layouts")]
+    public Dictionary<string, CzeLayoutEntry> CzeLayouts { get; set; } = [];
+
+    [JsonPropertyName("cze_active_layouts")]
+    public Dictionary<string, string> CzeActiveLayouts { get; set; } = [];
 }
 
 public class AppItem
@@ -69,6 +78,14 @@ public class AppItem
     [JsonPropertyName("fancyzone_uuid")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? FancyzoneUuid { get; set; }
+
+    [JsonPropertyName("cze_layout_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CzeLayoutId { get; set; }
+
+    [JsonPropertyName("cze_zone_index")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? CzeZoneIndex { get; set; }
 }
 
 public class HotkeyConfig
@@ -112,4 +129,34 @@ public class LayoutCacheEntry
 
     [JsonPropertyName("info")]
     public JsonElement Info { get; set; }
+}
+
+public class CzeLayoutEntry
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "New Layout";
+
+    [JsonPropertyName("zones")]
+    public List<CzeZoneEntry> Zones { get; set; } = [];
+}
+
+public class CzeZoneEntry
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("x")]
+    public double X { get; set; }
+
+    [JsonPropertyName("y")]
+    public double Y { get; set; }
+
+    [JsonPropertyName("w")]
+    public double W { get; set; }
+
+    [JsonPropertyName("h")]
+    public double H { get; set; }
 }

@@ -75,7 +75,7 @@ public sealed class PipWatcher
                 try { CheckAndPinWindows(); }
                 catch (Exception ex) { File.AppendAllText("pip_error.log", $"[{DateTime.Now}] Error: {ex.Message}\n{ex.StackTrace}\n"); }
             }
-            Thread.Sleep(2000);
+            Thread.Sleep(5000);
         }
     }
 

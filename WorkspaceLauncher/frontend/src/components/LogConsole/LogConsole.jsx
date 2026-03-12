@@ -9,11 +9,23 @@ export default function LogConsole() {
   const bottomRef = useRef(null)
 
   useEffect(() => {
-    const handler = (entry) => {
+    const logHandler = (entry) => {
       setLogs(prev => [...prev, entry].slice(-500)) // Keep last 500
     }
-    onEvent('system_log', handler)
-    return () => offEvent('system_log', handler)
+    const errorHandler = (data) => {
+      setLogs(prev => [...prev, {
+        timestamp: new Date().toLocaleTimeString(),
+        level: 'error',
+        message: data.message || 'Error desconocido del sistema'
+      }].slice(-500))
+    }
+    
+    onEvent('system_log', logHandler)
+    onEvent('error', errorHandler)
+    return () => {
+      offEvent('system_log', logHandler)
+      offEvent('error', errorHandler)
+    }
   }, [])
 
   useEffect(() => {

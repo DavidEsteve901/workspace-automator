@@ -245,9 +245,10 @@ public static partial class User32
     public static extern bool UnhookWinEvent(nint hWinEventHook);
 
     // WinEvent constants
-    public const uint EVENT_SYSTEM_MOVESIZEEND = 0x000B;
-    public const uint WINEVENT_OUTOFCONTEXT    = 0x0000;
-    public const uint WINEVENT_SKIPOWNPROCESS  = 0x0002;
+    public const uint EVENT_SYSTEM_MOVESIZEEND   = 0x000B;
+    public const uint EVENT_SYSTEM_MOVESIZESTART = 0x000A;
+    public const uint WINEVENT_OUTOFCONTEXT      = 0x0000;
+    public const uint WINEVENT_SKIPOWNPROCESS    = 0x0002;
 }
 
 [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

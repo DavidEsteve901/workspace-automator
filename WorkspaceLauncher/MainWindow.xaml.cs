@@ -12,6 +12,7 @@ using WorkspaceLauncher.Core.Config;
 using WorkspaceLauncher.Core.FancyZones;
 using WorkspaceLauncher.Core.NativeInterop;
 using WorkspaceLauncher.Core.SystemTray;
+using WorkspaceLauncher.Core.Utils;
 using WorkspaceLauncher.Core.ZoneEngine;
 
 namespace WorkspaceLauncher;
@@ -114,6 +115,8 @@ public partial class MainWindow : Window
         var env = await CoreWebView2Environment.CreateAsync();
         await webView.EnsureCoreWebView2Async(env);
         
+        webView.CoreWebView2.ProcessFailed += OnWebViewProcessFailed;
+
         // Hide the white flash during loading
         webView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 10, 10, 10);
 
@@ -141,6 +144,26 @@ public partial class MainWindow : Window
             webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
                 "launcher.local", frontendPath, CoreWebView2HostResourceAccessKind.Allow);
             webView.CoreWebView2.Navigate("https://launcher.local/index.html");
+        }
+    }
+
+    private void OnWebViewProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+    {
+        string error = $"[WebView2] Process failed: {e.ProcessFailedKind}. Reason: {e.Reason}";
+        Logger.Error(error);
+
+        // If it's fatal, we notify the user.
+        if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
+        {
+            System.Windows.MessageBox.Show("El proceso principal de la interfaz ha fallado. La aplicación se cerrará.", 
+                "Error Crítico", MessageBoxButton.OK, MessageBoxImage.Error);
+            ForceClose();
+        }
+        else if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited || 
+                 e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
+        {
+            Logger.Warn("[WebView2] Renderer crash/unresponsive. Attempting reload...");
+            webView.Reload();
         }
     }
 

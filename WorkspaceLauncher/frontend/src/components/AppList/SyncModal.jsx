@@ -43,6 +43,7 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
           await bridge.changeLayoutAssignment(
             w.monitorInstance, 
             w.monitorName, 
+            w.monitorSerial,
             w.desktopId, 
             selectedLayoutUuid, 
             layoutObj?.type || w.layoutType || "custom"

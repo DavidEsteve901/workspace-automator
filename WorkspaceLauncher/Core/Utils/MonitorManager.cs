@@ -24,10 +24,9 @@ public static class MonitorManager
     public static List<MonitorInfo> GetActiveMonitors()
     {
         var monitors = new List<MonitorInfo>();
+        var wmiData = GetMonitorMetadataWmi();
 
-        // Ensure physical pixel coordinates regardless of which thread calls this.
-        // Without this, background threads may get DPI-scaled logical coordinates instead
-        // of physical pixels, causing zone calculations to be off on high-DPI monitors.
+        // Ensure physical pixel coordinates
         nint prevCtx = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
         User32.EnumDisplayMonitors(nint.Zero, nint.Zero, (nint hMonitor, nint hdcMonitor, ref RECT lprcMonitor, nint dwData) =>
@@ -49,108 +48,92 @@ public static class MonitorManager
                 };
 
                 // Get Hardware Metadata from the display devices
-                string adapterName = "";
                 var dd = new DISPLAY_DEVICE { cb = (uint)Marshal.SizeOf<DISPLAY_DEVICE>() };
-                
-                // First call: Get the adapter device string (GPU name)
                 if (User32.EnumDisplayDevicesW(deviceName, 0, ref dd, 0))
                 {
-                    adapterName = dd.DeviceString ?? "";
+                    // Adapter info...
                 }
 
-                // Second call: Get the specific monitor device attached to it (with EDD_GET_DEVICE_INTERFACE_NAME flag = 1)
                 var md = new DISPLAY_DEVICE { cb = (uint)Marshal.SizeOf<DISPLAY_DEVICE>() };
                 for (uint i = 0; User32.EnumDisplayDevicesW(deviceName, i, ref md, 1); i++)
                 {
                     if (!string.IsNullOrEmpty(md.DeviceID))
                     {
                         info.HardwareId = md.DeviceID;
-                        
-                        // DeviceID format: \\?\DISPLAY#SDC41B6#4&1d653659&0&UID8388688#{e6f07b5f-...}
-                        // We need to split by '#' to get:
-                        //   [0] = \\?\DISPLAY   (or MONITOR\ prefix in some cases)
-                        //   [1] = SDC41B6        => PtName (what PowerToys calls "monitor")
-                        //   [2] = 4&1d653659&0&UID8388688  => PtInstance (what PowerToys calls "monitor-instance")
-                        //   [3] = {guid}         => interface GUID
                         var hashParts = md.DeviceID.Split('#');
                         if (hashParts.Length >= 3)
                         {
-                            info.PtName = hashParts[1];       // e.g. "SDC41B6"
-                            info.PtInstance = hashParts[2];   // e.g. "4&1d653659&0&UID8388688"
+                            info.PtName = hashParts[1];
+                            info.PtInstance = hashParts[2];
                         }
-                        else
+                        
+                        // Try to find matching WMI data to get Serial Number
+                        // DeviceID looks like: \\?\DISPLAY#SDC41B6#4&1d653659&0&UID8388688#{...}
+                        // InstanceName looks like: DISPLAY\SDC41B6\4&1d653659&0&UID8388688_0
+                        string? matchKey = null;
+                        if (hashParts.Length >= 3) matchKey = $"{hashParts[0].Replace(@"\\?\", "")}\\{hashParts[1]}\\{hashParts[2]}".ToUpperInvariant();
+                        
+                        if (matchKey != null)
                         {
-                            // Fallback: try backslash split for older formats like MONITOR\SDC41B6\{...}\0001
-                            var bsParts = md.DeviceID.Split('\\');
-                            if (bsParts.Length >= 2)
+                            foreach (var kvp in wmiData)
                             {
-                                // Find the part that looks like a model ID (no special chars except &)
-                                foreach (var part in bsParts)
+                                if (kvp.Key.ToUpperInvariant().Contains(matchKey))
                                 {
-                                    if (string.IsNullOrEmpty(part) || part == "?" || part == "MONITOR" || part == "DISPLAY") continue;
-                                    if (part.StartsWith("{")) continue; // GUID
-                                    
-                                    if (!part.Contains("&"))
-                                    {
-                                        if (string.IsNullOrEmpty(info.PtName)) info.PtName = part;
-                                    }
-                                    else
-                                    {
-                                        if (string.IsNullOrEmpty(info.PtInstance)) info.PtInstance = part;
-                                    }
+                                    info.SerialNumber = kvp.Value.Serial;
+                                    if (!string.IsNullOrEmpty(kvp.Value.Name)) info.Name = kvp.Value.Name;
+                                    break;
                                 }
                             }
                         }
-                        
-                        // Use monitor DeviceString for name if it's not "Generic"
-                        if (!string.IsNullOrEmpty(md.DeviceString) && !md.DeviceString.Contains("Generic"))
+
+                        if (!string.IsNullOrEmpty(md.DeviceString) && (string.IsNullOrEmpty(info.Name) || info.Name.Contains("Generic")))
                         {
                             info.Name = md.DeviceString;
                         }
                     }
-                    
-                    // Most monitors only have one entry here
                     if (!string.IsNullOrEmpty(info.HardwareId)) break;
                     md = new DISPLAY_DEVICE { cb = (uint)Marshal.SizeOf<DISPLAY_DEVICE>() };
                 }
 
-                // Build a useful display name
                 int w = lprcMonitor.Right - lprcMonitor.Left;
                 int h = lprcMonitor.Bottom - lprcMonitor.Top;
                 string resolution = $"{w}x{h}";
-                
-                // If the name is still generic, use the model + device name
-                if (info.Name.StartsWith("Pantalla") || info.Name.Contains("Generic"))
-                {
-                    if (!string.IsNullOrEmpty(info.PtName))
-                    {
-                        info.Name = $"{info.PtName} ({resolution})";
-                    }
-                    else
-                    {
-                        info.Name = $"{deviceName} ({resolution})";
-                    }
-                }
-                else
-                {
-                    // Include resolution alongside the real name
-                    info.Name = $"{info.Name} ({resolution})";
-                }
+                info.Name = (string.IsNullOrEmpty(info.Name) ? (info.PtName ?? deviceName) : info.Name) + $" ({resolution})";
 
-                GetDpiForMonitor(hMonitor, 0 /* MDT_EFFECTIVE_DPI */, out uint dpiX, out uint dpiY);
-                Console.WriteLine($"[MonitorManager] Monitor: {info.Name} | PtName={info.PtName} | DPI={dpiX} | Bounds=[{lprcMonitor.Left},{lprcMonitor.Top},{lprcMonitor.Width}x{lprcMonitor.Height}] | WorkArea=[{mi.rcWork.Left},{mi.rcWork.Top},{mi.rcWork.Width}x{mi.rcWork.Height}] | Primary={info.IsPrimary}");
+                GetDpiForMonitor(hMonitor, 0, out uint dpiX, out uint dpiY);
+                Console.WriteLine($"[MonitorManager] Monitor: {info.Name} | PtName={info.PtName} | Serial={info.SerialNumber} | PtInst={info.PtInstance}");
                 monitors.Add(info);
             }
             return true;
         }, nint.Zero);
 
-        // Restore previous DPI context
         if (prevCtx != nint.Zero) SetThreadDpiAwarenessContext(prevCtx);
-
-        foreach (var m in monitors)
-            Console.WriteLine($"[MonitorManager] Confirmed: {m.Name} WorkArea=[{m.WorkArea.Left},{m.WorkArea.Top},{m.WorkArea.Right},{m.WorkArea.Bottom}] Size={m.WorkArea.Width}x{m.WorkArea.Height} Primary={m.IsPrimary}");
-
         return monitors;
+    }
+
+    private class WmiModData { public string Name = ""; public string Serial = ""; }
+    private static Dictionary<string, WmiModData> GetMonitorMetadataWmi()
+    {
+        var result = new Dictionary<string, WmiModData>();
+        try
+        {
+            // Note: System.Management requires a reference to System.Management.dll
+            using var searcher = new System.Management.ManagementObjectSearcher("root\\WMI", "SELECT * FROM WmiMonitorID");
+            foreach (System.Management.ManagementBaseObject queryObj in searcher.Get())
+            {
+                var data = new WmiModData();
+                var nameArr = (ushort[])queryObj["UserFriendlyName"];
+                if (nameArr != null) foreach (var c in nameArr) { if (c == 0) break; data.Name += (char)c; }
+                
+                var serialArr = (ushort[])queryObj["SerialNumberID"];
+                if (serialArr != null) foreach (var c in serialArr) { if (c == 0) break; data.Serial += (char)c; }
+
+                string inst = queryObj["InstanceName"]?.ToString() ?? "";
+                if (!string.IsNullOrEmpty(inst)) result[inst] = data;
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"[MonitorManager] WMI Error: {ex.Message}"); }
+        return result;
     }
 
     private static string GetDeviceName(nint hMonitor)

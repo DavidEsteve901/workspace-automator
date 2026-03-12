@@ -4,6 +4,8 @@ using System.Text.Json;
 using WorkspaceLauncher.Core.Config;
 using WorkspaceLauncher.Core.FancyZones;
 using WorkspaceLauncher.Core.NativeInterop;
+using WorkspaceLauncher.Core.CustomZoneEngine.Engine;
+using WorkspaceLauncher.Core.CustomZoneEngine.Models;
 using WorkspaceLauncher.Core.ZoneEngine;
 using WorkspaceLauncher.Core.Utils;
 
@@ -534,18 +536,28 @@ public sealed class WorkspaceOrchestrator
 
     private void RegisterInZoneStack(AppItem item, nint hwnd, AppConfig config)
     {
+        Guid desktopGuid = ResolveDesktopGuid(item) ?? Guid.Empty;
+        if (desktopGuid == Guid.Empty)
+            desktopGuid = VirtualDesktopManager.Instance.GetCurrentDesktopId() ?? Guid.Empty;
+        string monitorId = ResolveMonitorPtInstance(item.Monitor);
+
+        // ── CZE path ─────────────────────────────────────────────────────────
+        if (!string.IsNullOrEmpty(item.CzeLayoutId) && item.CzeZoneIndex.HasValue)
+        {
+            var zoneKey = new ZoneStack.ZoneKey(desktopGuid, monitorId, item.CzeLayoutId, item.CzeZoneIndex.Value);
+            ZoneStack.Instance.Register(zoneKey, hwnd);
+            Console.WriteLine($"[Orchestrator] CZE Registered hwnd {hwnd}: desktop={desktopGuid:N} monitor={monitorId} layout={item.CzeLayoutId} zone={item.CzeZoneIndex.Value}");
+            return;
+        }
+
+        // ── FancyZones path ──────────────────────────────────────────────────
         if (string.IsNullOrEmpty(item.FancyzoneUuid) || item.Fancyzone == "Ninguna") return;
 
         string layoutUuid = item.FancyzoneUuid.Trim('{', '}').ToLowerInvariant();
         int zoneIdx       = ParseZoneIndex(item.Fancyzone);
-        Guid desktopGuid  = ResolveDesktopGuid(item) ?? Guid.Empty;
-        string monitorId  = ResolveMonitorPtInstance(item.Monitor);
 
-        if (desktopGuid == Guid.Empty)
-            desktopGuid = VirtualDesktopManager.Instance.GetCurrentDesktopId() ?? Guid.Empty;
-
-        var zoneKey = new ZoneStack.ZoneKey(desktopGuid, monitorId, layoutUuid, zoneIdx);
-        ZoneStack.Instance.Register(zoneKey, hwnd);
+        var fzKey = new ZoneStack.ZoneKey(desktopGuid, monitorId, layoutUuid, zoneIdx);
+        ZoneStack.Instance.Register(fzKey, hwnd);
         Console.WriteLine($"[Orchestrator] Registered hwnd {hwnd}: desktop={desktopGuid:N} monitor={monitorId} layout={layoutUuid} zone={zoneIdx}");
     }
 
@@ -617,14 +629,26 @@ public sealed class WorkspaceOrchestrator
 
     internal RECT? ResolveZoneRect(AppItem item, AppConfig config)
     {
+        // ── CZE path ─────────────────────────────────────────────────────────
+        if (!string.IsNullOrEmpty(item.CzeLayoutId) && item.CzeZoneIndex.HasValue)
+        {
+            var workArea = GetMonitorWorkArea(item.Monitor);
+            if (workArea == null) return null;
+            var czRect = CustomZoneEngineImpl.Instance.CalculateZoneRect(item.CzeLayoutId, item.CzeZoneIndex.Value, workArea.Value);
+            if (czRect.HasValue)
+                Console.WriteLine($"[Orchestrator] CZE ZoneRect for layout='{item.CzeLayoutId}' zone={item.CzeZoneIndex.Value}: [{czRect.Value.Left},{czRect.Value.Top} {czRect.Value.Width}x{czRect.Value.Height}]");
+            return czRect;
+        }
+
+        // ── FancyZones path ──────────────────────────────────────────────────
         if (item.Fancyzone == "Ninguna" || string.IsNullOrEmpty(item.FancyzoneUuid)) return null;
 
         string uuid = item.FancyzoneUuid.ToLowerInvariant().Trim('{', '}');
         if (!config.FzLayoutsCache.TryGetValue(uuid, out var cacheEntry)) return null;
 
         int zoneIdx  = ParseZoneIndex(item.Fancyzone);
-        var workArea = GetMonitorWorkArea(item.Monitor);
-        if (workArea == null) return null;
+        var workArea2 = GetMonitorWorkArea(item.Monitor);
+        if (workArea2 == null) return null;
 
         var layoutInfo = ParseLayoutInfo(cacheEntry);
         if (layoutInfo == null) return null;
@@ -643,7 +667,7 @@ public sealed class WorkspaceOrchestrator
             }
         }
 
-        var zoneRect = ZoneCalculator.CalculateZoneRect(layoutInfo, zoneIdx, workArea.Value);
+        var zoneRect = ZoneCalculator.CalculateZoneRect(layoutInfo, zoneIdx, workArea2.Value);
         if (zoneRect.HasValue)
             Console.WriteLine($"[Orchestrator] ZoneRect for '{item.Fancyzone}' on monitor '{item.Monitor}': [{zoneRect.Value.Left},{zoneRect.Value.Top},{zoneRect.Value.Right},{zoneRect.Value.Bottom}] Size={zoneRect.Value.Width}x{zoneRect.Value.Height}");
         return zoneRect;

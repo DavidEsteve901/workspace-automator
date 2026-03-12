@@ -10,6 +10,7 @@ using WorkspaceLauncher.Core.FancyZones;
 using WorkspaceLauncher.Core.Launcher;
 using WorkspaceLauncher.Core.NativeInterop;
 using WorkspaceLauncher.Core.Utils;
+using WorkspaceLauncher.Core.CustomZoneEngine.Models;
 using WorkspaceLauncher.Core.ZoneEngine;
 
 namespace WorkspaceLauncher.Bridge;
@@ -180,11 +181,27 @@ public sealed class WebBridge
                     break;
                 
                 case "list_fancyzones":
-                    ReplyInvoke(reqId, HandleListFancyZones());
+                    _ = Task.Run(() => {
+                        try {
+                            var res = HandleListFancyZones();
+                            ReplyInvoke(reqId, res);
+                        } catch (Exception ex) {
+                            Logger.Error($"[Bridge] list_fancyzones async error: {ex.Message}");
+                            ReplyInvoke(reqId, new { error = ex.Message });
+                        }
+                    });
                     break;
 
                 case "get_fz_status":
-                    ReplyInvoke(reqId, HandleGetFzStatus());
+                    _ = Task.Run(() => {
+                        try {
+                            var status = HandleGetFzStatus();
+                            ReplyInvoke(reqId, status);
+                        } catch (Exception ex) {
+                            Logger.Error($"[Bridge] get_fz_status async error: {ex.Message}");
+                            ReplyInvoke(reqId, new { error = ex.Message });
+                        }
+                    });
                     break;
 
                 case "change_layout_assignment":
@@ -226,6 +243,36 @@ public sealed class WebBridge
                 case "open_file_dialog":
                     var dialogResult = await HandleOpenFileDialog(payload);
                     ReplyInvoke(reqId, dialogResult);
+                    break;
+
+                // ── CZE: fire-and-forget ──────────────────────────────
+                case "cze_set_zone_engine":
+                    HandleCzeSetZoneEngine(payload);
+                    break;
+
+                // ── CZE: invoke (request/response) ───────────────────
+                case "cze_get_zone_engine":
+                    ReplyInvoke(reqId, HandleCzeGetZoneEngine());
+                    break;
+
+                case "cze_get_layouts":
+                    ReplyInvoke(reqId, HandleCzeGetLayouts());
+                    break;
+
+                case "cze_save_layout":
+                    ReplyInvoke(reqId, HandleCzeSaveLayout(payload));
+                    break;
+
+                case "cze_delete_layout":
+                    ReplyInvoke(reqId, HandleCzeDeleteLayout(payload));
+                    break;
+
+                case "cze_get_active_layouts":
+                    ReplyInvoke(reqId, HandleCzeGetActiveLayouts());
+                    break;
+
+                case "cze_set_active_layout":
+                    ReplyInvoke(reqId, HandleCzeSetActiveLayout(payload));
                     break;
 
                 default:
@@ -527,6 +574,7 @@ public sealed class WebBridge
                 type = l.type,
                 isCustom = l.isCustom,
                 zoneCount = l.zoneCount
+                // info excluded to keep payload small
             }).ToArray();
         }
         catch (Exception ex)
@@ -540,12 +588,17 @@ public sealed class WebBridge
     {
         try
         {
+            Logger.Info("[WebBridge] HandleGetFzStatus: Starting status collection...");
             var applied = FancyZonesReader.ReadAppliedLayouts();
+            Logger.Info($"[WebBridge] HandleGetFzStatus: Read {applied.Count} applied layouts.");
+            
             var monitors = MonitorManager.GetActiveMonitors();
+            Logger.Info($"[WebBridge] HandleGetFzStatus: Found {monitors.Count} active monitors.");
 
             var vdm = VirtualDesktopManager.Instance;
             var desktopIds = vdm.GetDesktops();
             var activeDesktop = vdm.GetCurrentDesktopId();
+            Logger.Info($"[WebBridge] HandleGetFzStatus: Found {desktopIds.Count} virtual desktops.");
 
             var desktops = desktopIds.Count > 0
                 ? desktopIds.Select((id, idx) => new
@@ -557,102 +610,139 @@ public sealed class WebBridge
                 : new[] { new { id = Guid.Empty.ToString(), name = "Escritorio 1", isCurrent = true } };
 
             var availableLayouts = FancyZonesReader.GetAvailableLayouts();
+            Logger.Info($"[WebBridge] HandleGetFzStatus: Found {availableLayouts.Count} available layouts.");
 
             // Build a map: for each monitor+desktop, find the active layout
-            Logger.Info($"[FzDebug] GetFzStatus: mons={monitors.Count}, dks={desktops.Length}, applied={applied.Count}");
             var statusEntries = new List<object>();
             foreach (var mon in monitors)
             {
+                Logger.Info($"[WebBridge] Processing status for monitor: {mon.Name} ({mon.PtInstance})");
                 foreach (var dk in desktops)
                 {
-                    Logger.Info($"[FzDebug] Checking mon={mon.PtName}({mon.PtInstance}) dk={dk.name}({dk.id})");
-                    // Find matching applied entry
-                    object? matchedLayout = null;
-                    string matchedLayoutUuid = "";
-
-                    foreach (var ae in applied)
+                    try
                     {
-                        string aeInstNorm = (ae.Instance ?? "").Trim('{', '}').ToLowerInvariant();
+                        Logger.Info($"[FzStatus] Checking Monitor {mon.Name} ({mon.PtName}) for Desktop {dk.name} ({dk.id})");
+                        var matchedLayout = (object?)null;
+                        string? matchedLayoutUuid = null;
+                        bool isAllDesktopsMatched = false;
+                        int bestMatchQuality = -1;
+
                         string monInstNorm = (mon.PtInstance ?? "").Trim('{', '}').ToLowerInvariant();
                         string monPtNorm = (mon.PtName ?? "").ToLowerInvariant();
-                        string aeMonNorm = (ae.MonitorName ?? "").ToLowerInvariant();
-                        
-                        // ── Monitor matching ──
-                        bool monMatch = false;
-                        if (!string.IsNullOrEmpty(aeInstNorm) && !string.IsNullOrEmpty(monInstNorm) && aeInstNorm == monInstNorm)
-                            monMatch = true;
-                        else if (!string.IsNullOrEmpty(aeMonNorm) && aeMonNorm == monPtNorm)
-                            monMatch = true;
+                        string monSerial = (mon.SerialNumber ?? "").ToLowerInvariant();
 
-                        if (!monMatch) continue;
-
-                        // ── Desktop matching (Strict) ──
-                        string dkIdNorm = dk.id.Trim('{', '}').ToLowerInvariant();
-                        string aeDkNorm = (ae.DesktopId ?? "").Trim('{', '}').ToLowerInvariant();
-                        
-                        // A match is either the exact desktop GUID, or the "all desktops" GUID
-                        bool isAllDesktops = string.IsNullOrEmpty(aeDkNorm) || aeDkNorm == "00000000-0000-0000-0000-000000000000";
-                        bool dkMatch = isAllDesktops || aeDkNorm == dkIdNorm;
-
-                        if (monMatch && dkMatch)
+                        foreach (var ae in applied)
                         {
-                            string rawUuid = ae.LayoutUuid.Trim('{', '}').ToLowerInvariant();
-                            var layout = TryMatchLayout(rawUuid, ae.LayoutType, availableLayouts);
-                            
-                            // Use canonical UUID if matched (e.g., "grid" instead of "0000...")
-                            if (layout != null)
-                            {
-                                matchedLayoutUuid = layout.uuid;
-                                matchedLayout = new { 
-                                    uuid = layout.uuid, 
-                                    name = layout.name,
-                                    isCustom = layout.isCustom,
-                                    type = layout.type
-                                };
-                            }
-                            else
-                            {
-                                // Ultimate fallback for unknown templates
-                                string displayName = ae.LayoutType;
-                                if (displayName.Equals("grid", StringComparison.OrdinalIgnoreCase)) displayName = "Cuadrícula";
-                                else if (displayName.Equals("priority-grid", StringComparison.OrdinalIgnoreCase)) displayName = "Cuadrícula de prioridad";
-                                else if (displayName.Equals("rows", StringComparison.OrdinalIgnoreCase)) displayName = "Filas";
-                                else if (displayName.Equals("columns", StringComparison.OrdinalIgnoreCase)) displayName = "Columnas";
-                                else if (displayName.Equals("focus", StringComparison.OrdinalIgnoreCase)) displayName = "Foco";
-                                else if (displayName.Equals("blank", StringComparison.OrdinalIgnoreCase)) displayName = "Sin diseño";
-                                
-                                matchedLayout = new { 
-                                    uuid = rawUuid, 
-                                    name = displayName,
-                                    isCustom = (ae.LayoutType == "custom"),
-                                    type = ae.LayoutType
-                                };
-                            }
-                            
-                            if (!isAllDesktops) break; 
-                        }
-                    }
+                            string aeInstNorm = (ae.Instance ?? "").Trim('{', '}').ToLowerInvariant();
+                            string aeMonNorm = (ae.MonitorName ?? "").ToLowerInvariant();
+                            string aeSerial = (ae.SerialNumber ?? "").ToLowerInvariant();
 
-                    statusEntries.Add(new
+                            // ── Monitor matching (High resolution) ──
+                            bool serialMatch = !string.IsNullOrEmpty(monSerial) && monSerial == aeSerial;
+                            bool instMatch = !string.IsNullOrEmpty(aeInstNorm) && aeInstNorm == monInstNorm;
+                            bool nameMatch = !string.IsNullOrEmpty(aeMonNorm) && (aeMonNorm == monPtNorm || aeMonNorm.Contains(monPtNorm));
+
+                            if (!serialMatch && !instMatch && !nameMatch) continue;
+
+                            // ── Desktop matching (Strict) ──
+                            string dkIdNorm = dk.id.Trim('{', '}').ToLowerInvariant();
+                            string aeDkNorm = (ae.DesktopId ?? "").Trim('{', '}').ToLowerInvariant();
+
+                            // A match is either the exact desktop GUID, or the "all desktops" GUID
+                            bool isAllDesktops = string.IsNullOrEmpty(aeDkNorm) || aeDkNorm == "00000000-0000-0000-0000-000000000000";
+                            bool isExactMatch = aeDkNorm == dkIdNorm;
+
+                            if (isExactMatch || isAllDesktops)
+                            {
+                                string rawUuid = ae.LayoutUuid.Trim('{', '}').ToLowerInvariant();
+                                var layout = TryMatchLayout(rawUuid, ae.LayoutType, availableLayouts);
+
+                                // Priority: Prefer Serial matches > Instance matches > Name matches.
+                                // Prefer Exact Desktop > All Desktops.
+                                // Higher quality match wins; same quality → last entry in file wins.
+                                int matchQuality = (serialMatch ? 100 : 0) + (instMatch ? 50 : 0) + (nameMatch ? 10 : 0);
+                                bool isHigherPriority = (isExactMatch && isAllDesktopsMatched);
+                                bool isSamePriority = (isExactMatch == !isAllDesktopsMatched);
+
+                                // Use match quality as tiebreaker: prevents ghost entries (e.g. a disconnected
+                                // monitor that shares the same PnP instance) from overriding the real one.
+                                bool shouldUpdate = (matchedLayout == null)
+                                    || isHigherPriority
+                                    || (isSamePriority && matchQuality >= bestMatchQuality);
+
+                                if (shouldUpdate)
+                                {
+                                    Logger.Info($"[FzStatus] Found match for {mon.Name}: {ae.LayoutType} (UUID: {rawUuid}). Quality={matchQuality}, Type={(isExactMatch ? "Exact" : "Global")}");
+                                    isAllDesktopsMatched = isAllDesktops;
+                                    bestMatchQuality = matchQuality;
+                                    if (layout != null)
+                                    {
+                                        matchedLayoutUuid = layout.uuid;
+                                        matchedLayout = new { 
+                                            uuid = layout.uuid, 
+                                            name = layout.name,
+                                            isCustom = layout.isCustom,
+                                            type = layout.type
+                                        };
+                                    }
+                                    else
+                                    {
+                                        string displayName = ae.LayoutType;
+                                        // Standardize display names
+                                        if (displayName.Equals("grid", StringComparison.OrdinalIgnoreCase)) displayName = "Cuadrícula";
+                                        else if (displayName.Equals("priority-grid", StringComparison.OrdinalIgnoreCase)) displayName = "Cuadrícula de prioridad";
+                                        else if (displayName.Equals("rows", StringComparison.OrdinalIgnoreCase)) displayName = "Filas";
+                                        else if (displayName.Equals("columns", StringComparison.OrdinalIgnoreCase)) displayName = "Columnas";
+                                        else if (displayName.Equals("focus", StringComparison.OrdinalIgnoreCase)) displayName = "Foco";
+                                        else if (displayName.Equals("blank", StringComparison.OrdinalIgnoreCase)) displayName = "Sin diseño";
+                                        
+                                        matchedLayout = new { 
+                                            uuid = rawUuid, 
+                                            name = displayName,
+                                            isCustom = (ae.LayoutType == "custom"),
+                                            type = ae.LayoutType
+                                        };
+                                    }
+                                }
+                                
+                                // If we found an exact match, we can stop searching for this specific monitor+desktop
+                                // DO NOT break here. We want to find the LAST exact match in the file if multiple exist.
+                            }
+                        }
+
+                        statusEntries.Add(new
+                        {
+                            monitorId = mon.Handle,
+                            monitorLabel = mon.Name,
+                            monitorPtName = mon.PtName,
+                            monitorSerial = mon.SerialNumber,
+                            monitorPtInstance = mon.PtInstance,
+                            monitorHardwareId = mon.HardwareId,
+                            desktopId = dk.id,
+                            desktopName = dk.name,
+                            desktopIsCurrent = dk.isCurrent,
+                            activeLayout = matchedLayout,
+                            activeLayoutUuid = matchedLayoutUuid
+                        });
+                    }
+                    catch (Exception ex)
                     {
-                        monitorId = mon.Handle,
-                        monitorLabel = mon.Name,
-                        monitorPtName = mon.PtName,
-                        monitorPtInstance = mon.PtInstance,
-                        monitorHardwareId = mon.HardwareId,
-                        desktopId = dk.id,
-                        desktopName = dk.name,
-                        desktopIsCurrent = dk.isCurrent,
-                        activeLayout = matchedLayout,
-                        activeLayoutUuid = matchedLayoutUuid
-                    });
+                        Logger.Error($"[WebBridge] Error processing entry for {mon.Name}/{dk.name}: {ex.Message}");
+                    }
                 }
             }
 
+            Logger.Info($"[WebBridge] Status collection complete. Sending {statusEntries.Count} entries.");
             return new
             {
                 entries = statusEntries,
-                layouts = availableLayouts,
+                layouts = availableLayouts.Select(l => new {
+                    uuid = l.uuid,
+                    name = l.name,
+                    type = l.type,
+                    isCustom = l.isCustom,
+                    zoneCount = l.zoneCount
+                }).ToList(),
                 monitors = monitors.Select(m => new
                 {
                     id = m.Handle,
@@ -671,8 +761,15 @@ public sealed class WebBridge
         }
         catch (Exception ex)
         {
-            Logger.Error($"[WebBridge] HandleGetFzStatus error: {ex.Message}");
-            return new { entries = new List<object>(), layouts = new List<object>(), monitors = new List<object>(), desktops = new List<object>() };
+            Logger.Error($"[WebBridge] HandleGetFzStatus CRITICAL ERROR: {ex.Message}\n{ex.StackTrace}");
+            SendEvent("error", new { message = "Error al leer FancyZones: " + ex.Message });
+            return new { 
+                entries = new List<object>(), 
+                layouts = new List<object>(), 
+                monitors = new List<object>(), 
+                desktops = new List<object>(),
+                error = ex.Message 
+            };
         }
     }
 
@@ -707,6 +804,7 @@ public sealed class WebBridge
             string monitorInstance = payload.TryGetProperty("monitorInstance", out var mi) ? mi.GetString() ?? "" : "";
             string monitorName = payload.TryGetProperty("monitorName", out var mn) ? mn.GetString() ?? "" : "";
             string? desktopId = payload.TryGetProperty("desktopId", out var di) ? di.GetString() : null;
+            string monitorSerial = payload.TryGetProperty("monitorSerial", out var ms) ? ms.GetString() ?? "" : "";
             string layoutUuid = payload.TryGetProperty("layoutUuid", out var lu) ? lu.GetString() ?? "" : "";
             string layoutType = payload.TryGetProperty("layoutType", out var lt) ? lt.GetString() ?? "custom" : "custom";
 
@@ -719,12 +817,12 @@ public sealed class WebBridge
                 {
                     layoutType = cached.Type;
                 }
-                ok = FancyZonesReader.InjectLayoutByDevice(monitorInstance, monitorName, desktopId, cleanUuid, layoutType);
+                ok = FancyZonesReader.InjectLayoutByDevice(monitorInstance, monitorName, monitorSerial, desktopId, cleanUuid, layoutType);
             }
             else
             {
                 // Assign empty/none layout
-                ok = FancyZonesReader.InjectLayoutByDevice(monitorInstance, monitorName, desktopId, "", "blank");
+                ok = FancyZonesReader.InjectLayoutByDevice(monitorInstance, monitorName, monitorSerial, desktopId, "", "blank");
             }
 
             if (ok)
@@ -956,24 +1054,39 @@ public sealed class WebBridge
                 if (mon != null)
                 {
                     // Find what's currently active on that specific monitor ON THE TARGET DESKTOP
-                    string monPtNorm = mon.PtName.ToLowerInvariant();
-                    string monInstNorm = mon.PtInstance.Trim('{', '}').ToLowerInvariant();
-                    
-                    // ── Layout matching ──
-                    cleanUuid = item.FancyzoneUuid?.Trim('{', '}').ToLowerInvariant() ?? ""; // Re-clean just in case
-                    var active = appliedLayouts.FirstOrDefault(a => {
+                    string monSerial = (mon.SerialNumber ?? "").ToLowerInvariant();
+                    string monInstNorm = (mon.PtInstance ?? "").Trim('{', '}').ToLowerInvariant();
+                    string monPtNorm = (mon.PtName ?? "").ToLowerInvariant();
+
+                    var active = (AppliedLayoutEntry?)null;
+                    bool foundExact = false;
+                    foreach (var a in appliedLayouts)
+                    {
                         string aeInstNorm = (a.Instance ?? "").Trim('{', '}').ToLowerInvariant();
                         string aeMonNorm = (a.MonitorName ?? "").ToLowerInvariant();
+                        string aeDkNorm = (a.DesktopId ?? "").Trim('{', '}').ToLowerInvariant();
+                        string aeSerial = (a.SerialNumber ?? "").ToLowerInvariant();
                         
-                        bool monitorMatch = (!string.IsNullOrEmpty(aeInstNorm) && aeInstNorm == monInstNorm) ||
-                                           (!string.IsNullOrEmpty(aeMonNorm) && (aeMonNorm == monPtNorm || aeMonNorm.Contains(monPtNorm)));
-                        
-                        bool desktopMatch = a.DesktopId == targetDesktopId || 
-                                          (string.IsNullOrEmpty(a.DesktopId) && targetDesktopId == currentDesktopId) ||
-                                          a.DesktopId == "00000000-0000-0000-0000-000000000000";
-                                          
-                        return monitorMatch && desktopMatch;
-                    });
+                        bool serialMatch = !string.IsNullOrEmpty(monSerial) && monSerial == aeSerial;
+                        bool instMatch = !string.IsNullOrEmpty(aeInstNorm) && aeInstNorm == monInstNorm;
+                        bool nameMatch = !string.IsNullOrEmpty(aeMonNorm) && (aeMonNorm == monPtNorm || aeMonNorm.Contains(monPtNorm));
+
+                        if (!serialMatch && !instMatch && !nameMatch) continue;
+
+                        bool isExact = aeDkNorm == targetDesktopId.Trim('{', '}').ToLowerInvariant();
+                        bool isAll = aeDkNorm == "00000000-0000-0000-0000-000000000000" || string.IsNullOrEmpty(aeDkNorm);
+
+                        if (isExact)
+                        {
+                            active = a;
+                            foundExact = true;
+                            // DO NOT break. We want to take the LAST match in the file.
+                        }
+                        else if (isAll && !foundExact)
+                        {
+                            active = a;
+                        }
+                    }
 
                     if (active != null)
                     {
@@ -1008,6 +1121,7 @@ public sealed class WebBridge
                                     itemPath = item.Path,
                                     monitorName = item.Monitor,
                                     monitorInstance = mon.PtInstance,
+                                    monitorSerial = mon.SerialNumber,
                                     desktopId = targetDesktopId,
                                     layoutUuid = cleanUuid,
                                     layoutType = assignedType,
@@ -1032,6 +1146,7 @@ public sealed class WebBridge
                             itemPath = item.Path,
                             monitorName = item.Monitor,
                             monitorInstance = mon.PtInstance,
+                            monitorSerial = mon.SerialNumber,
                             desktopId = targetDesktopId,
                             layoutUuid = cleanUuid,
                             layoutType = assignedType,
@@ -1205,6 +1320,142 @@ public sealed class WebBridge
                 return dialog.ShowDialog(_window) == true ? (object?)dialog.FileName : null;
             }
         });
+    }
+
+    // ── Handlers: Custom Zone Engine (CZE) ──────────────────────────────────
+
+    private void HandleCzeSetZoneEngine(JsonElement payload)
+    {
+        string engine = payload.TryGetProperty("engine", out var e) ? e.GetString() ?? "fancyzones" : "fancyzones";
+        ConfigManager.Instance.Config.ZoneEngine = engine;
+        ConfigManager.Instance.Save();
+        HandleGetState();
+    }
+
+    private object HandleCzeGetZoneEngine()
+        => new { engine = ConfigManager.Instance.Config.ZoneEngine ?? "fancyzones" };
+
+    private object HandleCzeGetLayouts()
+    {
+        var layouts = ConfigManager.Instance.Config.CzeLayouts.Values
+            .Select(l => new { id = l.Id, name = l.Name, zones = l.Zones })
+            .ToList();
+        return new { layouts };
+    }
+
+    private object HandleCzeSaveLayout(JsonElement payload)
+    {
+        try
+        {
+            var config = ConfigManager.Instance.Config;
+            var layoutEl = payload.TryGetProperty("layout", out var l) ? l : payload;
+            string id = layoutEl.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? Guid.NewGuid().ToString("D") : Guid.NewGuid().ToString("D");
+            string name = layoutEl.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "New Layout" : "New Layout";
+
+            var zones = new List<WorkspaceLauncher.Core.Config.CzeZoneEntry>();
+            if (layoutEl.TryGetProperty("zones", out var zonesEl) && zonesEl.ValueKind == JsonValueKind.Array)
+            {
+                int zoneId = 0;
+                foreach (var z in zonesEl.EnumerateArray())
+                {
+                    zones.Add(new WorkspaceLauncher.Core.Config.CzeZoneEntry
+                    {
+                        Id = z.TryGetProperty("id", out var zid) ? zid.GetInt32() : zoneId,
+                        X  = z.TryGetProperty("x", out var zx) ? zx.GetDouble() : 0,
+                        Y  = z.TryGetProperty("y", out var zy) ? zy.GetDouble() : 0,
+                        W  = z.TryGetProperty("w", out var zw) ? zw.GetDouble() : 1,
+                        H  = z.TryGetProperty("h", out var zh) ? zh.GetDouble() : 1,
+                    });
+                    zoneId++;
+                }
+            }
+
+            var entry = new WorkspaceLauncher.Core.Config.CzeLayoutEntry { Id = id, Name = name, Zones = zones };
+            config.CzeLayouts[id] = entry;
+            ConfigManager.Instance.Save();
+
+            return new { ok = true, id, layout = entry };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[CZE] SaveLayout error: {ex.Message}");
+            return new { ok = false, error = ex.Message };
+        }
+    }
+
+    private object HandleCzeDeleteLayout(JsonElement payload)
+    {
+        try
+        {
+            string id = payload.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "";
+            if (string.IsNullOrEmpty(id)) return new { ok = false, error = "id required" };
+
+            var config = ConfigManager.Instance.Config;
+            config.CzeLayouts.Remove(id);
+            // Also remove any active layout mappings pointing to this layout
+            var keysToRemove = config.CzeActiveLayouts.Where(kv => kv.Value == id).Select(kv => kv.Key).ToList();
+            foreach (var k in keysToRemove) config.CzeActiveLayouts.Remove(k);
+            ConfigManager.Instance.Save();
+            return new { ok = true };
+        }
+        catch (Exception ex)
+        {
+            return new { ok = false, error = ex.Message };
+        }
+    }
+
+    private object HandleCzeGetActiveLayouts()
+    {
+        var config = ConfigManager.Instance.Config;
+        var desktops = VirtualDesktopManager.Instance.GetDesktops();
+        var monitors = Utils.MonitorManager.GetActiveMonitors();
+
+        var entries = new List<object>();
+        foreach (var monitor in monitors)
+        {
+            foreach (var desktop in desktops)
+            {
+                string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(monitor.PtInstance, desktop.Id);
+                config.CzeActiveLayouts.TryGetValue(key, out string? layoutId);
+                entries.Add(new
+                {
+                    monitorPtInstance = monitor.PtInstance,
+                    monitorName       = monitor.PtName,
+                    desktopId         = desktop.Id.ToString("D"),
+                    desktopName       = desktop.Name,
+                    layoutId          = layoutId ?? "",
+                });
+            }
+        }
+        return new { entries };
+    }
+
+    private object HandleCzeSetActiveLayout(JsonElement payload)
+    {
+        try
+        {
+            string ptInstance = payload.TryGetProperty("monitorPtInstance", out var mi) ? mi.GetString() ?? "" : "";
+            string desktopIdStr = payload.TryGetProperty("desktopId", out var di) ? di.GetString() ?? "" : "";
+            string layoutId = payload.TryGetProperty("layoutId", out var li) ? li.GetString() ?? "" : "";
+
+            if (!Guid.TryParse(desktopIdStr, out Guid desktopId))
+                return new { ok = false, error = "Invalid desktopId" };
+
+            string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(ptInstance, desktopId);
+            var config = ConfigManager.Instance.Config;
+
+            if (string.IsNullOrEmpty(layoutId))
+                config.CzeActiveLayouts.Remove(key);
+            else
+                config.CzeActiveLayouts[key] = layoutId;
+
+            ConfigManager.Instance.Save();
+            return new { ok = true };
+        }
+        catch (Exception ex)
+        {
+            return new { ok = false, error = ex.Message };
+        }
     }
 
     // ── Outgoing to JS ─────────────────────────────────────────────────────

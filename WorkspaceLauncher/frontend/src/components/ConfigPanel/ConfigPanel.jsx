@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Settings, Keyboard, Monitor, Save, Check, Folder, LayoutGrid, ChevronRight, X, ArrowRightToLine, ArrowLeftToLine, ArrowRightSquare, ArrowLeftSquare, RefreshCcw } from 'lucide-react'
+import { Settings, Keyboard, Monitor, Save, Check, Folder, LayoutGrid, ChevronRight, X, ArrowRightToLine, ArrowLeftToLine, ArrowRightSquare, ArrowLeftSquare, RefreshCcw, RotateCw } from 'lucide-react'
 import { bridge } from '../../api/bridge.js'
 import './ConfigPanel.css'
 
@@ -195,11 +195,14 @@ function FzStatusModal({ onClose }) {
 
   const loadStatus = useCallback(async () => {
     setLoading(true)
+    console.log("[FzModal] Requesting FZ status...");
     try {
       const data = await bridge.getFzStatus()
+      console.log("[FzModal] FZ status received:", data);
       setFzStatus(data)
     } catch (err) {
-      console.error("Error loading FZ status:", err)
+      console.error("[FzModal] Error loading FZ status:", err)
+      bridge.setHotkeysEnabled(true) // Just in case
     }
     setLoading(false)
   }, [])
@@ -214,6 +217,7 @@ function FzStatusModal({ onClose }) {
       const res = await bridge.changeLayoutAssignment(
         entry.monitorPtInstance,
         entry.monitorPtName,
+        entry.monitorSerial,
         entry.desktopId,
         newLayoutUuid
       )

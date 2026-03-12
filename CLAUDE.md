@@ -145,7 +145,17 @@ FASE 4: 3 FinalIntegritySweep() con delays:
 ### FancyZones — formato v2
 - `applied-layouts.json` usa estructura `device: { monitor-instance, monitor, virtual-desktop }`
 - UUIDs en PowerToys van con llaves: `{UUID-EN-MAYUSCULAS}`
-- Matching monitor: primero por `monitor-instance` GUID, luego por `monitor` name
+- `"monitor-instance"` se almacena con `&` escapado como `\u0026` en JSON → al parsear queda `4&1d653659&0&UID28727`
+- Pueden existir múltiples entradas para el mismo monitor con distintos `monitor-number` (conexiones históricas) → el código actualiza TODAS al inyectar, lo cual es correcto
+- `"serial-number": "0"` es el valor que PowerToys escribe para monitores sin serial EDID real (SDC41B6 en esta máquina)
+- Monitores distintos pueden compartir la misma `monitor-instance` si se conectan al mismo puerto físico (HSD4241 comparte `UID28727` con AUS2723) → usar `matchQuality` (nameMatch > instMatch) como tiebreaker
+
+### FancyZones — bridge.changeLayoutAssignment — firma correcta
+```js
+bridge.changeLayoutAssignment(monitorInstance, monitorName, monitorSerial, desktopId, layoutUuid, layoutType?)
+//  ← monitorPtInstance      ← monitorPtName   ← monitorSerial  ← desktopId   ← newLayoutUuid
+```
+Orden CRÍTICO — en el pasado estaba swapeado (desktopId↔monitorSerial, layoutUuid missing) → escrituras con `type=blank` y `virtual-desktop=<layoutUUID>`.
 
 ### Config schema
 ```json
@@ -193,6 +203,8 @@ delay: "500" (ms como string) | ""
 | 12 | PiP: solo títulos EN detectados | `PipWatcher.cs:17` | Añadidos "imagen en imagen", "imagen con imagen" (ES) + heurística clase browser |
 | 13 | Layout detector siempre null en ItemDialog | `ItemDialog.jsx:102` | Monitor lookup buscaba `m.label` pero `form.monitor` guarda `m.ptName` |
 | 14 | UUID activo no se grababa si layout no en cache | `WebBridge.cs:694` | `matchedLayoutUuid = rawUuid` aunque no esté en cache |
+| 15 | `handleChangeLayout` en FzStatusModal pasaba args en orden incorrecto | `ConfigPanel.jsx:217` | Faltaba `monitorSerial`; `desktopId` y `layoutUuid` swapeados → escrituras basura en applied-layouts.json |
+| 16 | Monitor "fantasma" con misma PnP instance sobreescribía layout correcto | `WebBridge.cs:HandleGetFzStatus` | Añadido `bestMatchQuality` — entry instMatch-only (q=50) no puede overridear nameMatch+instMatch (q=160) |
 
 ### Monitores activos en esta máquina
 ```
@@ -218,7 +230,7 @@ VirtualDesktops: 2 (Build24H2 COM).
 - [ ] `Core/NativeInterop/PipWatcher.cs` es un stub huérfano — eliminar o vaciar para evitar confusión con `Core/Launcher/PipWatcher.cs`
 
 ### Features pendientes (no urgente)
-- [ ] UI para layouts FancyZones activos (bridge `get_fz_status` existe, falta componente React)
+- [x] UI para layouts FancyZones activos — `FzStatusModal` en `ConfigPanel.jsx` completo y funcional
 - [ ] Perfiles de entorno: "config@casa" vs "config@trabajo" sin corromper config base
 - [ ] `CleanWorkspace` por escritorio virtual (ahora solo por scoring global)
 

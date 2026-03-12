@@ -85,7 +85,7 @@ public static class LayoutSyncer
             string ptInstance = !string.IsNullOrEmpty(targetMonitor?.PtInstance) ? targetMonitor!.PtInstance : targetMonitor?.Name ?? "";
             string ptMonitor  = !string.IsNullOrEmpty(targetMonitor?.PtName)     ? targetMonitor!.PtName     : targetMonitor?.Name ?? "";
 
-            FancyZonesReader.InjectLayoutByDevice(ptInstance, ptMonitor, desktopId, item.FancyzoneUuid);
+            FancyZonesReader.InjectLayoutByDevice(ptInstance, ptMonitor, targetMonitor?.SerialNumber, desktopId, item.FancyzoneUuid);
         }
 
         Console.WriteLine("[LayoutSyncer] FancyZones layouts synchronized.");
