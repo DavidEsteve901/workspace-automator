@@ -1,7 +1,11 @@
 :root {
-  /* FancyZones Theme Tokens - Premium Overhaul */
-  --fz-red: #ff3b30;       
-  --fz-red-hover: #ff2d55;
+  /* FancyZones Theme Tokens - Premium Overhaul (Synced with App Blue) */
+  --fz-accent: #00D2FF;       
+  --fz-accent-hover: #00B8E6;
+  --fz-accent-dim: rgba(0, 210, 255, 0.15);
+  --fz-accent-glow: rgba(0, 210, 255, 0.35);
+  --fz-accent-low: rgba(0, 210, 255, 0.05);
+
   --fz-glass: rgba(30, 30, 30, 0.6);
   --fz-glass-border: rgba(255, 255, 255, 0.08);
   --fz-bg: #0f0f0f;       
@@ -21,23 +25,23 @@
   --bg-card: var(--fz-card);
   --bg-hover: rgba(255,255,255,0.08);
   
-  --accent: var(--fz-red);
-  --accent-dim: rgba(255, 59, 48, 0.15);
-  --accent-glow: rgba(255, 59, 48, 0.3);
-  --accent-low: rgba(255, 59, 48, 0.05);
-  --accent-light: #ff7b72;
+  --accent: var(--fz-accent);
+  --accent-dim: var(--fz-accent-dim);
+  --accent-glow: var(--fz-accent-glow);
+  --accent-low: var(--fz-accent-low);
+  --accent-light: #66E3FF;
   
   --text-primary: var(--fz-text);
   --text-secondary: #e0e0e0;
   --text-muted: var(--fz-text-muted);
   
   --border: var(--fz-border);
-  --border-accent: rgba(255, 59, 48, 0.3);
+  --border-accent: rgba(0, 210, 255, 0.3);
   
   --radius-md: 12px;
   --radius-sm: 6px;
   --sidebar-w: 260px;
-  --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition: 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   
   --danger: #ff3b30;
   --danger-dim: rgba(255, 59, 48, 0.1);
@@ -140,7 +144,7 @@
 
 @keyframes slideInUp {
   from {
-    transform: translateY(20px);
+    transform: translateY(15px);
     opacity: 0;
   }
   to {
@@ -182,19 +186,19 @@
 
 .fz-monitor-item.active {
   background: var(--accent-low);
-  border-color: var(--fz-red);
-  box-shadow: 0 0 20px var(--accent-low);
+  border-color: var(--fz-accent);
+  box-shadow: 0 0 15px var(--accent-low);
 }
 
 .fz-monitor-number {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 800;
   color: var(--fz-text-muted);
   transition: color var(--transition);
 }
 
 .fz-monitor-item.active .fz-monitor-number {
-  color: var(--fz-red);
+  color: var(--fz-accent);
   text-shadow: 0 0 10px var(--accent-glow);
 }
 
@@ -238,9 +242,9 @@
 
 .fz-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 24px;
-  padding: 10px 0;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 16px;
+  padding: 8px 0;
 }
 
 .fz-layout-card {
@@ -272,13 +276,16 @@
 
 .fz-layout-card.active {
   background: var(--accent-low);
-  border-color: var(--fz-red);
-  box-shadow: 0 0 30px var(--accent-low);
+  border-color: var(--fz-accent);
+  box-shadow: 0 0 25px var(--accent-low);
+  transform: translateY(-2px);
 }
 
 .fz-layout-card.selected {
-  border-color: rgba(255, 255, 255, 0.4);
-  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--accent-glow);
+  background: rgba(0, 210, 255, 0.08);
+  box-shadow: inset 0 0 15px rgba(0, 210, 255, 0.05);
+  transform: translateY(-2px);
 }
 
 .fz-layout-card:hover .fz-card-actions {
@@ -313,28 +320,30 @@
 }
 
 .fz-icon-btn:hover {
-  background: var(--fz-red);
-  border-color: var(--fz-red);
+  background: var(--fz-accent);
+  border-color: var(--fz-accent);
   transform: scale(1.1);
 }
 
 .fz-btn-primary {
-  background: var(--fz-red);
-  color: white;
+  background: var(--fz-accent);
+  color: #000;
   border: none;
-  padding: 12px 24px;
-  border-radius: 12px;
+  padding: 10px 20px;
+  border-radius: 10px;
   cursor: pointer;
-  font-weight: 700;
-  font-size: 14px;
+  font-weight: 800;
+  font-size: 13px;
   transition: all var(--transition);
-  box-shadow: 0 8px 20px var(--accent-low);
+  box-shadow: 0 4px 15px var(--accent-low);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .fz-btn-primary:hover {
-  background: var(--fz-red-hover);
+  background: var(--fz-accent-hover);
   transform: translateY(-2px);
-  box-shadow: 0 12px 25px var(--accent-glow);
+  box-shadow: 0 8px 20px var(--accent-glow);
 }
 
 .fz-btn-primary:active {

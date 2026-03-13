@@ -51,18 +51,18 @@ export function ZoneRect({ zone, spacing, selected, onSelect, onSplit, onMouseMo
         width: '100%',
         height: '100%',
         border: selected
-          ? '3px solid hsl(3,100%,57%)'
-          : '2px dashed rgba(255,255,255,0.55)',
+          ? '3px solid var(--fz-accent)'
+          : '2px dashed rgba(255,255,255,0.4)',
         background: selected
-          ? 'hsla(3,100%,57%,0.18)'
-          : 'hsla(0,0%,100%,0.04)',
+          ? 'rgba(0, 210, 255, 0.15)'
+          : 'rgba(255,255,255,0.03)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         color: 'white',
         fontWeight: 700,
-        boxShadow: selected ? '0 0 0 1px hsl(3,100%,57%), inset 0 0 40px hsla(3,100%,57%,0.12)' : 'none',
+        boxShadow: selected ? '0 0 0 1px var(--fz-accent), inset 0 0 40px rgba(0, 210, 255, 0.1)' : 'none',
         transition: 'all 0.12s ease-out',
         borderRadius: 4,
       }}>

@@ -29,7 +29,7 @@ export function ZoneToolbar({ selectedCount, onPreset, onMerge, onReset }) {
       {selectedCount >= 2 && (
         <button style={btnStyle('#4a3f6b')} onClick={onMerge}>Fusionar ({selectedCount})</button>
       )}
-      <button style={btnStyle('#5c2d2d')} onClick={onReset}>Resetear</button>
+      <button style={btnStyle('#3d4450')} onClick={onReset}>Resetear</button>
       
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 10, background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: 4 }}>
         <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>Espaciado:</span>

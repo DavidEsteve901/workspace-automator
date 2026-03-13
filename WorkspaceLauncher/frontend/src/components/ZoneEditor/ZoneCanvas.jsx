@@ -83,7 +83,7 @@ export function ZoneCanvas({ grid, zones, spacing, selectedIds, onSelectZone, on
           top: `${(previewZone.y * 100).toFixed(3)}%`,
           width: `${(previewZone.w * 100).toFixed(3)}%`,
           height: `${(previewZone.h * 100).toFixed(3)}%`,
-          background: 'rgba(255, 59, 48, 0.08)',
+          background: 'rgba(0, 210, 255, 0.08)',
           pointerEvents: 'none',
           zIndex: 5,
         }} />
@@ -97,7 +97,7 @@ export function ZoneCanvas({ grid, zones, spacing, selectedIds, onSelectZone, on
             top: `${((previewZone.y + (splitMode === 'h' ? preview.y * previewZone.h : 0)) * 100).toFixed(3)}%`,
             width: splitMode === 'v' ? 2 : `${(previewZone.w * 100).toFixed(3)}%`,
             height: splitMode === 'h' ? 2 : `${(previewZone.h * 100).toFixed(3)}%`,
-            background: 'var(--fz-red)',
+            background: 'var(--fz-accent)',
             opacity: 0.8,
             pointerEvents: 'none',
             zIndex: 30,

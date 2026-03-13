@@ -62,8 +62,18 @@ public static class FancyZonesReader
     {
         try
         {
+            if (!File.Exists(CustomLayoutsPath)) return;
+            var lastWrite = File.GetLastWriteTime(CustomLayoutsPath);
+            // If already synced and file hasn't changed, skip
+            if (_lastCustomLayoutsRead >= lastWrite && ConfigManager.Instance.Config.FzLayoutsCache.Count > 0)
+                return;
+
             var layouts = ReadCustomLayouts();
             var config = ConfigManager.Instance.Config;
+            
+            // Note: We don't Clear() because we want to keep older layouts 
+            // from PT if they were removed but our config still references them, 
+            // but we update existing ones.
             foreach (var (uuid, obj) in layouts)
             {
                 string name = obj["name"]?.GetValue<string>() ?? "Unknown";
@@ -98,15 +108,43 @@ public static class FancyZonesReader
     public static string SettingsPath       => Path.Combine(FzBasePath, "settings.json");
 
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
+    
+    // Cache for custom layouts
+    private static Dictionary<string, JsonObject> _customLayoutsCache = [];
+    private static DateTime _lastCustomLayoutsRead = DateTime.MinValue;
+
+    // Cache for applied layouts
+    private static List<AppliedLayoutEntry> _appliedLayoutsCache = [];
+    private static DateTime _lastAppliedLayoutsRead = DateTime.MinValue;
+
+    // Cache for template info
+    private static List<FzTemplateInfo> _templatesCache = [];
+    private static DateTime _lastTemplatesRead = DateTime.MinValue;
+
+    private static bool IsFileChanged(string path, ref DateTime lastRead)
+    {
+        if (!File.Exists(path)) return false;
+        var lastWrite = File.GetLastWriteTime(path);
+        if (lastWrite > lastRead)
+        {
+            lastRead = lastWrite;
+            return true;
+        }
+        return false;
+    }
 
     /// <summary>
     /// Read all custom layouts. Returns dict uuid → layout node.
     /// </summary>
     public static Dictionary<string, JsonObject> ReadCustomLayouts()
     {
-        var result = new Dictionary<string, JsonObject>(StringComparer.OrdinalIgnoreCase);
-        if (!File.Exists(CustomLayoutsPath)) return result;
+        if (!File.Exists(CustomLayoutsPath)) return new Dictionary<string, JsonObject>(StringComparer.OrdinalIgnoreCase);
+        
+        var lastWrite = File.GetLastWriteTime(CustomLayoutsPath);
+        if (lastWrite <= _lastCustomLayoutsRead && _customLayoutsCache.Count > 0)
+            return _customLayoutsCache;
 
+        var result = new Dictionary<string, JsonObject>(StringComparer.OrdinalIgnoreCase);
         try
         {
             string json   = File.ReadAllText(CustomLayoutsPath);
@@ -121,6 +159,8 @@ public static class FancyZonesReader
                 if (uuid != null)
                     result[uuid.Trim('{', '}').ToLowerInvariant()] = obj;
             }
+            _customLayoutsCache = result;
+            _lastCustomLayoutsRead = lastWrite;
         }
         catch (Exception ex)
         {
@@ -291,9 +331,13 @@ public static class FancyZonesReader
     /// </summary>
     public static List<AppliedLayoutEntry> ReadAppliedLayouts()
     {
-        var result = new List<AppliedLayoutEntry>();
-        if (!File.Exists(AppliedLayoutsPath)) return result;
+        if (!File.Exists(AppliedLayoutsPath)) return new List<AppliedLayoutEntry>();
 
+        var lastWrite = File.GetLastWriteTime(AppliedLayoutsPath);
+        if (lastWrite <= _lastAppliedLayoutsRead && _appliedLayoutsCache.Count > 0)
+            return _appliedLayoutsCache;
+
+        var result = new List<AppliedLayoutEntry>();
         try
         {
             string json   = File.ReadAllText(AppliedLayoutsPath);
@@ -348,6 +392,8 @@ public static class FancyZonesReader
                     result.Add(item);
                 }
             }
+            _appliedLayoutsCache = result;
+            _lastAppliedLayoutsRead = lastWrite;
         }
         catch (Exception ex)
         {

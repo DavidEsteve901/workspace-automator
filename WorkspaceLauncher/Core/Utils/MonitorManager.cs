@@ -22,8 +22,17 @@ public class MonitorInfo
 
 public static class MonitorManager
 {
+    private static List<MonitorInfo> _cache = [];
+    private static DateTime _lastRefresh = DateTime.MinValue;
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromSeconds(30);
+
+    public static void InvalidateCache() => _lastRefresh = DateTime.MinValue;
+
     public static List<MonitorInfo> GetActiveMonitors()
     {
+        if (_cache.Count > 0 && (DateTime.Now - _lastRefresh) < CacheDuration)
+            return _cache;
+
         var monitors = new List<MonitorInfo>();
         var wmiData = GetMonitorMetadataWmi();
 
@@ -111,6 +120,9 @@ public static class MonitorManager
         }, nint.Zero);
 
         if (prevCtx != nint.Zero) SetThreadDpiAwarenessContext(prevCtx);
+        
+        _cache = monitors;
+        _lastRefresh = DateTime.Now;
         return monitors;
     }
 

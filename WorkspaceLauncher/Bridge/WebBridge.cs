@@ -320,8 +320,10 @@ public sealed class WebBridge
                     break;
 
                 case "cze_canvas_saved":
+                    WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: false);
+                    break;
                 case "cze_canvas_discard":
-                    WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.CloseAll();
+                    WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: true);
                     break;
 
                 case "cze_request_save":
@@ -1554,7 +1556,8 @@ public sealed class WebBridge
     {
         string monitorHardwareId = payload.TryGetProperty("monitorHardwareId", out var mid) ? mid.GetString() ?? "" : "";
         string layoutId = payload.TryGetProperty("layoutId", out var lid) ? lid.GetString() ?? "" : "";
-        WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.OpenCanvas(monitorHardwareId, layoutId);
+        bool isNew = payload.TryGetProperty("isNew", out var isNewEl) && isNewEl.GetBoolean();
+        WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.OpenCanvas(monitorHardwareId, layoutId, isNew);
     }
 
     // ── Outgoing to JS ─────────────────────────────────────────────────────

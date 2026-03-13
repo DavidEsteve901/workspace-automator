@@ -22,7 +22,7 @@ public partial class ZoneCanvasEditorWindow : Window
         InitializeComponent();
 
         Loaded += ZoneCanvasEditorWindow_Loaded;
-        KeyDown += (s, e) => { if (e.Key == System.Windows.Input.Key.Escape) ZoneEditorLauncher.Instance.CloseAll(); };
+        KeyDown += (s, e) => { if (e.Key == System.Windows.Input.Key.Escape) ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: true); };
     }
 
     protected override void OnSourceInitialized(EventArgs e)

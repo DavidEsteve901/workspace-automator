@@ -137,8 +137,8 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
     }
   }
 
-  function openCanvasEditor(monitorHardwareId, layoutId = '') {
-    bridge.czeOpenCanvas(monitorHardwareId, layoutId);
+  function openCanvasEditor(monitorHardwareId, layoutId = '', isNew = false) {
+    bridge.czeOpenCanvas(monitorHardwareId, layoutId, isNew);
   }
 
   async function saveLayoutProperties() {
@@ -203,7 +203,7 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
     const res = await bridge.czeSaveLayout(newLayout);
     if (res?.ok) {
       await loadAll();
-      openCanvasEditor(activeMonitorId, newId);
+      openCanvasEditor(activeMonitorId, newId, true);
     }
   }
 
@@ -249,8 +249,8 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
         onDoubleClick={() => setActiveLayout(activeMonitor?.ptInstance, activeEntryForMonitor?.desktopId || '00000000-0000-0000-0000-000000000000', layout.id)}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: isActive ? 'var(--fz-red)' : 'var(--fz-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
-            {isActive && <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--fz-red)', boxShadow: '0 0 8px var(--fz-red)' }} />}
+          <div style={{ fontSize: 13, fontWeight: 700, color: isActive ? 'var(--fz-accent)' : 'var(--fz-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
+            {isActive && <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--fz-accent)', boxShadow: '0 0 8px var(--fz-accent)' }} />}
             {isAdapted && (
               <span title={`Diseñado para ${layout.refWidth}×${layout.refHeight}, monitor actual ${monW}×${monH} — escala proporcional aplicada`}
                 style={{ fontSize: 10, background: 'rgba(255,200,0,0.15)', color: '#ffd700', padding: '1px 5px', borderRadius: 4, fontWeight: 600 }}>
@@ -320,12 +320,20 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
           )}
         </div>
         
-        <div style={{ height: 120, background: 'rgba(0,0,0,0.4)', position: 'relative', borderRadius: 10, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', transition: 'border-color 0.2s' }}>
+        <div style={{ height: 84, background: 'rgba(0,0,0,0.5)', position: 'relative', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.06)', transition: 'border-color 0.2s' }}>
           {layout.zones?.map((z, i) => (
-            <div key={i} style={{ position: 'absolute', left: `${z.x*100}%`, top: `${z.y*100}%`, width: `${z.w*100}%`, height: `${z.h*100}%`, border: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.03)' }} />
+            <div key={i} style={{ 
+              position: 'absolute', 
+              left: `${z.x*100}%`, 
+              top: `${z.y*100}%`, 
+              width: `${z.w*100}%`, 
+              height: `${z.h*100}%`, 
+              border: isActive ? '1px solid rgba(0, 210, 255, 0.25)' : '1px solid rgba(255,255,255,0.1)', 
+              background: isActive ? 'rgba(0, 210, 255, 0.05)' : 'rgba(255,255,255,0.02)' 
+            }} />
           ))}
-          {isActive && <div style={{ position: 'absolute', inset: 0, border: '2px solid var(--fz-red)', background: 'rgba(255, 59, 48, 0.08)', pointerEvents: 'none' }} />}
-          {isSelected && !isActive && <div style={{ position: 'absolute', inset: 0, border: '2px dashed rgba(255,255,255,0.3)', pointerEvents: 'none' }} />}
+          {isActive && <div style={{ position: 'absolute', inset: 0, border: '2px solid var(--fz-accent)', background: 'rgba(0, 210, 255, 0.08)', pointerEvents: 'none' }} />}
+          {isSelected && !isActive && <div style={{ position: 'absolute', inset: 0, border: '2px solid rgba(0, 210, 255, 0.3)', background: 'rgba(0, 210, 255, 0.03)', pointerEvents: 'none' }} />}
         </div>
       </div>
     );
@@ -355,7 +363,7 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
           <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.01em' }}>
             {editingLayout?.name || 'Diseño Pro'}
           </span>
-          <div style={{ background: 'var(--fz-red)', padding: '4px 10px', borderRadius: 6, fontSize: 10, fontWeight: 800 }}>
+          <div style={{ background: 'var(--fz-accent)', color: '#000', padding: '4px 10px', borderRadius: 6, fontSize: 10, fontWeight: 900 }}>
             EDITOR ACTIVO
           </div>
         </div>
@@ -367,31 +375,31 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
           <div style={{ marginBottom: 32, fontSize: 13, lineHeight: '2' }}>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
               <li style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
-                <span style={{ color: 'var(--fz-red)', fontWeight: 700, minWidth: 20 }}>•</span>
+                <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
                 <span><strong>Shift + Clic</strong> — dividir zona</span>
               </li>
               <li style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
-                <span style={{ color: 'var(--fz-red)', fontWeight: 700, minWidth: 20 }}>•</span>
+                <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
                 <span><strong>Doble Clic</strong> — seleccionar/foco</span>
               </li>
               <li style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
-                <span style={{ color: 'var(--fz-red)', fontWeight: 700, minWidth: 20 }}>•</span>
+                <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
                 <span><strong>Tab</strong> — cambiar dirección (V/H)</span>
               </li>
               <li style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
-                <span style={{ color: 'var(--fz-red)', fontWeight: 700, minWidth: 20 }}>•</span>
+                <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
                 <span><strong>Suprimir</strong> — eliminar línea resaltada</span>
               </li>
               <li style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
-                <span style={{ color: 'var(--fz-red)', fontWeight: 700, minWidth: 20 }}>•</span>
+                <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
                 <span><strong>Ctrl + Clic</strong> — selección múltiple</span>
               </li>
               <li style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
-                <span style={{ color: 'var(--fz-red)', fontWeight: 700, minWidth: 20 }}>•</span>
+                <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
                 <span><strong>Enter</strong> — guardar cambios</span>
               </li>
               <li style={{ display: 'flex', gap: 12 }}>
-                <span style={{ color: 'var(--fz-red)', fontWeight: 700, minWidth: 20 }}>•</span>
+                <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
                 <span><strong>Escape</strong> — cancelar</span>
               </li>
             </ul>
@@ -443,7 +451,7 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
     return (
       <div style={modalStyle}>
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 20 }}>
-          <div style={{ width: 40, height: 40, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: 'var(--fz-red)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          <div style={{ width: 40, height: 40, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: 'var(--fz-accent)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
           <div style={{ color: 'var(--fz-text-muted)', fontSize: 13, fontWeight: 500, letterSpacing: '0.05em' }}>PREPARANDO ENTORNO...</div>
         </div>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
@@ -537,7 +545,7 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
                     onChange={e => setEditingLayout({...editingLayout, name: e.target.value})}
                     placeholder="Ej: Multitarea, Gaming..."
                     style={{ width: '100%', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', padding: '12px 16px 12px 42px', borderRadius: 12, fontSize: 14, fontWeight: 500, outline: 'none', transition: 'border-color 0.2s' }}
-                    onFocus={e => e.target.style.borderColor = 'var(--fz-red)'}
+                    onFocus={e => e.target.style.borderColor = 'var(--fz-accent)'}
                     onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
                   />
                 </div>
@@ -549,7 +557,7 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
                       <Settings size={18} style={{ opacity: 0.5 }} />
                       <span style={{ fontSize: 14, fontWeight: 600 }}>Espaciado entre zonas</span>
                    </div>
-                   <div style={{ background: 'var(--accent-low)', color: 'var(--fz-red)', padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 700 }}>
+                   <div style={{ background: 'var(--accent-low)', color: 'var(--fz-accent)', padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 700 }}>
                     {spacing}px
                    </div>
                 </div>
@@ -557,7 +565,7 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
                   type="range" min="0" max="64" step="2"
                   value={spacing} 
                   onChange={e => setSpacing(parseInt(e.target.value))} 
-                  style={{ width: '100%', accentColor: 'var(--fz-red)', cursor: 'pointer' }} 
+                  style={{ width: '100%', accentColor: 'var(--fz-accent)', cursor: 'pointer' }} 
                 />
               </div>
 
@@ -585,7 +593,7 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
           width: 18px;
           height: 18px;
           background: #fff;
-          border: 2px solid var(--fz-red);
+          border: 2px solid var(--fz-accent);
           border-radius: 50%;
           cursor: pointer;
           box-shadow: 0 0 10px rgba(0,0,0,0.3);

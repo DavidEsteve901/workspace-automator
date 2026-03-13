@@ -20,8 +20,7 @@ public partial class ZoneEditorControlWindow : Window
         _layoutId = layoutId;
         
         Loaded += ZoneEditorControlWindow_Loaded;
-        Closed += (s, e) => ZoneEditorLauncher.Instance.CloseAll();
-        KeyDown += (s, e) => { if (e.Key == System.Windows.Input.Key.Escape) ZoneEditorLauncher.Instance.CloseAll(); };
+        // The closing flow is managed by ZoneEditorLauncher
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -59,11 +58,15 @@ public partial class ZoneEditorControlWindow : Window
                     
                     if (action == "window_close")
                     {
-                        ZoneEditorLauncher.Instance.CloseAll();
+                        ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: true);
                     }
-                    else if (action == "cze_canvas_saved" || action == "cze_canvas_discard")
+                    else if (action == "cze_canvas_saved")
                     {
-                        ZoneEditorLauncher.Instance.ReturnToAdmin();
+                        ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: false);
+                    }
+                    else if (action == "cze_canvas_discard")
+                    {
+                        ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: true);
                     }
                     else if (action == "cze_request_save")
                     {
@@ -74,10 +77,19 @@ public partial class ZoneEditorControlWindow : Window
                         ZoneEditorLauncher.Instance.RequestCanvasDiscard();
                     }
                 } catch {
+                    // Fallback for string messages
                     var msg = args.TryGetWebMessageAsString();
-                    if (msg == "window_close" || msg == "cze_canvas_saved" || msg == "cze_canvas_discard")
+                    if (msg == "window_close")
                     {
-                        ZoneEditorLauncher.Instance.CloseAll();
+                        ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: true);
+                    }
+                    else if (msg == "cze_canvas_saved")
+                    {
+                        ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: false);
+                    }
+                    else if (msg == "cze_canvas_discard")
+                    {
+                        ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: true);
                     }
                 }
             };

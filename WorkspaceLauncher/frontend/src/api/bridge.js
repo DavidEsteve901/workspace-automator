@@ -93,8 +93,8 @@ export const bridge = {
   czeGetActiveLayouts: () => invoke("cze_get_active_layouts"),
   czeSetActiveLayout: (monitorPtInstance, desktopId, layoutId) =>
     invoke("cze_set_active_layout", { monitorPtInstance, desktopId, layoutId }),
-  czeOpenCanvas: (monitorHardwareId, layoutId = '') =>
-    postMessage("cze_open_canvas", { monitorHardwareId, layoutId }),
+  czeOpenCanvas: (monitorHardwareId, layoutId = '', isNew = false) =>
+    postMessage("cze_open_canvas", { monitorHardwareId, layoutId, isNew }),
   czeGetState: () => invoke("cze_get_state"),
 };
 
