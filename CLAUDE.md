@@ -152,6 +152,20 @@ FASE 4: 3 FinalIntegritySweep() con delays:
 - Estado CZE: `Closed → Admin → Editing → Admin → Closed`
   - `WebBridge.BroadcastCzeState()` envía `cze_state_changed` a todos los bridges activos (WeakRef list)
 
+### ZoneEngine vs FancyZonesSyncEnabled — dos flags, una decisión
+- `ZoneEngine` (config key `zone_engine`) → determina qué motor se usa para el snapping de ventanas: `"fancyzones"` (default) | `"custom"` (CZE).
+- `FancyZonesSyncEnabled` (config key `fz_sync_enabled`) → determina si se escriben en disco los archivos de PowerToys FancyZones durante el launch.
+- Regla: `LayoutSyncer.SyncForWorkspace` solo debe ejecutarse si AMBOS son positivos (`FancyZonesSyncEnabled=true` Y `ZoneEngine="fancyzones"`).
+- `ConfigManager.IsFancyZonesSyncActive` combina los dos. `ZoneEngineManager.IsFancyZonesActive` solo evalúa el motor.
+- `ResolveZoneRect` / `RegisterInZoneStack` / `FinalIntegritySweep` comprueban `engineIsCze` para despachar al motor correcto. Si `ZoneEngine="custom"` pero el ítem solo tiene `FancyzoneUuid` (sin `CzeLayoutId`), la función devuelve null (sin zona) — correcto, el ítem no está configurado para CZE.
+- `WebBridge.HandleValidateWorkspace` todavía usa solo `FancyZonesSyncEnabled` como discriminador (archivo no modificado en esta sesión). Para corrección completa, cambiar ese flag por `ConfigManager.Instance.IsFancyZonesSyncActive`.
+
+### ItemDialog — separación de responsabilidades de carga
+- **Siempre** cargar (sin condición): `listMonitors()` → `rawMonitors`, `listDesktops()` → `rawDesktops`, `listFancyZones()` → `fzLayouts`, `czeGetLayouts()` → `czeLayouts`
+- **Solo cuando `fzSyncEnabled=true`**: `getFzStatus()` → `fzStatus` (detección de layout activo por monitor+escritorio, indicador verde)
+- `fzSyncEnabled` controla únicamente si el app escribe en `applied-layouts.json` al lanzar — **nunca** debe ocultar layouts del editor ni vaciar los dropdowns de monitor/escritorio
+- Polling cada 8s refresca `rawMonitors`, `fzLayouts`, y `fzStatus` (cuando aplica) en background
+
 ### LayoutSyncer — portabilidad canvas
 - Canvas layouts tienen `ref-width`/`ref-height` de la máquina original
 - Si monitor actual tiene resolución diferente → `RescaleCanvasLayoutInfo()` escala coords
@@ -226,6 +240,22 @@ delay: "500" (ms como string) | ""
 | 19 | `CzeLayoutEntry` no registraba resolución de referencia → badge de adaptación imposible | `Models.cs` | Añadido `RefWidth`/`RefHeight`; `HandleListMonitors` expone `workArea`; badge `∝` en LayoutCard |
 | 20 | `ZoneEditorManagerWindow` y canvas eran ventanas independientes → manager podía quedar detrás | `ZoneEditorLauncher.cs` | Jerarquía Owner: `OverlayWindow` (raíz) → `Manager`/`Canvas` como owned. `ZoneEditorLauncher` tiene máquina de estados `Closed/Admin/Editing` |
 | 21 | No había forma de notificar estado CZE a todos los WebBridge activos | `WebBridge.cs` | Añadido registro estático `_allBridges` (WeakReference) + `BroadcastCzeState()`; estado accesible con `cze_get_state` |
+| 22 | `MonitorManager.GetActiveMonitors()` dejaba `Name="Pantalla N"` cuando WMI fallaba → lookups por nombre fallaban silenciosamente | `MonitorManager.cs` | Inicializar `Name=""`. Condición `DeviceString` solo requiere `IsNullOrEmpty(Name)`. Fallback chain explícito: WMI → DeviceString → PtName → deviceName → "Pantalla N" |
+| 23 | `LayoutSyncer.SyncForWorkspace` ignoraba `FancyZonesSyncEnabled` y `ZoneEngine` → inyectaba layouts FZ incluso con sync desactivado o con motor CZE | `LayoutSyncer.cs` | Guard al inicio: retorna si `!FancyZonesSyncEnabled` o `ZoneEngine=="custom"`. Llama `FancyZonesReader.InvalidateCaches()` antes del sync para flush de caché obsoleta |
+| 24 | `FancyZonesReader` no exponía forma de invalidar caché → datos obsoletos tras toggle de sync | `FancyZonesReader.cs` | Añadido `InvalidateCaches()` público que resetea timestamps y listas en memoria |
+| 25 | `FinalIntegritySweep` solo procesaba ítems con zona FZ (`Fancyzone != "Ninguna"`) → ítems CZE nunca verificados en sweeps | `WorkspaceOrchestrator.cs` | Condición reemplazada por `hasFzZone`/`hasCzeZone` condicionada a `ZoneEngine` activo |
+| 26 | `ResolveZoneRect`/`RegisterInZoneStack` siempre elegían CZE si había `CzeLayoutId` aunque `ZoneEngine="fancyzones"` → motor incorrecto al cambiar de CZE a FZ | `WorkspaceOrchestrator.cs` | Ambas funciones comprueban `engineIsCze = config.ZoneEngine=="custom"` antes de elegir ruta |
+| 27 | Sistema de tematización: tema claro y color de acento no se aplicaban en gestor/control/canvas del editor de zonas | `App.css`, `App.jsx`, `ZoneEditorModal.jsx`, `ZoneEditorControlWindow.xaml(.cs)` | (a) `App.css` `:root` sobreescribía `[data-theme="light"]` de `index.css` → añadido bloque `[data-theme="light"]` en `App.css` para `--fz-*` vars. (b) `applyTheme()` no actualizaba `--fz-accent*` → añadido setProperty de `--fz-accent`, `--fz-accent-hover/dim/glow/low`. (c) `ZoneEditorControlWindow` tenía `UseImmersiveDarkMode(hwnd, true)` hardcoded, sin `DefaultBackgroundColor`, URL hardcodeada → lee `ConfigManager.ThemeMode`, configura background y usa `WL_DEV_URL`. (d) `modalStyle color:'white'` sobreescribía todo el texto → cambiado a `var(--fz-text)`. |
+| 27 | `ZoneEngineManager` sin API pública de estado → otros módulos leían `config.ZoneEngine` ad-hoc, inconsistente | `ZoneEngineManager.cs` | Añadidos `IsFancyZonesActive` e `IsCzeActive` como propiedades estáticas |
+| 28 | `ConfigManager` sin discriminador combinado → WebBridge usaba solo `FancyZonesSyncEnabled` ignorando `ZoneEngine` | `ConfigManager.cs` | Añadida propiedad `IsFancyZonesSyncActive = FancyZonesSyncEnabled && ZoneEngine=="fancyzones"` |
+| 29 | `zonesToGrid` retornaba `initialGrid()` para layouts de una zona → zonas parciales (foco, CZE canvas) perdían posición al reconstruit la cuadrícula | `ZoneEditorHooks.js` | Eliminado early-return `zones.length===1`. El algoritmo ya produce 1×1 para zona full-screen y multi-celda para zonas parciales |
+| 30 | `ItemDialog` no mostraba monitores, escritorios ni layouts cuando `fzSyncEnabled=false` — todo derivaba de `fzStatus` que se bloquea con el flag | `ItemDialog.jsx` | Arquitectura desacoplada: `loadRawEnv()` carga monitores/escritorios siempre; `loadFzLayouts()` carga layouts FZ siempre vía `listFancyZones()`; `loadFzStatus()` solo para detección de layout activo (indicador verde). `fzSyncEnabled` ya no oculta layouts del editor — solo controla si el app escribe en PowerToys al lanzar |
+| 31 | `isFzRunning` en `HandleGetFzStatus` devolvía false aunque PowerToys estuviera en ejecución — solo buscaba `PowerToys.FancyZones` y `FancyZones`, no el proceso principal `PowerToys` | `WebBridge.cs` | Añadido `Process.GetProcessesByName("PowerToys")` al check — builds modernas de PowerToys embeben FancyZones en el proceso principal |
+| 32 | `SyncModal` recibía `fzSyncEnabled={fzSyncEnabled}` (variable undefined en ese scope) | `App.jsx` | Corregido a `fzSyncEnabled={state.fzSyncEnabled}` |
+| 33 | Sistema de tematización no existía — fondo e ícono de acento no personalizables | múltiples | Implementado: `ThemeMode`/`AccentColor` en `AppConfig`; `GetWindowsAccentColor()` en `DwmHelper.cs`; `get_theme_config` invoke en `WebBridge`; `applyTheme()` + `[data-theme]` en React; sección Apariencia en `ConfigPanel` |
+| 34 | `ZoneEditorManagerWindow` usaba `UseImmersiveDarkMode(hwnd, true)` hardcoded → título siempre oscuro aunque el usuario pusiera tema claro | `ZoneEditorManagerWindow.xaml.cs` | Lee `ConfigManager.Config.ThemeMode` en `OnSourceInitialized` y en el init del WebView2; actualiza `DefaultBackgroundColor` y `Background` del Window |
+| 35 | `ZoneCanvas.jsx` y `ZoneRect.jsx` usaban `--fz-accent` (variable inexistente), RGBA hardcodeados de cyan, y `color:'white'` — rompían con acento personalizado y con tema claro | `ZoneCanvas.jsx`, `ZoneRect.jsx` | Reemplazado todo por `var(--accent)`, `var(--accent-dim)`, `var(--text-primary)`, `var(--text-muted)`. Añadido `text-shadow` para legibilidad sobre desktop transparente |
+| 36 | Cambios de tema/acento en ConfigPanel no propagaban a ventanas ZoneEditor — `HandleSaveConfig` llamaba `this.HandleGetState()` (solo su propio bridge), los demás bridges nunca recibían `state_update` | `WebBridge.cs` | Añadido `BroadcastStateUpdate()` estático que llama `HandleGetState()` en todos los bridges registrados. `HandleSaveConfig` ahora usa `BroadcastStateUpdate()`. Añadido mensaje `update_window_theme` para actualizar titlebar DWM en tiempo real. `applyTheme()` en React llama `bridge.updateWindowTheme(isDark)` después de cada cambio de tema. |
 
 ### Monitores activos en esta máquina
 ```
@@ -244,6 +274,10 @@ VirtualDesktops: 2 (Build24H2 COM).
 - [ ] **Probar portabilidad**: desconectar AUS2723 → lanzar workspace → verificar remapeo a SDC41B6 SIN guardar
 - [ ] **Probar CZE completo**: hotkey → overlays bloquean escritorio → manager abre como hijo → editar → guardar → vuelve a admin
 - [ ] **Verificar badge ∝**: guardar layout en AUS2723, abrir manager en SDC41B6, confirmar que aparece el indicador de adaptación
+- [ ] **Verificar toggle FZ sync**: activar/desactivar `fz_sync_enabled` → validar que `LayoutSyncer` respeta la bandera y no inyecta al desactivar
+- [ ] **Verificar `WebBridge.HandleValidateWorkspace`**: cambiar su discriminador de `config.FancyZonesSyncEnabled` a `ConfigManager.Instance.IsFancyZonesSyncActive` para corregir el detector de conflictos cuando `ZoneEngine` y `FancyZonesSyncEnabled` difieren (archivo WebBridge.cs pendiente de modificar)
+- [ ] **Probar monitores en ItemDialog**: abrir ítem en modo CZE (`fzSyncEnabled=false`) → confirmar que el select de monitor muestra los monitores activos (vía `rawMonitors` de `listMonitors()`)
+- [ ] **Probar detección PowerToys**: activar FZ sync con PowerToys en background → confirmar `isFzRunning=true` y sin mensaje de error en el indicador
 
 ### Deuda técnica media
 - [ ] `HandleValidateWorkspace` muta `items` en memoria durante validación → debería clonar antes de `ResolveEnvironment`
@@ -253,8 +287,10 @@ VirtualDesktops: 2 (Build24H2 COM).
 
 ### Features pendientes (no urgente)
 - [x] UI para layouts FancyZones activos — `FzStatusModal` en `ConfigPanel.jsx` completo y funcional
+- [x] Sistema de tematización — Modo Claro/Oscuro + color de acento personalizable + lectura de accent color de Windows
 - [ ] Perfiles de entorno: "config@casa" vs "config@trabajo" sin corromper config base
 - [ ] `CleanWorkspace` por escritorio virtual (ahora solo por scoring global)
+- [ ] Añadir clases CSS `engine-toggle-group` / `engine-btn` que se referencian en `ConfigPanel.jsx` pero no existen en ningún CSS
 
 ---
 
@@ -271,6 +307,7 @@ VirtualDesktops: 2 (Build24H2 COM).
 `validate_workspace`, `resolve_monitor_conflicts`, `list_windows`,
 `get_windows_to_clean`, `close_windows`, `open_file_dialog`,
 `change_layout_assignment`, `get_config_path`, `change_config_path`,
+`get_theme_config` → `{themeMode, accentColor, windowsAccentColor}`,
 `cze_get_layouts`, `cze_save_layout`, `cze_delete_layout`, `cze_get_active_layouts`,
 `cze_set_active_layout`, `cze_get_state`
 

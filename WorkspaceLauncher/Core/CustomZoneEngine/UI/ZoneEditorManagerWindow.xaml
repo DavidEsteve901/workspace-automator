@@ -6,10 +6,10 @@
           Icon="pack://application:,,,/launcher_icon.ico"
           WindowStartupLocation="CenterScreen"
           WindowStyle="SingleBorderWindow"
-          Background="#111111"
+          Background="#0A0A0A"
           ResizeMode="CanResize"
           Foreground="White">
-    <Grid Background="#111111">
+    <Grid Background="#0A0A0A">
         <wv2:WebView2 Name="webView" />
     </Grid>
 </Window>

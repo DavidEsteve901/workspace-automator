@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from 'react';
 
 const BASE = 10000;      // All percents sum to this
-const MIN_P = 800;       // 8% minimum zone size in BASE units
+const MIN_P = 500;       // 5% minimum zone size in BASE units (MinZoneSize 500)
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -43,10 +43,18 @@ export function gridToZones(grid) {
   return zones;
 }
 
-/** [{x,y,w,h}] → Grid (best-effort reconstruction from rectangular zones). */
+/** [{x,y,w,h}] → Grid (best-effort reconstruction from rectangular zones).
+ *
+ * Single-zone layouts that don't cover the full area (e.g. a focus zone at 10%/10%/80%/80%)
+ * are reconstructed as a multi-cell grid with surrounding padding cells, preserving the
+ * zone's actual bounds.  Full-screen single zones collapse to the standard 1×1 initialGrid.
+ */
 export function zonesToGrid(zones) {
   if (!zones || zones.length === 0) return initialGrid();
-  if (zones.length === 1) return initialGrid();
+  // NOTE: removed early `if (zones.length === 1) return initialGrid()` — that lost the
+  // zone's actual position for partial-coverage single zones (e.g. CZE focus layouts).
+  // The algorithm below handles single zones correctly: a full-screen zone produces a
+  // 1×1 grid (identical to initialGrid) while a partial zone produces a multi-cell grid.
 
   // Collect unique column and row boundaries (in BASE units)
   const xSet = new Set([0, BASE]);
@@ -100,17 +108,101 @@ export function zonesToGrid(zones) {
 
 /** Compute dividers (vertical & horizontal) for the grid. */
 export function computeGridDividers(grid) {
-  const { rows, cols, rowPercents, colPercents } = grid;
+  const { rows, cols, rowPercents, colPercents, cellChildMap } = grid;
   const dividers = [];
+
+  // Vertical dividers
   let cumX = 0;
   for (let c = 0; c < cols - 1; c++) {
     cumX += colPercents[c];
-    dividers.push({ id: `col_${c}`, axis: 'v', index: c, position: cumX / BASE, overlapStart: 0, overlapEnd: 1 });
+    const posX = cumX / BASE;
+    
+    // Fallback if cellChildMap is missing (e.g. old layouts)
+    if (!cellChildMap) {
+      dividers.push({ id: `col_${c}`, axis: 'v', index: c, position: posX, overlapStart: 0, overlapEnd: 1 });
+      continue;
+    }
+
+    // Find segments where left cell != right cell
+    let segments = [];
+    let currentSegment = null;
+    let cumY = 0;
+    
+    for (let r = 0; r < rows; r++) {
+      const h = rowPercents[r];
+      const isDivider = cellChildMap[r][c] !== cellChildMap[r][c + 1];
+      
+      if (isDivider) {
+        if (!currentSegment) {
+          currentSegment = { start: cumY / BASE };
+        }
+      } else {
+        if (currentSegment) {
+          currentSegment.end = cumY / BASE;
+          segments.push(currentSegment);
+          currentSegment = null;
+        }
+      }
+      cumY += h;
+    }
+    if (currentSegment) {
+      currentSegment.end = cumY / BASE;
+      segments.push(currentSegment);
+    }
+    
+    segments.forEach((seg, sIdx) => {
+      dividers.push({
+        id: `col_${c}_seg_${sIdx}`,
+        axis: 'v', index: c, position: posX, 
+        overlapStart: seg.start, overlapEnd: seg.end 
+      });
+    });
   }
+
+  // Horizontal dividers
   let cumY = 0;
   for (let r = 0; r < rows - 1; r++) {
     cumY += rowPercents[r];
-    dividers.push({ id: `row_${r}`, axis: 'h', index: r, position: cumY / BASE, overlapStart: 0, overlapEnd: 1 });
+    const posY = cumY / BASE;
+    
+    if (!cellChildMap) {
+      dividers.push({ id: `row_${r}`, axis: 'h', index: r, position: posY, overlapStart: 0, overlapEnd: 1 });
+      continue;
+    }
+
+    let segments = [];
+    let currentSegment = null;
+    let cumX = 0;
+    
+    for (let c = 0; c < cols; c++) {
+      const w = colPercents[c];
+      const isDivider = cellChildMap[r][c] !== cellChildMap[r + 1][c];
+      
+      if (isDivider) {
+        if (!currentSegment) {
+          currentSegment = { start: cumX / BASE };
+        }
+      } else {
+        if (currentSegment) {
+          currentSegment.end = cumX / BASE;
+          segments.push(currentSegment);
+          currentSegment = null;
+        }
+      }
+      cumX += w;
+    }
+    if (currentSegment) {
+      currentSegment.end = cumX / BASE;
+      segments.push(currentSegment);
+    }
+    
+    segments.forEach((seg, sIdx) => {
+      dividers.push({
+        id: `row_${r}_seg_${sIdx}`,
+        axis: 'h', index: r, position: posY, 
+        overlapStart: seg.start, overlapEnd: seg.end 
+      });
+    });
   }
   return dividers;
 }
@@ -150,10 +242,30 @@ function splitGrid(grid, zoneId, clickFracX, clickFracY, forcedAxis = null) {
 
     const newColPercents = [...colPercents];
     newColPercents.splice(splitC, 1, h1, h2);
-    const newMap = cellChildMap.map(row => {
+    
+    // Create new map: update IDs to separate the zones
+    const newMap = cellChildMap.map((row, r) => {
       const nr = [...row];
-      const cur = nr[splitC];
-      nr.splice(splitC + 1, 0, cur === zoneId ? newId : cur);
+      const curId = nr[splitC];
+      
+      // We only split if this row belongs to the targeted zone
+      // AND we only change the ID on the "right" side of the split
+      const shouldSplitThisRow = (r >= minR && r <= maxR && curId === zoneId);
+      
+      // Even if we don't split the ID in this row, we MUST insert the new column
+      // to keep the grid consistent. If it's not the zone we are splitting,
+      // the new cell just inherits the current ID.
+      nr.splice(splitC + 1, 0, shouldSplitThisRow ? newId : curId);
+      
+      // CRITICAL: If this zone spans multiple columns to the right, we must 
+      // also update those columns to the newId to keep the new zone contiguous 
+      // and separate from the left one.
+      if (shouldSplitThisRow) {
+        for (let c = splitC + 2; c <= maxC + 1; c++) {
+          if (nr[c] === zoneId) nr[c] = newId;
+        }
+      }
+      
       return nr;
     });
     return { ...grid, cols: cols + 1, colPercents: newColPercents, cellChildMap: newMap };
@@ -174,12 +286,27 @@ function splitGrid(grid, zoneId, clickFracX, clickFracY, forcedAxis = null) {
 
     const newRowPercents = [...rowPercents];
     newRowPercents.splice(splitR, 1, h1, h2);
-    const newRow = cellChildMap[splitR].map(cur => cur === zoneId ? newId : cur);
-    const newMap = [
-      ...cellChildMap.slice(0, splitR + 1),
-      newRow,
-      ...cellChildMap.slice(splitR + 1),
-    ];
+    
+    // Create the new row by splitting the IDs of the original row
+    const newRow = cellChildMap[splitR].map((curId, c) => {
+      // Only change ID if we are within the zone's horizontal span and it's the target zone
+      return (c >= minC && c <= maxC && curId === zoneId) ? newId : curId;
+    });
+    
+    // Update the mapping
+    const newMap = cellChildMap.map((row, r) => {
+      // If we are below the split point and it's the targeted zone, update the ID
+      if (r > splitR && r <= maxR) {
+        return row.map((curId, c) => 
+          (c >= minC && c <= maxC && curId === zoneId) ? newId : curId
+        );
+      }
+      return [...row];
+    });
+    
+    // Insert the new row
+    newMap.splice(splitR + 1, 0, newRow);
+    
     return { ...grid, rows: rows + 1, rowPercents: newRowPercents, cellChildMap: newMap };
   }
 }

@@ -314,4 +314,28 @@ public static class DwmHelper
         int useDarkMode = enabled ? 1 : 0;
         Dwmapi.DwmSetWindowAttribute(hwnd, Dwmapi.DWMWA_USE_IMMERSIVE_DARK_MODE, ref useDarkMode, (uint)sizeof(int));
     }
+
+    /// <summary>
+    /// Reads the Windows system accent color from the registry.
+    /// Registry key: HKCU\SOFTWARE\Microsoft\Windows\DWM\AccentColor
+    /// Format: ABGR DWORD (byte0=A, byte1=B, byte2=G, byte3=R).
+    /// Returns "#RRGGBB" hex string, or empty string if unavailable.
+    /// </summary>
+    public static string GetWindowsAccentColor()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\DWM");
+            if (key?.GetValue("AccentColor") is int raw)
+            {
+                uint uval = unchecked((uint)raw);
+                int b = (int)((uval >> 8)  & 0xFF);  // byte1 = B
+                int g = (int)((uval >> 16) & 0xFF);  // byte2 = G
+                int r = (int)((uval >> 24) & 0xFF);  // byte3 = R
+                return $"#{r:X2}{g:X2}{b:X2}";
+            }
+        }
+        catch { }
+        return "";
+    }
 }

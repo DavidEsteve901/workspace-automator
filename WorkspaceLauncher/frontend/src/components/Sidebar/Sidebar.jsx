@@ -93,8 +93,12 @@ export default function Sidebar({
       </div>
 
       {/* Category list */}
-      <div className="sidebar-label">WORKSPACES</div>
-      <nav className={`sidebar-nav ${disabled ? 'sidebar-locked' : ''}`}>
+      <div 
+        className={`sidebar-list-wrap ${disabled ? 'sidebar-locked' : ''}`}
+        onClick={disabled ? onOpenConfig : undefined}
+      >
+        <div className="sidebar-label">WORKSPACES</div>
+        <nav className="sidebar-nav">
         {categories.map((cat, idx) => (
           <div
             key={cat}
@@ -173,6 +177,7 @@ export default function Sidebar({
           </button>
         )}
       </nav>
+      </div>
 
       {/* Footer */}
       <div className="sidebar-footer">

@@ -6,11 +6,11 @@
         Height="420" Width="460"
         WindowStyle="SingleBorderWindow" 
         AllowsTransparency="False" 
-        Background="#0F0F0F"
+        Background="#0A0A0A"
         WindowStartupLocation="CenterScreen"
         ShowInTaskbar="False"
         Topmost="True">
-    <Grid Background="#0F0F0F">
+    <Grid Background="Transparent">
         <wv2:WebView2 Name="webView" />
     </Grid>
 </Window>

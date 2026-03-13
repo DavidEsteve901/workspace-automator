@@ -46,14 +46,34 @@ public sealed class WebBridge
         }
     }
 
-    public static void BroadcastCanvasAction(string action)
+    /// <summary>
+    /// Pushes a fresh state_update to every active WebBridge (all open windows).
+    /// Call this after any config change that must be visible across all windows.
+    /// </summary>
+    public static void BroadcastStateUpdate()
     {
         lock (_broadcastLock)
         {
             _allBridges.RemoveAll(wr => !wr.TryGetTarget(out _));
             foreach (var wr in _allBridges)
                 if (wr.TryGetTarget(out var b))
-                    b.SendEvent("cze_remote_action", new { action });
+                    b.HandleGetState();
+        }
+    }
+
+    public static void BroadcastCanvasAction(string action)
+    {
+        Broadcast("cze_remote_action", new { action });
+    }
+
+    public static void Broadcast(string eventName, object data)
+    {
+        lock (_broadcastLock)
+        {
+            _allBridges.RemoveAll(wr => !wr.TryGetTarget(out _));
+            foreach (var wr in _allBridges)
+                if (wr.TryGetTarget(out var b))
+                    b.SendEvent(eventName, data);
         }
     }
 
@@ -163,7 +183,7 @@ public sealed class WebBridge
                     break;
 
                 case "set_last_category":
-                    HandleSetLastCategory(payload);
+                    await HandleSetLastCategory(payload);
                     break;
                 
                 case "set_hotkeys_enabled":
@@ -172,6 +192,18 @@ public sealed class WebBridge
 
                 case "save_fz_path":
                     await HandleSaveFzPath(payload);
+                    break;
+
+                case "update_window_theme":
+                    _window.Dispatcher.Invoke(() =>
+                    {
+                        var hwnd = new System.Windows.Interop.WindowInteropHelper(_window).Handle;
+                        bool isDarkTheme = !payload.TryGetProperty("isDark", out var isDarkProp) || isDarkProp.GetBoolean();
+                        DwmHelper.UseImmersiveDarkMode(hwnd, isDarkTheme);
+                        var bgHex = isDarkTheme ? "#0A0A0A" : "#F0F2F5";
+                        _window.Background = new System.Windows.Media.SolidColorBrush(
+                            (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(bgHex));
+                    });
                     break;
 
                 case "window_minimize":
@@ -240,6 +272,14 @@ public sealed class WebBridge
                     });
                     break;
 
+                case "get_theme_config":
+                    ReplyInvoke(reqId, new {
+                        themeMode          = ConfigManager.Instance.Config.ThemeMode,
+                        accentColor        = ConfigManager.Instance.Config.AccentColor,
+                        windowsAccentColor = DwmHelper.GetWindowsAccentColor()
+                    });
+                    break;
+
                 case "change_layout_assignment":
                     ReplyInvoke(reqId, HandleChangeLayoutAssignment(payload));
                     break;
@@ -253,7 +293,7 @@ public sealed class WebBridge
                     break;
 
                 case "change_config_path":
-                    ReplyInvoke(reqId, HandleChangeConfigPath(payload));
+                    ReplyInvoke(reqId, await HandleChangeConfigPath(payload));
                     break;
 
                 case "get_windows_to_clean":
@@ -283,7 +323,7 @@ public sealed class WebBridge
 
                 // ── CZE: fire-and-forget ──────────────────────────────
                 case "cze_set_zone_engine":
-                    HandleCzeSetZoneEngine(payload);
+                    await HandleCzeSetZoneEngine(payload);
                     break;
 
                 // ── CZE: invoke (request/response) ───────────────────
@@ -296,11 +336,16 @@ public sealed class WebBridge
                     break;
 
                 case "cze_save_layout":
-                    ReplyInvoke(reqId, HandleCzeSaveLayout(payload));
+                    ReplyInvoke(reqId, await HandleCzeSaveLayout(payload));
                     break;
 
                 case "cze_delete_layout":
-                    ReplyInvoke(reqId, HandleCzeDeleteLayout(payload));
+                    var result = await HandleCzeDeleteLayout(payload);
+                    ReplyInvoke(reqId, result);
+                    break;
+                case "cze_set_layout_by_monitor":
+                    result = await HandleCzeSetLayoutByMonitor(payload);
+                    ReplyInvoke(reqId, result);
                     break;
 
                 case "cze_get_state":
@@ -312,7 +357,7 @@ public sealed class WebBridge
                     break;
 
                 case "cze_set_active_layout":
-                    ReplyInvoke(reqId, HandleCzeSetActiveLayout(payload));
+                    ReplyInvoke(reqId, await HandleCzeSetActiveLayout(payload));
                     break;
 
                 case "cze_open_canvas":
@@ -386,7 +431,11 @@ public sealed class WebBridge
             fzLayoutsCache = config.FzLayoutsCache,
             fzCustomPath   = config.FzCustomPath,
             fzDetectedPath = FancyZonesReader.FzBasePath,
-            configPath     = ConfigManager.Instance.ConfigPath
+            fzSyncEnabled  = config.FancyZonesSyncEnabled,
+            czeActiveLayouts = config.CzeActiveLayouts,
+            configPath     = ConfigManager.Instance.ConfigPath,
+            themeMode      = config.ThemeMode,
+            accentColor    = config.AccentColor
         });
     }
 
@@ -562,8 +611,15 @@ public sealed class WebBridge
             config.Hotkeys = JsonSerializer.Deserialize<HotkeyConfig>(hk.GetRawText(), JsonOpts) ?? config.Hotkeys;
         if (payload.TryGetProperty("pipWatcherEnabled", out var pip))
             config.PipWatcherEnabled = pip.GetBoolean();
+        if (payload.TryGetProperty("fzSyncEnabled", out var fzSync))
+            config.FancyZonesSyncEnabled = fzSync.GetBoolean();
+        if (payload.TryGetProperty("themeMode", out var tm))
+            config.ThemeMode = tm.GetString() ?? "dark";
+        if (payload.TryGetProperty("accentColor", out var ac))
+            config.AccentColor = ac.GetString() ?? "";
         await ConfigManager.Instance.SaveAsync();
-        HandleGetState();
+        // Broadcast to ALL open windows (main + ZoneEditor), not just this bridge
+        BroadcastStateUpdate();
     }
 
     private async Task HandleSaveFzPath(JsonElement payload)
@@ -574,17 +630,18 @@ public sealed class WebBridge
         HandleGetState();
     }
 
-    private void HandleSetLastCategory(JsonElement payload)
+    private async Task HandleSetLastCategory(JsonElement payload)
     {
         string category = payload.TryGetProperty("category", out var c) ? c.GetString() ?? "" : "";
         ConfigManager.Instance.Config.LastCategory = category;
-        ConfigManager.Instance.Save();
+        await ConfigManager.Instance.SaveAsync();
     }
 
     // ── Handlers: Request/Response (invoke) ───────────────────────────────
 
     private object HandleListMonitors()
     {
+        MonitorManager.InvalidateCache();
         var monitors = MonitorManager.GetActiveMonitors();
         return monitors.Select(m => new
         {
@@ -594,7 +651,7 @@ public sealed class WebBridge
             ptName        = m.PtName,
             ptInstance    = m.PtInstance,
             name          = m.Name,
-            label         = $"{m.Name}{(m.IsPrimary ? " ★" : "")}",
+            label         = $"{m.Name} ({m.Bounds.Width}x{m.Bounds.Height}){(m.IsPrimary ? " ★" : "")}",
             isPrimary     = m.IsPrimary,
             monitorNumber = m.MonitorNumber,
             scale         = m.Scale,
@@ -656,7 +713,15 @@ public sealed class WebBridge
     {
         try
         {
-            Logger.Info("[WebBridge] HandleGetFzStatus: Starting status collection...");
+            // Robust check for FancyZones process.
+            // PowerToys.FancyZones = dedicated process (older/standalone builds).
+            // PowerToys = main host process that embeds FancyZones as a module (modern builds).
+            bool isFzRunning = Process.GetProcessesByName("PowerToys.FancyZones").Length > 0 ||
+                               Process.GetProcessesByName("FancyZones").Length > 0 ||
+                               Process.GetProcessesByName("PowerToys").Length > 0;
+            
+            // Invalidate monitor cache to ensure fresh data for status check
+            MonitorManager.InvalidateCache();
             var applied = FancyZonesReader.ReadAppliedLayouts();
             Logger.Info($"[WebBridge] HandleGetFzStatus: Read {applied.Count} applied layouts.");
             
@@ -803,6 +868,7 @@ public sealed class WebBridge
             Logger.Info($"[WebBridge] Status collection complete. Sending {statusEntries.Count} entries.");
             return new
             {
+                isFzRunning,
                 entries = statusEntries,
                 layouts = availableLayouts.Select(l => new {
                     uuid = l.uuid,
@@ -897,6 +963,10 @@ public sealed class WebBridge
             {
                 FancyZonesReader.SyncCacheFromDisk();
                 Logger.Info($"[WebBridge] Layout changed: {monitorName} desktop={desktopId} → {layoutUuid}");
+                
+                BroadcastStateUpdate(); // Sync all windows
+                // Refresh background visuals immediately
+                WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.RefreshBackgroundVisuals();
             }
             return new { success = ok };
         }
@@ -1020,20 +1090,22 @@ public sealed class WebBridge
         var config = ConfigManager.Instance.Config;
         if (!config.Apps.TryGetValue(category, out var items)) return new { valid = true };
 
-        // ── Auto-fix and repair on the fly ──
-        WorkspaceResolver.ResolveEnvironment(items);
-
+        bool fzSync = config.FancyZonesSyncEnabled;
+        
+        // Invalidate monitor cache at start of validation
+        MonitorManager.InvalidateCache();
+        
         FancyZonesReader.SyncCacheFromDisk();
         var currentLayouts = FancyZonesReader.ReadCustomLayouts();
         var currentMonitors = MonitorManager.GetActiveMonitors();
-        var currentDesktopId = VirtualDesktopManager.Instance.GetCurrentDesktopId()?.ToString().ToLowerInvariant() ?? "";
+        var currentDesktopId = VirtualDesktopManager.Instance.GetCurrentDesktopId()?.ToString("D").ToLowerInvariant() ?? "";
         var appliedLayouts = FancyZonesReader.ReadAppliedLayouts();
         var layouts = FancyZonesReader.GetAvailableLayouts();
         
         var warnings = new List<object>();
         var missingLayouts = new List<string>(); // UUIDs
 
-        // Find how many desktops we need
+        // 1. Desktop Check
         int maxDesktopNeeded = 1;
         foreach(var itm in items) {
            if (WorkspaceOrchestrator.TryParseDesktopIndex(itm.Desktop, out int dIdx)) {
@@ -1053,49 +1125,49 @@ public sealed class WebBridge
         for (int i = 0; i < items.Count; i++)
         {
             var item = items[i];
-            string cleanUuid = item.FancyzoneUuid?.Trim('{', '}').ToLowerInvariant() ?? "";
-
-            // 1. Check if Layout is MISSING (not in PowerToys)
-            if (!string.IsNullOrEmpty(cleanUuid))
+            
+            // ─── FancyZones Validation (Portability/Missing) ───
+            if (fzSync) 
             {
-                // Standard templates (grid, rows, columns, priority-grid, focus) are built-in and never "missing"
-                bool isStandardTemplate = new[] { "grid", "rows", "columns", "priority-grid", "focus" }.Contains(cleanUuid, StringComparer.OrdinalIgnoreCase);
-
-                if (!isStandardTemplate && !currentLayouts.ContainsKey(cleanUuid))
+                string cleanUuid = item.FancyzoneUuid?.Trim('{', '}').ToLowerInvariant() ?? "";
+                if (!string.IsNullOrEmpty(cleanUuid))
                 {
-                    // Check if we have it in cache
-                    if (config.FzLayoutsCache.TryGetValue(cleanUuid, out var cached))
+                    bool isStandardTemplate = new[] { "grid", "rows", "columns", "priority-grid", "focus" }.Contains(cleanUuid, StringComparer.OrdinalIgnoreCase);
+
+                    if (!isStandardTemplate && !currentLayouts.ContainsKey(cleanUuid))
                     {
-                        warnings.Add(new { 
-                            type = "layout_missing", 
-                            itemPath = item.Path,
-                            layoutName = cached.Name,
-                            layoutUuid = cleanUuid,
-                            info = cached.Info, // Added
-                            message = $"El layout '{cached.Name}' no está en PowerToys de este equipo."
-                        });
-                        if (!missingLayouts.Contains(cleanUuid)) missingLayouts.Add(cleanUuid);
-                    }
-                    else
-                    {
-                        warnings.Add(new { 
-                            type = "layout_lost", 
-                            itemPath = item.Path,
-                            layoutUuid = cleanUuid,
-                            message = $"El layout (UUID: {cleanUuid}) no se encuentra ni en el equipo ni en el caché."
-                        });
+                        if (config.FzLayoutsCache.TryGetValue(cleanUuid, out var cached))
+                        {
+                            warnings.Add(new { 
+                                type = "layout_missing", 
+                                itemPath = item.Path,
+                                layoutName = cached.Name,
+                                layoutUuid = cleanUuid,
+                                info = cached.Info,
+                                message = $"El layout '{cached.Name}' no está en PowerToys de este equipo."
+                            });
+                            if (!missingLayouts.Contains(cleanUuid)) missingLayouts.Add(cleanUuid);
+                        }
+                        else
+                        {
+                            warnings.Add(new { 
+                                type = "layout_lost", 
+                                itemPath = item.Path,
+                                layoutUuid = cleanUuid,
+                                message = $"El layout (UUID: {cleanUuid}) no se encuentra ni en el equipo ni en el caché de PowerToys."
+                            });
+                        }
                     }
                 }
             }
 
-            // 2. Check Monitor
+            // ─── Monitor Check ───
             bool isDefaultOrEmpty = string.IsNullOrEmpty(item.Monitor) || item.Monitor == "Por defecto";
             bool monitorExists = isDefaultOrEmpty ? false : WorkspaceResolver.IsMonitorAvailable(item.Monitor, currentMonitors);
             
             if (!monitorExists)
             {
                 string proposed = WorkspaceResolver.MapMissingMonitor(isDefaultOrEmpty ? "Pantalla 1" : item.Monitor, currentMonitors);
-
                 warnings.Add(new { 
                     type = "monitor_missing", 
                     itemPath = item.Path,
@@ -1106,84 +1178,99 @@ public sealed class WebBridge
                 });
             }
 
-            // 3. Check if Layout is DIFFERENT from active (Mismatch)
-            if (monitorExists && !string.IsNullOrEmpty(cleanUuid))
+            if (monitorExists)
             {
-                // Resolve which desktop we should check for this specific app
-                var itemDesktopGuid = WorkspaceOrchestrator.ResolveDesktopGuid(item);
-                string targetDesktopId = itemDesktopGuid?.ToString().ToLowerInvariant() ?? currentDesktopId;
+                var itemDesktopGuid = WorkspaceOrchestrator.ResolveDesktopGuid(item) ?? VirtualDesktopManager.Instance.GetCurrentDesktopId() ?? Guid.Empty;
+                string targetDesktopId = itemDesktopGuid.ToString("D").ToLowerInvariant(); // Consistent "D" format (hyphens, no braces)
 
-                // Find what's currently active on that specific monitor ON THE TARGET DESKTOP
                 var mon = currentMonitors.FirstOrDefault(m => 
-                    m.PtName == item.Monitor || 
-                    m.Name.Contains(item.Monitor, StringComparison.OrdinalIgnoreCase) ||
-                    m.HardwareId.Contains(item.Monitor, StringComparison.OrdinalIgnoreCase));
+                    (!string.IsNullOrEmpty(m.PtName) && m.PtName == item.Monitor) || 
+                    m.Name == item.Monitor || 
+                    (!string.IsNullOrEmpty(m.HardwareId) && m.HardwareId.Contains(item.Monitor, StringComparison.OrdinalIgnoreCase)) ||
+                    (!string.IsNullOrEmpty(m.DeviceName) && m.DeviceName == item.Monitor)
+                );
+                
+                // Fallback for multi-monitor setups: look for "Pantalla X" matches
+                if (mon == null && !string.IsNullOrEmpty(item.Monitor))
+                {
+                    mon = currentMonitors.FirstOrDefault(m => m.Name.Contains(item.Monitor, StringComparison.OrdinalIgnoreCase));
+                }
 
                 if (mon != null)
                 {
-                    // Find what's currently active on that specific monitor ON THE TARGET DESKTOP
-                    string monSerial = (mon.SerialNumber ?? "").ToLowerInvariant();
-                    string monInstNorm = (mon.PtInstance ?? "").Trim('{', '}').ToLowerInvariant();
-                    string monPtNorm = (mon.PtName ?? "").ToLowerInvariant();
-
-                    var active = (AppliedLayoutEntry?)null;
-                    bool foundExact = false;
-                    foreach (var a in appliedLayouts)
+                    if (fzSync)
                     {
-                        string aeInstNorm = (a.Instance ?? "").Trim('{', '}').ToLowerInvariant();
-                        string aeMonNorm = (a.MonitorName ?? "").ToLowerInvariant();
-                        string aeDkNorm = (a.DesktopId ?? "").Trim('{', '}').ToLowerInvariant();
-                        string aeSerial = (a.SerialNumber ?? "").ToLowerInvariant();
-                        
-                        bool serialMatch = !string.IsNullOrEmpty(monSerial) && monSerial == aeSerial;
-                        bool instMatch = !string.IsNullOrEmpty(aeInstNorm) && aeInstNorm == monInstNorm;
-                        bool nameMatch = !string.IsNullOrEmpty(aeMonNorm) && (aeMonNorm == monPtNorm || aeMonNorm.Contains(monPtNorm));
-
-                        if (!serialMatch && !instMatch && !nameMatch) continue;
-
-                        bool isExact = aeDkNorm == targetDesktopId.Trim('{', '}').ToLowerInvariant();
-                        bool isAll = aeDkNorm == "00000000-0000-0000-0000-000000000000" || string.IsNullOrEmpty(aeDkNorm);
-
-                        if (isExact)
+                        // FancyZones Mismatch logic
+                        string cleanUuid = item.FancyzoneUuid?.Trim('{', '}').ToLowerInvariant() ?? "";
+                        if (!string.IsNullOrEmpty(cleanUuid)) 
                         {
-                            active = a;
-                            foundExact = true;
-                            // DO NOT break. We want to take the LAST match in the file.
-                        }
-                        else if (isAll && !foundExact)
-                        {
-                            active = a;
-                        }
-                    }
+                            // Find what's currently active on that specific monitor in PT
+                            string monSerial = (mon.SerialNumber ?? "").ToLowerInvariant();
+                            string monInstNorm = (mon.PtInstance ?? "").Trim('{', '}').ToLowerInvariant();
+                            string monPtNorm = (mon.PtName ?? "").ToLowerInvariant();
 
-                    if (active != null)
-                    {
-                        string activeUuid = active.LayoutUuid.Trim('{', '}').ToLowerInvariant();
-                        if (activeUuid != cleanUuid)
-                        {
-                            var assignedLayout = layouts.FirstOrDefault(l => l.uuid.Equals(cleanUuid, StringComparison.OrdinalIgnoreCase));
-                            
-                            // Use robust matching
-                            var activeLayout = TryMatchLayout(activeUuid, active.LayoutType, layouts);
-
-                            // Logical match check: if the resolved activeLayout has the exact same UUID as assigned, it's NOT a mismatch
-                            if (activeLayout != null && assignedLayout != null && 
-                                (activeLayout.uuid.Equals(assignedLayout.uuid, StringComparison.OrdinalIgnoreCase) ||
-                                (!activeLayout.isCustom && !assignedLayout.isCustom && activeLayout.type.Equals(assignedLayout.type, StringComparison.OrdinalIgnoreCase))))
+                            var active = (AppliedLayoutEntry?)null;
+                            bool foundExact = false;
+                            foreach (var a in appliedLayouts)
                             {
-                                // They are functionally the same layout, skip mismatch warning
-                            }
-                            else
-                            {
-                                string assignedName = assignedLayout?.name ?? "Configurado";
-                                string currentName = activeLayout?.name ?? active.LayoutType;
+                                string aeInstNorm = (a.Instance ?? "").Trim('{', '}').ToLowerInvariant();
+                                string aeMonNorm = (a.MonitorName ?? "").ToLowerInvariant();
+                                string aeDkNorm = (a.DesktopId ?? "").Trim('{', '}').ToLowerInvariant();
+                                string aeSerial = (a.SerialNumber ?? "").ToLowerInvariant();
                                 
-                                // Last fallback for internal types not found in lists
-                                if (currentName.Equals("blank", StringComparison.OrdinalIgnoreCase)) currentName = "Sin diseño";
-                                else if (currentName.Equals("custom", StringComparison.OrdinalIgnoreCase)) currentName = "Personalizado";
-                                 
-                                string assignedType = assignedLayout?.type ?? "custom";
+                                bool serialMatch = !string.IsNullOrEmpty(monSerial) && monSerial == aeSerial;
+                                bool instMatch = !string.IsNullOrEmpty(aeInstNorm) && aeInstNorm == monInstNorm;
+                                bool nameMatch = !string.IsNullOrEmpty(aeMonNorm) && (aeMonNorm == monPtNorm || aeMonNorm.Contains(monPtNorm));
 
+                                if (!serialMatch && !instMatch && !nameMatch) continue;
+
+                                bool isExact = aeDkNorm == targetDesktopId;
+                                bool isAll = aeDkNorm == "00000000-0000-0000-0000-000000000000" || string.IsNullOrEmpty(aeDkNorm);
+
+                                if (isExact) { active = a; foundExact = true; }
+                                else if (isAll && !foundExact) { active = a; }
+                            }
+
+                            if (active != null)
+                            {
+                                string activeUuid = active.LayoutUuid.Trim('{', '}').ToLowerInvariant();
+                                if (activeUuid != cleanUuid)
+                                {
+                                    var assignedLayout = layouts.FirstOrDefault(l => l.uuid.Equals(cleanUuid, StringComparison.OrdinalIgnoreCase));
+                                    var activeLayout = TryMatchLayout(activeUuid, active.LayoutType, layouts);
+
+                                    if (activeLayout != null && assignedLayout != null && 
+                                        (activeLayout.uuid.Equals(assignedLayout.uuid, StringComparison.OrdinalIgnoreCase) ||
+                                        (!activeLayout.isCustom && !assignedLayout.isCustom && activeLayout.type.Equals(assignedLayout.type, StringComparison.OrdinalIgnoreCase))))
+                                    {
+                                        // Functonally same, skip
+                                    }
+                                    else
+                                    {
+                                        string assignedName = assignedLayout?.name ?? "Configurado";
+                                        string currentName = activeLayout?.name ?? active.LayoutType;
+                                        
+                                        warnings.Add(new { 
+                                            type = "layout_mismatch", 
+                                            itemPath = item.Path,
+                                            monitorName = item.Monitor,
+                                            monitorInstance = mon.PtInstance,
+                                            monitorSerial = mon.SerialNumber,
+                                            desktopId = targetDesktopId,
+                                            layoutUuid = cleanUuid,
+                                            layoutType = assignedLayout?.type ?? "custom",
+                                            assignedLayout = assignedName,
+                                            assignedInfo = assignedLayout?.info,
+                                            activeLayout = currentName,
+                                            activeInfo = activeLayout?.info,
+                                            message = $"Layout FZ en '{item.Monitor}' es '{currentName}', pero el workspace requiere '{assignedName}'."
+                                        });
+                                    }
+                                }
+                            }
+                            else 
+                            {
+                                var assignedLayout = layouts.FirstOrDefault(l => l.uuid.Equals(cleanUuid, StringComparison.OrdinalIgnoreCase));
                                 warnings.Add(new { 
                                     type = "layout_mismatch", 
                                     itemPath = item.Path,
@@ -1192,55 +1279,88 @@ public sealed class WebBridge
                                     monitorSerial = mon.SerialNumber,
                                     desktopId = targetDesktopId,
                                     layoutUuid = cleanUuid,
-                                    layoutType = assignedType,
-                                    assignedLayout = assignedName,
-                                    assignedInfo = assignedLayout?.info, // Added
-                                    activeLayout = currentName,
-                                    activeInfo = activeLayout?.info,   // Added
-                                    message = $"Layout en '{item.Monitor}' ({item.Desktop}) es '{currentName}', pero el workspace requiere '{assignedName}'."
+                                    assignedLayout = assignedLayout?.name ?? "Configurado",
+                                    assignedInfo = assignedLayout?.info,
+                                    activeLayout = "Ninguno",
+                                    message = $"No hay layout FZ activo en '{item.Monitor}'. Se requiere '{assignedLayout?.name ?? "Configurado"}'."
                                 });
                             }
                         }
                     }
-                    else 
+                    else
                     {
-                        // Portability fix: If no layout is applied on that desktop yet, we should also offer to set it
-                        var assignedLayout = layouts.FirstOrDefault(l => l.uuid.Equals(cleanUuid, StringComparison.OrdinalIgnoreCase));
-                        string assignedName = assignedLayout?.name ?? "Configurado";
-                        string assignedType = assignedLayout?.type ?? "custom";
+                        // ─── CZE Mismatch logic ───
+                        string assignedCzeId = item.CzeLayoutId ?? "";
+                        if (!string.IsNullOrEmpty(assignedCzeId))
+                        {
+                            string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(mon.PtInstance ?? "", itemDesktopGuid);
+                            config.CzeActiveLayouts.TryGetValue(key, out string? activeCzeId);
 
-                        warnings.Add(new { 
-                            type = "layout_mismatch", 
-                            itemPath = item.Path,
-                            monitorName = item.Monitor,
-                            monitorInstance = mon.PtInstance,
-                            monitorSerial = mon.SerialNumber,
-                            desktopId = targetDesktopId,
-                            layoutUuid = cleanUuid,
-                            layoutType = assignedType,
-                            assignedLayout = assignedName,
-                            assignedInfo = assignedLayout?.info, // Added
-                            activeLayout = "Ninguno",
-                            activeInfo = (object?)null, // No active layout, so no info
-                            message = $"No hay layout activo en '{item.Monitor}' ({item.Desktop}). El workspace requiere '{assignedName}'."
-                        });
+                            if (activeCzeId != assignedCzeId)
+                            {
+                                config.CzeLayouts.TryGetValue(assignedCzeId, out var assignedLayout);
+                                config.CzeLayouts.TryGetValue(activeCzeId ?? "", out var activeLayout);
+
+                                warnings.Add(new { 
+                                    type = "layout_mismatch", 
+                                    itemPath = item.Path,
+                                    monitorName = item.Monitor,
+                                    monitorInstance = mon.PtInstance,
+                                    desktopId = targetDesktopId,
+                                    layoutUuid = assignedCzeId, // In CZE, we use layoutId as UUID
+                                    assignedLayout = assignedLayout?.Name ?? "Configurado (CZE)",
+                                    assignedInfo = assignedLayout != null ? new { 
+                                        type = "canvas",
+                                        zones = assignedLayout.Zones.Select(z => new { X = z.X, Y = z.Y, width = z.W, height = z.H }),
+                                        spacing = assignedLayout.Spacing,
+                                        refWidth = assignedLayout.RefWidth > 0 ? assignedLayout.RefWidth : 10000,
+                                        refHeight = assignedLayout.RefHeight > 0 ? assignedLayout.RefHeight : 10000
+                                    } : null,
+                                    activeLayout = activeLayout?.Name ?? "Ninguno / Libre",
+                                    activeInfo = activeLayout != null ? new { 
+                                        type = "canvas",
+                                        zones = activeLayout.Zones.Select(z => new { X = z.X, Y = z.Y, width = z.W, height = z.H }),
+                                        spacing = activeLayout.Spacing,
+                                        refWidth = activeLayout.RefWidth > 0 ? activeLayout.RefWidth : 10000,
+                                        refHeight = activeLayout.RefHeight > 0 ? activeLayout.RefHeight : 10000
+                                    } : (object)new { type = "grid", zones = new object[] {} },
+                                    message = $"Layout CZE en '{item.Monitor}' es '{activeLayout?.Name ?? "Ninguno"}', pero el workspace requiere '{assignedLayout?.Name ?? "Configurado"}'."
+                                });
+                            }
+                        }
                     }
                 }
             }
         }
+
+        var availableLayouts = fzSync 
+            ? (object)layouts.Select(l => new { 
+                uuid = l.uuid, 
+                name = l.name, 
+                type = l.type, 
+                isCustom = l.isCustom, 
+                info = (object?)l.info 
+            }).ToArray()
+            : (object)config.CzeLayouts.Values.Select(l => new { 
+                uuid = l.Id, 
+                name = l.Name, 
+                type = "custom", 
+                isCustom = true, 
+                info = (object)new { 
+                    type = "canvas",
+                    zones = l.Zones.Select(z => new { X = z.X, Y = z.Y, width = z.W, height = z.H }), 
+                    spacing = l.Spacing,
+                    refWidth = l.RefWidth > 0 ? l.RefWidth : 10000,
+                    refHeight = l.RefHeight > 0 ? l.RefHeight : 10000
+                } 
+            }).ToArray();
 
         return new { 
             valid = warnings.Count == 0, 
             warnings,
             missingLayouts,
             activeMonitors = currentMonitors.Select(m => m.Name).ToArray(),
-            availableLayouts = layouts.Select(l => new {
-                uuid = l.uuid,
-                name = l.name,
-                type = l.type,
-                isCustom = l.isCustom,
-                info = l.info // Added
-            }).ToArray()
+            availableLayouts
         };
     }
 
@@ -1321,7 +1441,7 @@ public sealed class WebBridge
         }
     }
 
-    private object HandleChangeConfigPath(JsonElement payload)
+    private async Task<object> HandleChangeConfigPath(JsonElement payload)
     {
         try
         {
@@ -1392,12 +1512,16 @@ public sealed class WebBridge
 
     // ── Handlers: Custom Zone Engine (CZE) ──────────────────────────────────
 
-    private void HandleCzeSetZoneEngine(JsonElement payload)
+    private async Task HandleCzeSetZoneEngine(JsonElement payload)
     {
         string engine = payload.TryGetProperty("engine", out var e) ? e.GetString() ?? "fancyzones" : "fancyzones";
         ConfigManager.Instance.Config.ZoneEngine = engine;
-        ConfigManager.Instance.Save();
-        HandleGetState();
+        await ConfigManager.Instance.SaveAsync();
+        
+        // Refresh background visuals immediately
+        WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.RefreshBackgroundVisuals();
+        
+        BroadcastStateUpdate(); // Notify all windows of engine change
     }
 
     private object HandleCzeGetZoneEngine()
@@ -1419,7 +1543,36 @@ public sealed class WebBridge
         return new { layouts };
     }
 
-    private object HandleCzeSaveLayout(JsonElement payload)
+    private async Task<object> HandleCzeSetLayoutByMonitor(JsonElement payload)
+    {
+        try
+        {
+            string monitorInstance = payload.GetProperty("monitorInstance").GetString() ?? "";
+            string desktopId       = payload.GetProperty("desktopId").GetString()       ?? Guid.Empty.ToString();
+            string layoutId        = payload.GetProperty("layoutId").GetString()        ?? "";
+
+            if (string.IsNullOrEmpty(monitorInstance) || string.IsNullOrEmpty(layoutId))
+                return new { ok = false, error = "monitorInstance and layoutId are required" };
+
+            var config = ConfigManager.Instance.Config;
+            string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(monitorInstance, Guid.Parse(desktopId));
+            
+            config.CzeActiveLayouts[key] = layoutId;
+            await ConfigManager.Instance.SaveAsync();
+            
+            BroadcastStateUpdate();
+            WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.RefreshBackgroundVisuals();
+
+            return new { ok = true };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[CZE] SetLayoutByMonitor error: {ex.Message}");
+            return new { ok = false, error = ex.Message };
+        }
+    }
+
+    private async Task<object> HandleCzeSaveLayout(JsonElement payload)
     {
         try
         {
@@ -1464,7 +1617,7 @@ public sealed class WebBridge
                 RefHeight = refHeight,
             };
             config.CzeLayouts[id] = entry;
-            ConfigManager.Instance.Save();
+            await ConfigManager.Instance.SaveAsync();
 
             return new { ok = true, id, layout = entry };
         }
@@ -1475,7 +1628,7 @@ public sealed class WebBridge
         }
     }
 
-    private object HandleCzeDeleteLayout(JsonElement payload)
+    private async Task<object> HandleCzeDeleteLayout(JsonElement payload)
     {
         try
         {
@@ -1487,7 +1640,7 @@ public sealed class WebBridge
             // Also remove any active layout mappings pointing to this layout
             var keysToRemove = config.CzeActiveLayouts.Where(kv => kv.Value == id).Select(kv => kv.Key).ToList();
             foreach (var k in keysToRemove) config.CzeActiveLayouts.Remove(k);
-            ConfigManager.Instance.Save();
+            await ConfigManager.Instance.SaveAsync();
             return new { ok = true };
         }
         catch (Exception ex)
@@ -1501,6 +1654,7 @@ public sealed class WebBridge
         var config = ConfigManager.Instance.Config;
         var desktops = VirtualDesktopManager.Instance.GetDesktops();
         var monitors = MonitorManager.GetActiveMonitors();
+        var currentDesktopId = VirtualDesktopManager.Instance.GetCurrentDesktopId();
 
         var entries = new List<object>();
         for (int m = 0; m < monitors.Count; m++)
@@ -1509,7 +1663,8 @@ public sealed class WebBridge
             for (int d = 0; d < desktops.Count; d++)
             {
                 var desktopId = desktops[d];
-                string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(monitor.PtInstance, desktopId);
+                string normPtInstance = (monitor.PtInstance ?? "").Trim('{', '}').ToLowerInvariant();
+                string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(normPtInstance, desktopId);
                 config.CzeActiveLayouts.TryGetValue(key, out string? layoutId);
                 entries.Add(new
                 {
@@ -1517,14 +1672,18 @@ public sealed class WebBridge
                     monitorName       = monitor.PtName,
                     desktopId         = desktopId.ToString("D"),
                     desktopName       = $"Escritorio {d + 1}",
+                    isCurrentDesktop  = (desktopId == currentDesktopId),
                     layoutId          = layoutId ?? "",
                 });
             }
         }
-        return new { entries };
+        return new { 
+            entries,
+            currentDesktopId = currentDesktopId?.ToString("D")
+        };
     }
 
-    private object HandleCzeSetActiveLayout(JsonElement payload)
+    private async Task<object> HandleCzeSetActiveLayout(JsonElement payload)
     {
         try
         {
@@ -1535,7 +1694,8 @@ public sealed class WebBridge
             if (!Guid.TryParse(desktopIdStr, out Guid desktopId))
                 return new { ok = false, error = "Invalid desktopId" };
 
-            string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(ptInstance, desktopId);
+            string normPtInstance = (ptInstance ?? "").Trim('{', '}').ToLowerInvariant();
+            string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(normPtInstance, desktopId);
             var config = ConfigManager.Instance.Config;
 
             if (string.IsNullOrEmpty(layoutId))
@@ -1543,7 +1703,14 @@ public sealed class WebBridge
             else
                 config.CzeActiveLayouts[key] = layoutId;
 
-            ConfigManager.Instance.Save();
+            // Force CZE engine when manually activating a CZE layout
+            config.ZoneEngine = "cze";
+
+            await ConfigManager.Instance.SaveAsync();
+            BroadcastStateUpdate(); // Notify all windows
+
+            // Refresh background visuals immediately
+            WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.RefreshBackgroundVisuals();
             return new { ok = true };
         }
         catch (Exception ex)

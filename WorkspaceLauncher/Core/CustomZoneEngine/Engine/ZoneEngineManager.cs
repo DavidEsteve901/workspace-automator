@@ -12,4 +12,18 @@ public static class ZoneEngineManager
             "custom" => CustomZoneEngineImpl.Instance,
             _        => FancyZonesAdapter.Instance,
         };
+
+    /// <summary>
+    /// True when the active zone engine is FancyZones (not CZE).
+    /// Use this to gate FancyZones-specific behaviour: file sync, conflict validation,
+    /// layout injection, etc.  Callers should prefer this over reading ZoneEngine directly
+    /// to ensure consistent engine resolution across the codebase.
+    /// </summary>
+    public static bool IsFancyZonesActive =>
+        (ConfigManager.Instance.Config.ZoneEngine ?? "fancyzones").ToLowerInvariant() != "custom";
+
+    /// <summary>
+    /// True when the active zone engine is the CustomZoneEngine.
+    /// </summary>
+    public static bool IsCzeActive => !IsFancyZonesActive;
 }

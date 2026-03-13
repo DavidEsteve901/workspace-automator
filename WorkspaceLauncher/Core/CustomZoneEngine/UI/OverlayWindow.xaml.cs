@@ -5,6 +5,7 @@ using System.Windows.Media;
 using WorkspaceLauncher.Core.Config;
 using WorkspaceLauncher.Core.NativeInterop;
 using WorkspaceLauncher.Core.Utils;
+using WorkspaceLauncher.Core.CustomZoneEngine.Models;
 
 namespace WorkspaceLauncher.Core.CustomZoneEngine.UI;
 
@@ -24,8 +25,8 @@ public partial class OverlayWindow : Window
 
         if (blocking)
         {
-            // Alpha = 1 (0x01) — visually near-invisible but captures Win32 hit-tests
-            RootGrid.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(1, 0, 0, 0));
+            // Dimmer effect: dark, semi-transparent background (alpha 180 out of 255)
+            RootGrid.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(180, 0, 0, 0));
         }
     }
 
@@ -50,47 +51,48 @@ public partial class OverlayWindow : Window
         }
     }
 
+    public string MonitorHandle { get; private set; } = "";
+
     /// <summary>
     /// Position this overlay to exactly cover the given WorkArea (rcWork from GetMonitorInfo).
     /// Call BEFORE Show().
     /// </summary>
-    public void SetupForMonitor(RECT workArea)
+    public void SetupForMonitor(MonitorInfo mon)
     {
         var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        this.MonitorHandle = mon.Handle;
         
-        // Use SetWindowPos with SWP_NOACTIVATE to position physically without stealing focus.
-        // We use the raw physical RECT from MonitorManager/GetMonitorInfo.
-        User32.SetWindowPos(hwnd, nint.Zero, 
-            workArea.Left, workArea.Top, workArea.Width, workArea.Height,
-            User32.SWP_NOZORDER | User32.SWP_NOACTIVATE | User32.SWP_SHOWWINDOW);
+        // Match HWND_TOPMOST (or HWND_TOP if we want to be less aggressive)
+        var HWND_TOP = new nint(0);
+        var HWND_TOPMOST = new nint(-1);
 
-        // Update WPF properties just in case, though SetWindowPos takes precedence for the OS.
-        var monitor = MonitorManager.GetActiveMonitors().FirstOrDefault(m => 
-            m.WorkArea.Left == workArea.Left && m.WorkArea.Top == workArea.Top);
-        double scale = (monitor?.Scale ?? 100) / 100.0;
+        User32.SetWindowPos(hwnd, HWND_TOPMOST, 
+            mon.WorkArea.Left, mon.WorkArea.Top, mon.WorkArea.Width, mon.WorkArea.Height,
+            User32.SWP_NOACTIVATE | User32.SWP_SHOWWINDOW);
+
+        double scale = mon.Scale / 100.0;
         
-        Left   = workArea.Left / scale;
-        Top    = workArea.Top  / scale;
-        Width  = workArea.Width / scale;
-        Height = workArea.Height / scale;
+        Left   = mon.WorkArea.Left / scale;
+        Top    = mon.WorkArea.Top  / scale;
+        Width  = mon.WorkArea.Width / scale;
+        Height = mon.WorkArea.Height / scale;
     }
 
     /// <summary>
     /// Render zone rectangles (drag-preview or editor background preview).
     /// Zones use base-10000 integer units.
     /// </summary>
-    public void ShowLayout(CzeLayoutEntry layout, RECT workArea)
+    public void ShowLayout(CzeLayoutEntry layout, MonitorInfo mon)
     {
-        // Re-position to work area every time in case monitor config changed
-        SetupForMonitor(workArea);
+        SetupForMonitor(mon);
         OverlayCanvas.Children.Clear();
 
         foreach (var ze in layout.Zones)
         {
-            double x = (double)ze.X / 10000 * workArea.Width;
-            double y = (double)ze.Y / 10000 * workArea.Height;
-            double w = (double)ze.W / 10000 * workArea.Width;
-            double h = (double)ze.H / 10000 * workArea.Height;
+            double x = (double)ze.X / 10000 * mon.WorkArea.Width;
+            double y = (double)ze.Y / 10000 * mon.WorkArea.Height;
+            double w = (double)ze.W / 10000 * mon.WorkArea.Width;
+            double h = (double)ze.H / 10000 * mon.WorkArea.Height;
 
             var rect = new System.Windows.Shapes.Rectangle
             {
@@ -113,21 +115,18 @@ public partial class OverlayWindow : Window
     /// <summary>
     /// Render a set of zones as a static background preview (non-interactive).
     /// </summary>
-    public void ShowBackgroundPreview(List<RECT> zones, RECT workArea)
+    public void ShowBackgroundPreview(List<RECT> zones, MonitorInfo mon)
     {
-        SetupForMonitor(workArea);
+        SetupForMonitor(mon);
         OverlayCanvas.Children.Clear();
 
-        // Get monitor scale for coordinate conversion (Physical -> DIPs)
-        var monitor = MonitorManager.GetActiveMonitors().FirstOrDefault(m => 
-            m.WorkArea.Left == workArea.Left && m.WorkArea.Top == workArea.Top);
-        double scale = (monitor?.Scale ?? 100) / 100.0;
+        double scale = mon.Scale / 100.0;
 
         foreach (var z in zones)
         {
             // Convert Absolute RECT to WorkArea-Relative dimensions and adjust for DPI scale
-            double x = (z.Left - workArea.Left) / scale;
-            double y = (z.Top - workArea.Top) / scale;
+            double x = (z.Left - mon.WorkArea.Left) / scale;
+            double y = (z.Top - mon.WorkArea.Top) / scale;
             double w = z.Width / scale;
             double h = z.Height / scale;
 
@@ -135,10 +134,10 @@ public partial class OverlayWindow : Window
             {
                 Width           = Math.Max(1, w),
                 Height          = Math.Max(1, h),
-                // Subtle grayish blue with very low opacity
-                Fill            = new SolidColorBrush(System.Windows.Media.Color.FromArgb(25, 100, 150, 255)),
-                Stroke          = new SolidColorBrush(System.Windows.Media.Color.FromArgb(70,  100, 150, 255)),
-                StrokeThickness = 1,
+                // Grayish blue with higher opacity for better visibility
+                Fill            = new SolidColorBrush(System.Windows.Media.Color.FromArgb(80, 88, 166, 255)),
+                Stroke          = new SolidColorBrush(System.Windows.Media.Color.FromArgb(200, 88, 166, 255)),
+                StrokeThickness = 3,
                 RadiusX         = 6,
                 RadiusY         = 6,
             };
@@ -153,33 +152,67 @@ public partial class OverlayWindow : Window
     /// <summary>
     /// Render a CZE layout as a static background preview.
     /// </summary>
-    public void ShowCzeBackgroundPreview(CzeLayoutEntry layout, RECT workArea)
+    public void ShowCzeBackgroundPreview(CzeLayoutEntry layout, MonitorInfo mon)
     {
-        SetupForMonitor(workArea);
+        SetupForMonitor(mon);
         OverlayCanvas.Children.Clear();
 
-        // Get monitor scale for coordinate conversion (Physical -> DIPs)
-        var monitor = MonitorManager.GetActiveMonitors().FirstOrDefault(m => 
-            m.WorkArea.Left == workArea.Left && m.WorkArea.Top == workArea.Top);
-        double scale = (monitor?.Scale ?? 100) / 100.0;
+        double scale = mon.Scale / 100.0;
 
         foreach (var ze in layout.Zones)
         {
             // CZE layout units (0-10000) mapped to WorkArea, then adjusted for DPI scale
-            double x = ((double)ze.X / 10000 * workArea.Width) / scale;
-            double y = ((double)ze.Y / 10000 * workArea.Height) / scale;
-            double w = ((double)ze.W / 10000 * workArea.Width) / scale;
-            double h = ((double)ze.H / 10000 * workArea.Height) / scale;
+            double x = ((double)ze.X / 10000 * mon.WorkArea.Width) / scale;
+            double y = ((double)ze.Y / 10000 * mon.WorkArea.Height) / scale;
+            double w = ((double)ze.W / 10000 * mon.WorkArea.Width) / scale;
+            double h = ((double)ze.H / 10000 * mon.WorkArea.Height) / scale;
 
             var rect = new System.Windows.Shapes.Rectangle
             {
                 Width           = Math.Max(1, w),
                 Height          = Math.Max(1, h),
-                Fill            = new SolidColorBrush(System.Windows.Media.Color.FromArgb(25, 100, 150, 255)),
-                Stroke          = new SolidColorBrush(System.Windows.Media.Color.FromArgb(70,  100, 150, 255)),
-                StrokeThickness = 1,
-                RadiusX         = 6,
-                RadiusY         = 6,
+                // Slightly more opaque and thick for "Premium" visibility
+                Fill            = new SolidColorBrush(System.Windows.Media.Color.FromArgb(90, 88, 166, 255)),
+                Stroke          = new SolidColorBrush(System.Windows.Media.Color.FromArgb(220, 88, 166, 255)),
+                StrokeThickness = 3,
+                RadiusX         = 10,
+                RadiusY         = 10,
+            };
+            Canvas.SetLeft(rect, x);
+            Canvas.SetTop(rect, y);
+            OverlayCanvas.Children.Add(rect);
+        }
+
+        this.Show();
+    }
+
+    /// <summary>
+    /// Render a CZE internal layout model as a static background preview.
+    /// Support for virtual templates (CS1503 fix).
+    /// </summary>
+    public void ShowCzeBackgroundPreview(CZELayout layout, MonitorInfo mon)
+    {
+        SetupForMonitor(mon);
+        OverlayCanvas.Children.Clear();
+
+        double scale = mon.Scale / 100.0;
+
+        foreach (var ze in layout.Zones)
+        {
+            double x = ((double)ze.X / 10000 * mon.WorkArea.Width) / scale;
+            double y = ((double)ze.Y / 10000 * mon.WorkArea.Height) / scale;
+            double w = ((double)ze.W / 10000 * mon.WorkArea.Width) / scale;
+            double h = ((double)ze.H / 10000 * mon.WorkArea.Height) / scale;
+
+            var rect = new System.Windows.Shapes.Rectangle
+            {
+                Width           = Math.Max(1, w),
+                Height          = Math.Max(1, h),
+                Fill            = new SolidColorBrush(System.Windows.Media.Color.FromArgb(90, 88, 166, 255)),
+                Stroke          = new SolidColorBrush(System.Windows.Media.Color.FromArgb(220, 88, 166, 255)),
+                StrokeThickness = 3,
+                RadiusX         = 10,
+                RadiusY         = 10,
             };
             Canvas.SetLeft(rect, x);
             Canvas.SetTop(rect, y);

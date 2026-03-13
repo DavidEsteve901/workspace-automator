@@ -1,7 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Settings, Keyboard, Monitor, Save, Check, Folder, LayoutGrid, ChevronRight, X, ArrowRightToLine, ArrowLeftToLine, ArrowRightSquare, ArrowLeftSquare, RefreshCcw, RotateCw } from 'lucide-react'
-import { bridge } from '../../api/bridge.js'
+import { Settings, Keyboard, Monitor, Save, Check, Folder, LayoutGrid, ChevronRight, X, ArrowRightToLine, ArrowLeftToLine, ArrowRightSquare, ArrowLeftSquare, RefreshCcw, RotateCw, Palette, Sun, Moon } from 'lucide-react'
+import { bridge, onEvent, offEvent } from '../../api/bridge.js'
 import './ConfigPanel.css'
+
+const ACCENT_PALETTES = [
+  { name: 'Cyan',    color: '#00D2FF' },
+  { name: 'Azul',    color: '#2979FF' },
+  { name: 'Verde',   color: '#00E676' },
+  { name: 'Violeta', color: '#D500F9' },
+  { name: 'Naranja', color: '#FF6D00' },
+  { name: 'Rosa',    color: '#FF4081' },
+  { name: 'Rojo',    color: '#FF1744' },
+  { name: 'Oro',     color: '#FFD600' },
+]
 
 const HOTKEY_LABELS = {
   cycle_forward: { label: 'Ciclar zona →', icon: ArrowRightToLine },
@@ -12,30 +23,41 @@ const HOTKEY_LABELS = {
   open_zone_editor: { label: 'Abrir Editor de Zonas', icon: LayoutGrid },
 }
 
-export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetectedPath, configPath, onSave, onClose }) {
+export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetectedPath, fzSyncEnabled, configPath, themeMode, accentColor, onSave, onClose }) {
   const [hk, setHk] = useState({ ...hotkeys })
   const [pip, setPip] = useState(pipWatcher)
   const [fzPath, setFzPath] = useState(fzCustomPath || '')
+  const [fzSync, setFzSync] = useState(fzSyncEnabled)
   const [engine, setEngine] = useState('FancyZones')
   const [saved, setSaved] = useState(false)
   const [fzModalOpen, setFzModalOpen] = useState(false)
+  const [fzSectionOpen, setFzSectionOpen] = useState(true)
   const [activeRecordingKey, setActiveRecordingKey] = useState(null)
+  const [theme, setTheme] = useState(themeMode || 'dark')
+  const [accent, setAccent] = useState(accentColor || '')
+  const [winAccent, setWinAccent] = useState('')
 
   useEffect(() => {
     async function loadEngine() {
       const e = await bridge.czeGetZoneEngine()
       setEngine(e.engine)
     }
+    async function loadThemeConfig() {
+      try {
+        const t = await bridge.getThemeConfig()
+        if (t?.windowsAccentColor) setWinAccent(t.windowsAccentColor)
+      } catch {}
+    }
     loadEngine()
+    loadThemeConfig()
   }, [])
 
   async function handleSave() {
-    onSave({ hotkeys: hk, pipWatcherEnabled: pip, fzCustomPath: fzPath })
+    onSave({ hotkeys: hk, pipWatcherEnabled: pip, fzCustomPath: fzPath, fzSyncEnabled: fzSync, themeMode: theme, accentColor: accent })
     await bridge.czeSetZoneEngine(engine)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
-
   async function handlePickPath() {
     const res = await bridge.openFileDialog({ isFolder: true })
     if (res) setFzPath(res)
@@ -92,10 +114,68 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
               ? "Usa el motor integrado. Permite edición visual avanzada y es independiente de PowerToys."
               : "Usa el motor oficial de Microsoft PowerToys (requiere tenerlo instalado)."}
           </p>
+          
+          <div style={{ marginTop: '12px' }}>
+            <Toggle
+              label="Sincronización y Compatibilidad con FancyZones"
+              value={fzSync}
+              onChange={setFzSync}
+            />
+          </div>
         </Section>
 
-        {/* Zone cycling toggles */}
-        <Section title="Cycling de zonas y escritorios" icon={<Monitor size={14} />}>
+        {/* Grouped FancyZones options (Collapsible) */}
+        {fzSync && (
+          <Section 
+            title="FancyZones — Configuración Adicional" 
+            icon={<LayoutGrid size={14} />}
+            collapsible
+            isOpen={fzSectionOpen}
+            onToggle={() => setFzSectionOpen(!fzSectionOpen)}
+          >
+            <div className="fz-grouped-settings">
+              <button className="fz-status-btn" onClick={() => setFzModalOpen(true)}>
+                <div className="fz-status-btn-content">
+                  <LayoutGrid size={16} />
+                  <div>
+                    <span className="fz-status-btn-title">Gestionar Layouts por Monitor</span>
+                    <span className="fz-status-btn-desc">Ver y cambiar qué layout está activo en cada monitor</span>
+                  </div>
+                </div>
+                <ChevronRight size={16} className="fz-status-btn-arrow" />
+              </button>
+
+              <div className="fz-path-section" style={{ marginTop: '12px' }}>
+                <span className="config-sub-label">Ruta de PowerToys / FancyZones:</span>
+                <div className="fz-path-row">
+                  <input
+                    className="fz-path-input"
+                    type="text"
+                    placeholder="Autodetección..."
+                    value={fzPath}
+                    onChange={e => setFzPath(e.target.value)}
+                  />
+                  <button className="fz-path-btn" onClick={handlePickPath} title="Seleccionar">
+                    <Folder size={14} />
+                  </button>
+                </div>
+                {fzDetectedPath && (
+                  <div className="fz-detected-path">
+                    <span>Detectado:</span> <code>{fzDetectedPath}</code>
+                  </div>
+                )}
+              </div>
+            </div>
+          </Section>
+        )}
+
+        {/* System & Global Toggles */}
+        <Section title="Sistema y Opciones Globales" icon={<Monitor size={14} />}>
+          <Toggle
+            label="Anclar ventanas Picture-in-Picture a todos los escritorios"
+            value={pip}
+            onChange={setPip}
+          />
           <Toggle
             label="Habilitar cycling de zonas"
             value={hk._zone_cycle_enabled}
@@ -106,44 +186,11 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
             value={hk._desktop_cycle_enabled}
             onChange={v => setHotkey('_desktop_cycle_enabled', v)}
           />
-        </Section>
-
-        {/* FancyZones Status Manager */}
-        <Section title="FancyZones — Estado y Layouts" icon={<LayoutGrid size={14} />}>
-          <button className="fz-status-btn" onClick={() => setFzModalOpen(true)}>
-            <div className="fz-status-btn-content">
-              <LayoutGrid size={16} />
-              <div>
-                <span className="fz-status-btn-title">Gestionar Layouts por Monitor</span>
-                <span className="fz-status-btn-desc">Ver y cambiar qué layout está activo en cada monitor y escritorio</span>
-              </div>
-            </div>
-            <ChevronRight size={16} className="fz-status-btn-arrow" />
-          </button>
-        </Section>
-
-        {/* PowerToys path overrides */}
-        <Section title="PowerToys / FancyZones Path" icon={<Folder size={14} />}>
-          <div className="fz-path-row">
-            <input
-              className="fz-path-input"
-              type="text"
-              placeholder="Por defecto: Autodetección"
-              value={fzPath}
-              onChange={e => setFzPath(e.target.value)}
-            />
-            <button className="fz-path-btn" onClick={handlePickPath} title="Seleccionar">
-              <Folder size={14} />
-            </button>
-          </div>
-          <p className="fz-path-help">
-            Modifica esta ruta solo si PowerToys está instalado en una ubicación no estándar.
-          </p>
-          {fzDetectedPath && (
-            <div className="fz-detected-path">
-              <span>Detectado:</span> <code>{fzDetectedPath}</code>
-            </div>
-          )}
+          <Toggle
+            label="Mostrar consola de depuración"
+            value={hk.show_system_console}
+            onChange={v => setHotkey('show_system_console', v)}
+          />
         </Section>
 
         {/* Config file location */}
@@ -163,21 +210,68 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
             </button>
           </div>
           <p className="fz-path-help">
-            Ruta actual del archivo <code>mis_apps_config_v2.json</code>. Puedes cambiarla para sincronizar con Drive o copias de seguridad.
+            Ruta actual del archivo <code>mis_apps_config_v2.json</code>. Puedes cambiarla para sincronizar entre equipos.
           </p>
         </Section>
 
-        <Section title="Sistema" icon={<Monitor size={14} />}>
-          <Toggle
-            label="Anclar ventanas Picture-in-Picture a todos los escritorios"
-            value={pip}
-            onChange={setPip}
-          />
-          <Toggle
-            label="Mostrar consola de depuración"
-            value={hk.show_system_console}
-            onChange={v => setHotkey('show_system_console', v)}
-          />
+        {/* Apariencia */}
+        <Section title="Apariencia" icon={<Palette size={14} />}>
+          <div className="appearance-theme-row">
+            <span className="config-sub-label">Tema de la interfaz</span>
+            <div className="theme-toggle-group">
+              <button
+                className={`theme-mode-btn ${theme === 'dark' ? 'active' : ''}`}
+                onClick={() => setTheme('dark')}
+              >
+                <Moon size={13} /> Oscuro
+              </button>
+              <button
+                className={`theme-mode-btn ${theme === 'light' ? 'active' : ''}`}
+                onClick={() => setTheme('light')}
+              >
+                <Sun size={13} /> Claro
+              </button>
+            </div>
+          </div>
+
+          <div style={{ marginTop: '14px' }}>
+            <span className="config-sub-label">Color de acento</span>
+            <div className="accent-palette">
+              {ACCENT_PALETTES.map(p => (
+                <button
+                  key={p.color}
+                  className={`accent-swatch ${accent === p.color ? 'active' : ''}`}
+                  style={{ '--swatch-color': p.color }}
+                  onClick={() => setAccent(p.color)}
+                  title={p.name}
+                />
+              ))}
+              {winAccent && (
+                <button
+                  className={`accent-swatch accent-swatch-win ${accent === winAccent ? 'active' : ''}`}
+                  style={{ '--swatch-color': winAccent }}
+                  onClick={() => setAccent(winAccent)}
+                  title={`Color de Windows (${winAccent})`}
+                >
+                  <span className="accent-swatch-win-label">W</span>
+                </button>
+              )}
+              <button
+                className={`accent-swatch accent-swatch-reset ${!accent ? 'active' : ''}`}
+                onClick={() => setAccent('')}
+                title="Cyan por defecto"
+              >
+                <span style={{ fontSize: '9px', fontWeight: 700 }}>DEF</span>
+              </button>
+            </div>
+            <div className="accent-preview">
+              <div
+                className="accent-preview-dot"
+                style={{ background: accent || '#00D2FF' }}
+              />
+              <code className="accent-preview-hex">{accent || '#00D2FF (por defecto)'}</code>
+            </div>
+          </div>
         </Section>
 
         {/* Hotkeys — keybinding recorder */}
@@ -249,6 +343,9 @@ function FzStatusModal({ onClose }) {
 
   useEffect(() => {
     loadStatus()
+    
+    onEvent('desktop_switched', loadStatus)
+    return () => offEvent('desktop_switched', loadStatus)
   }, [loadStatus])
 
   const handleChangeLayout = async (entry, newLayoutUuid) => {
@@ -329,7 +426,12 @@ function FzStatusModal({ onClose }) {
                   </div>
                   <div className="fz-modal-desktop-list">
                     {entries.map((entry, i) => (
-                      <div key={i} className={`fz-modal-desktop-row ${entry.desktopIsCurrent ? 'current' : ''}`}>
+                      <div 
+                        key={i} 
+                        className={`fz-modal-desktop-row ${entry.desktopIsCurrent ? 'current' : ''}`}
+                        onDoubleClick={() => handleChangeLayout(entry, entry.activeLayoutUuid)}
+                        title="Doble clic para forzar reaplicación"
+                      >
                         <div className="fz-modal-desktop-info">
                           <span className="fz-modal-desktop-name">
                             {entry.desktopName}
@@ -353,6 +455,7 @@ function FzStatusModal({ onClose }) {
                           value={entry.activeLayoutUuid || ''}
                           onChange={e => handleChangeLayout(entry, e.target.value)}
                           disabled={changingEntry === entry}
+                          onClick={e => e.stopPropagation()}
                         >
                           <option value="">Sin layout</option>
                           {(fzStatus?.layouts || []).map(l => (
@@ -385,14 +488,30 @@ function FzStatusModal({ onClose }) {
   )
 }
 
-function Section({ title, icon, children }) {
+function Section({ title, icon, children, collapsible, isOpen, onToggle }) {
   return (
-    <div className="config-section">
-      <div className="config-section-title">
-        {icon}
-        <span>{title}</span>
+    <div className={`config-section ${collapsible ? 'collapsible' : ''} ${isOpen === false ? 'collapsed' : ''}`}>
+      <div className="config-section-title" onClick={collapsible ? onToggle : undefined} style={{ cursor: collapsible ? 'pointer' : 'default' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {icon}
+          <span>{title}</span>
+        </div>
+        {collapsible && (
+          <ChevronRight 
+            size={14} 
+            style={{ 
+              transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+              transition: 'transform 0.2s ease',
+              marginLeft: 'auto'
+            }} 
+          />
+        )}
       </div>
-      {children}
+      {(!collapsible || isOpen) && (
+        <div className="config-section-content">
+          {children}
+        </div>
+      )}
     </div>
   )
 }

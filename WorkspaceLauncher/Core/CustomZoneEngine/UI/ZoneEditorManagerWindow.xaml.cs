@@ -22,9 +22,15 @@ public partial class ZoneEditorManagerWindow : Window
     {
         base.OnSourceInitialized(e);
         var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
-        
-        // Ensure we use the dark title bar for Windows 11
-        DwmHelper.UseImmersiveDarkMode(hwnd, true);
+
+        // Title bar dark/light follows the app theme setting
+        bool isDark = WorkspaceLauncher.Core.Config.ConfigManager.Instance.Config.ThemeMode != "light";
+        DwmHelper.UseImmersiveDarkMode(hwnd, isDark);
+
+        // Keep window background in sync with theme (avoids flash in light mode)
+        var bgHex = isDark ? "#0A0A0A" : "#F0F2F5";
+        Background = new System.Windows.Media.SolidColorBrush(
+            (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(bgHex));
 
         // Ensure this control window is always above the canvas and overlays
         User32.SetWindowPos(hwnd, (nint)(-1) /* HWND_TOPMOST */, 0, 0, 0, 0,
@@ -41,7 +47,10 @@ public partial class ZoneEditorManagerWindow : Window
             // Standardized setup
             WebView2Helper.ApplySettings(webView.CoreWebView2);
             WebView2Helper.SetMapping(webView.CoreWebView2);
-            webView.DefaultBackgroundColor = System.Drawing.Color.Transparent;
+            bool _isDark = WorkspaceLauncher.Core.Config.ConfigManager.Instance.Config.ThemeMode != "light";
+            webView.DefaultBackgroundColor = _isDark
+                ? System.Drawing.Color.FromArgb(255, 10, 10, 10)     // #0A0A0A
+                : System.Drawing.Color.FromArgb(255, 240, 242, 245);  // #F0F2F5
 
             _bridge = new WebBridge(webView.CoreWebView2, this); // Important: pass 'this'
             _bridge.Initialize();

@@ -49,6 +49,13 @@
   text-transform: uppercase;
 }
 
+.sidebar-list-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .sidebar-nav {
   flex: 1;
   overflow-y: auto;
@@ -60,10 +67,16 @@
 }
 
 .sidebar-locked {
-  pointer-events: none;
+  cursor: pointer;
   opacity: 0.5;
   filter: grayscale(0.5) blur(0.5px);
   user-select: none;
+  pointer-events: auto; /* Ensure the container itself can be clicked */
+}
+
+/* Important: Block interaction with all inner elements (items, buttons) when locked */
+.sidebar-locked > * {
+  pointer-events: none;
 }
 
 /* ── Category item ────────────────────────────────────────────────────── */

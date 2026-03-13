@@ -121,6 +121,22 @@ public static class FancyZonesReader
     private static List<FzTemplateInfo> _templatesCache = [];
     private static DateTime _lastTemplatesRead = DateTime.MinValue;
 
+    /// <summary>
+    /// Forces all caches to be considered stale so the next call to any Read* method
+    /// fetches fresh data from disk.  Call this whenever the FancyZones sync toggle
+    /// is flipped (on→off or off→on) to prevent stale-cache false negatives.
+    /// </summary>
+    public static void InvalidateCaches()
+    {
+        _lastCustomLayoutsRead  = DateTime.MinValue;
+        _lastAppliedLayoutsRead = DateTime.MinValue;
+        _lastTemplatesRead      = DateTime.MinValue;
+        _customLayoutsCache     = [];
+        _appliedLayoutsCache    = [];
+        _templatesCache         = [];
+        Console.WriteLine("[FancyZonesReader] Caches invalidated.");
+    }
+
     private static bool IsFileChanged(string path, ref DateTime lastRead)
     {
         if (!File.Exists(path)) return false;
@@ -434,6 +450,7 @@ public static class FancyZonesReader
             }
 
             File.WriteAllText(AppliedLayoutsPath, root!.ToJsonString(JsonOpts));
+            InvalidateCaches();
             return true;
         }
         catch (Exception ex)
@@ -562,6 +579,7 @@ public static class FancyZonesReader
 
 
             File.WriteAllText(AppliedLayoutsPath, root!.ToJsonString(JsonOpts));
+            InvalidateCaches();
             return true;
         }
         catch (Exception ex)

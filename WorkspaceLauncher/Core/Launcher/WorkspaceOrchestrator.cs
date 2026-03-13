@@ -459,6 +459,7 @@ public sealed class WorkspaceOrchestrator
     {
         var currentWindows = WindowManager.GetVisibleWindows().ToList();
         var vdm = VirtualDesktopManager.Instance;
+        bool engineIsCze = (config.ZoneEngine ?? "fancyzones").Equals("custom", StringComparison.OrdinalIgnoreCase);
 
         // Two internal passes per sweep call: first lenient, second strict
         for (int pass = 1; pass <= 2; pass++)
@@ -467,7 +468,10 @@ public sealed class WorkspaceOrchestrator
 
             foreach (var item in items)
             {
-                if (item.Fancyzone == "Ninguna" || string.IsNullOrEmpty(item.FancyzoneUuid)) continue;
+                // Skip items that have no zone for the ACTIVE engine
+                bool hasFzZone  = !engineIsCze && item.Fancyzone != "Ninguna" && !string.IsNullOrEmpty(item.FancyzoneUuid);
+                bool hasCzeZone = engineIsCze  && !string.IsNullOrEmpty(item.CzeLayoutId) && item.CzeZoneIndex.HasValue;
+                if (!hasFzZone && !hasCzeZone) continue;
 
                 RECT? zoneRect = ResolveZoneRect(item, config);
                 if (!zoneRect.HasValue) continue;
@@ -536,19 +540,23 @@ public sealed class WorkspaceOrchestrator
 
     private void RegisterInZoneStack(AppItem item, nint hwnd, AppConfig config)
     {
+        bool engineIsCze = (config.ZoneEngine ?? "fancyzones").Equals("custom", StringComparison.OrdinalIgnoreCase);
+
         Guid desktopGuid = ResolveDesktopGuid(item) ?? Guid.Empty;
         if (desktopGuid == Guid.Empty)
             desktopGuid = VirtualDesktopManager.Instance.GetCurrentDesktopId() ?? Guid.Empty;
         string monitorId = ResolveMonitorPtInstance(item.Monitor);
 
-        // ── CZE path ─────────────────────────────────────────────────────────
-        if (!string.IsNullOrEmpty(item.CzeLayoutId) && item.CzeZoneIndex.HasValue)
+        // ── CZE path: only when global engine is CZE and item has CZE config ──
+        if (engineIsCze && !string.IsNullOrEmpty(item.CzeLayoutId) && item.CzeZoneIndex.HasValue)
         {
             var zoneKey = new ZoneStack.ZoneKey(desktopGuid, monitorId, item.CzeLayoutId, item.CzeZoneIndex.Value);
             ZoneStack.Instance.Register(zoneKey, hwnd);
             Console.WriteLine($"[Orchestrator] CZE Registered hwnd {hwnd}: desktop={desktopGuid:N} monitor={monitorId} layout={item.CzeLayoutId} zone={item.CzeZoneIndex.Value}");
             return;
         }
+
+        if (engineIsCze) return; // CZE mode but item has no CZE config
 
         // ── FancyZones path ──────────────────────────────────────────────────
         if (string.IsNullOrEmpty(item.FancyzoneUuid) || item.Fancyzone == "Ninguna") return;
@@ -629,8 +637,10 @@ public sealed class WorkspaceOrchestrator
 
     internal RECT? ResolveZoneRect(AppItem item, AppConfig config)
     {
-        // ── CZE path ─────────────────────────────────────────────────────────
-        if (!string.IsNullOrEmpty(item.CzeLayoutId) && item.CzeZoneIndex.HasValue)
+        bool engineIsCze = (config.ZoneEngine ?? "fancyzones").Equals("custom", StringComparison.OrdinalIgnoreCase);
+
+        // ── CZE path: only when global engine is CZE and item has CZE config ────
+        if (engineIsCze && !string.IsNullOrEmpty(item.CzeLayoutId) && item.CzeZoneIndex.HasValue)
         {
             var workArea = GetMonitorWorkArea(item.Monitor);
             if (workArea == null) return null;
@@ -639,6 +649,9 @@ public sealed class WorkspaceOrchestrator
                 Console.WriteLine($"[Orchestrator] CZE ZoneRect for layout='{item.CzeLayoutId}' zone={item.CzeZoneIndex.Value}: [{czRect.Value.Left},{czRect.Value.Top} {czRect.Value.Width}x{czRect.Value.Height}]");
             return czRect;
         }
+
+        // ── CZE mode but item has no CZE config → no zone for this item ────────
+        if (engineIsCze) return null;
 
         // ── FancyZones path ──────────────────────────────────────────────────
         if (item.Fancyzone == "Ninguna" || string.IsNullOrEmpty(item.FancyzoneUuid)) return null;

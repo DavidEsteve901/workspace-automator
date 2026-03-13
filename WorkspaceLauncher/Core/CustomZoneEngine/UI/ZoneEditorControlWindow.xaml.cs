@@ -20,6 +20,7 @@ public partial class ZoneEditorControlWindow : Window
         _layoutId = layoutId;
         
         Loaded += ZoneEditorControlWindow_Loaded;
+        KeyDown += (s, e) => { if (e.Key == System.Windows.Input.Key.Escape) ZoneEditorLauncher.Instance.ToggleManager(); };
         // The closing flow is managed by ZoneEditorLauncher
     }
 
@@ -27,7 +28,13 @@ public partial class ZoneEditorControlWindow : Window
     {
         base.OnSourceInitialized(e);
         var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
-        DwmHelper.UseImmersiveDarkMode(hwnd, true);
+
+        bool isDark = WorkspaceLauncher.Core.Config.ConfigManager.Instance.Config.ThemeMode != "light";
+        DwmHelper.UseImmersiveDarkMode(hwnd, isDark);
+
+        var bgHex = isDark ? "#0A0A0A" : "#F0F2F5";
+        Background = new System.Windows.Media.SolidColorBrush(
+            (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(bgHex));
     }
 
     private async void ZoneEditorControlWindow_Loaded(object sender, RoutedEventArgs e)
@@ -35,16 +42,23 @@ public partial class ZoneEditorControlWindow : Window
         try
         {
             await webView.EnsureCoreWebView2Async();
-            
+
             webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
-            
+
+            bool isDark = WorkspaceLauncher.Core.Config.ConfigManager.Instance.Config.ThemeMode != "light";
+            webView.DefaultBackgroundColor = isDark
+                ? System.Drawing.Color.FromArgb(255, 10, 10, 10)
+                : System.Drawing.Color.FromArgb(255, 240, 242, 245);
+
             // Add bridge
             var bridge = new WebBridge(webView.CoreWebView2, this);
             bridge.Initialize();
             webView.CoreWebView2.AddHostObjectToScript("bridge", bridge);
-            
-            string url = $"http://localhost:5173/#/zone-control?monitor={_monitorHardwareId}&layout={_layoutId}";
+
+            string? devUrl = Environment.GetEnvironmentVariable("WL_DEV_URL");
+            string baseUrl = !string.IsNullOrEmpty(devUrl) ? devUrl : "https://launcher.local/index.html";
+            string url = $"{baseUrl}#/zone-control?monitor={_monitorHardwareId}&layout={_layoutId}";
             webView.Source = new Uri(url);
 
             webView.CoreWebView2.WebMessageReceived += (s, args) =>

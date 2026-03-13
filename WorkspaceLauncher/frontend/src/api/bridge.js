@@ -79,7 +79,9 @@ export const bridge = {
   getConfigPath: () => invoke("get_config_path"),
   openConfigFolder: () => postMessage("open_config_folder"),
   changeConfigPath: (path) => invoke("change_config_path", { path }),
+  getThemeConfig: () => invoke("get_theme_config"),
 
+  updateWindowTheme: (isDark) => postMessage("update_window_theme", { isDark }),
   minimize: () => postMessage("window_minimize"),
   maximize: () => postMessage("window_maximize"),
   close: () => postMessage("window_close"),

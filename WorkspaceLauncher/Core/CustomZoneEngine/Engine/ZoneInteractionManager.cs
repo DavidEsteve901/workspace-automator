@@ -141,7 +141,7 @@ public sealed class ZoneInteractionManager : IDisposable
             var monitorInfo = new MONITORINFO { cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>() };
             User32.GetMonitorInfoW(hMonitor, ref monitorInfo);
             
-            _overlay.ShowLayout(layout, monitorInfo.rcWork);
+            _overlay.ShowLayout(layout, monitor);
 
             var hit = engine.DetectZoneAtPoint(pt.X, pt.Y, monitor.PtInstance, desktopId.Value, monitorInfo.rcWork);
             if (hit.HasValue)

@@ -199,6 +199,50 @@ export default function App() {
     if (activeCategory === oldName) setActiveCategory(newName)
   }, [activeCategory])
 
+  // ── Theme application ────────────────────────────────────────────────
+  const applyTheme = useCallback((themeMode, accentHex) => {
+    const root = document.documentElement
+    const isDark = themeMode !== 'light'
+    root.setAttribute('data-theme', isDark ? 'dark' : 'light')
+
+    // Notify the WPF host window to update its title bar and background color
+    bridge.updateWindowTheme(isDark)
+
+    if (accentHex && /^#[0-9A-Fa-f]{6}$/.test(accentHex)) {
+      const r = parseInt(accentHex.slice(1, 3), 16)
+      const g = parseInt(accentHex.slice(3, 5), 16)
+      const b = parseInt(accentHex.slice(5, 7), 16)
+
+      const darken  = (v, pct) => Math.max(0, Math.round(v * (1 - pct)))
+      const lighten = (v, pct) => Math.min(255, Math.round(v + (255 - v) * pct))
+      const toHex   = (r, g, b) => `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`
+
+      root.style.setProperty('--accent',        accentHex)
+      root.style.setProperty('--accent-hover',  toHex(darken(r,.10), darken(g,.10), darken(b,.10)))
+      root.style.setProperty('--accent-light',  toHex(lighten(r,.40), lighten(g,.40), lighten(b,.40)))
+      root.style.setProperty('--accent-dim',    `rgba(${r},${g},${b},0.12)`)
+      root.style.setProperty('--accent-glow',   `rgba(${r},${g},${b},0.25)`)
+      root.style.setProperty('--border-accent', `rgba(${r},${g},${b},0.30)`)
+      root.style.setProperty('--shadow-accent', `0 0 20px rgba(${r},${g},${b},0.15)`)
+      root.style.setProperty('--shadow-glow',   `0 0 40px rgba(${r},${g},${b},0.08)`)
+      // Also sync --fz-accent* so ZoneEditorModal inline styles pick up the custom accent
+      root.style.setProperty('--fz-accent',      accentHex)
+      root.style.setProperty('--fz-accent-hover',toHex(darken(r,.10), darken(g,.10), darken(b,.10)))
+      root.style.setProperty('--fz-accent-dim',  `rgba(${r},${g},${b},0.15)`)
+      root.style.setProperty('--fz-accent-glow', `rgba(${r},${g},${b},0.35)`)
+      root.style.setProperty('--fz-accent-low',  `rgba(${r},${g},${b},0.05)`)
+    } else {
+      ;['--accent','--accent-hover','--accent-light','--accent-dim','--accent-glow',
+        '--border-accent','--shadow-accent','--shadow-glow',
+        '--fz-accent','--fz-accent-hover','--fz-accent-dim','--fz-accent-glow','--fz-accent-low'
+      ].forEach(v => root.style.removeProperty(v))
+    }
+  }, [])
+
+  useEffect(() => {
+    if (state) applyTheme(state.themeMode, state.accentColor)
+  }, [state?.themeMode, state?.accentColor, applyTheme])
+
   const handleSaveConfig = useCallback((config) => {
     bridge.saveConfig(config)
     if (config.fzCustomPath !== undefined) {
@@ -290,7 +334,10 @@ export default function App() {
               pipWatcher={state.pipWatcher}
               fzCustomPath={state.fzCustomPath}
               fzDetectedPath={state.fzDetectedPath}
+              fzSyncEnabled={state.fzSyncEnabled}
               configPath={state.configPath}
+              themeMode={state.themeMode}
+              accentColor={state.accentColor}
               onSave={handleSaveConfig}
               onClose={() => setView('main')}
             />
@@ -335,6 +382,8 @@ export default function App() {
             index={itemDialog.index}
             item={itemDialog.item}
             validation={validation}
+            fzSyncEnabled={state.fzSyncEnabled}
+            czeActiveLayouts={state.czeActiveLayouts}
             onSave={(item) => handleSaveItem(itemDialog.category, itemDialog.index, item)}
             onClose={() => setItemDialog(null)}
           />
@@ -351,6 +400,7 @@ export default function App() {
           <SyncModal
             category={syncModal.category}
             validation={syncModal.validation}
+            fzSyncEnabled={state.fzSyncEnabled}
             onClose={() => setSyncModal(null)}
             onSynced={() => {
               if (activeCategory) bridge.validateWorkspace(activeCategory).then(setValidation)

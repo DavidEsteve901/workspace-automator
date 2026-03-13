@@ -318,6 +318,13 @@
   border: 1px solid rgba(0, 230, 118, 0.15);
   border-radius: var(--radius-md);
   gap: 10px;
+  transition: all 0.3s ease;
+}
+
+.fz-active-indicator.warning-critical {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.05);
 }
 
 .fz-active-indicator-content {

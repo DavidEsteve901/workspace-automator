@@ -3,13 +3,29 @@ import { ZoneRect } from './ZoneRect';
 import { ZoneDivider } from './ZoneDivider';
 import { computeGridDividers } from './ZoneEditorHooks';
 
-export function ZoneCanvas({ grid, zones, spacing, selectedIds, onSelectZone, onSplitZone, onMoveDivider, onRemoveDivider, onClearSelection }) {
+export function ZoneCanvas({ grid, zones, spacing, selectedIds, onSelectZone, onSplitZone, onMoveDivider, onRemoveDivider, onClearSelection, onCommit }) {
   const containerRef = useRef(null);
-  const [splitMode, setSplitMode] = useState('v'); // 'v' or 'h'
-  const [preview, setPreview] = useState(null); // { zoneId, fracX, fracY }
+  const [splitMode, setSplitMode] = useState('v');
+  const [preview, setPreview] = useState(null);
   const [hoveredDiv, setHoveredDiv] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const activeHoverId = useRef(null);
 
   const dividers = grid ? computeGridDividers(grid) : [];
+
+  const commitTimer = useRef(null);
+  const safeCommit = useCallback(() => {
+    if (commitTimer.current) clearTimeout(commitTimer.current);
+    commitTimer.current = setTimeout(() => {
+      onCommit?.();
+      commitTimer.current = null;
+    }, 50);
+  }, [onCommit]);
+
+  const handleHover = useCallback((div) => {
+    activeHoverId.current = div?.id || null;
+    setHoveredDiv(div);
+  }, []);
 
   useEffect(() => {
     const handleKeys = (e) => {
@@ -33,8 +49,12 @@ export function ZoneCanvas({ grid, zones, spacing, selectedIds, onSelectZone, on
   };
 
   const handleZoneMouseMove = useCallback((zoneId, x, y) => {
+    if (isDragging || activeHoverId.current) {
+        if (preview) setPreview(null);
+        return;
+    }
     setPreview({ zoneId, x, y });
-  }, []);
+  }, [isDragging, preview]);
 
   const handleCanvasMouseLeave = () => {
     setPreview(null);
@@ -72,36 +92,24 @@ export function ZoneCanvas({ grid, zones, spacing, selectedIds, onSelectZone, on
           canvasW={getCanvasDims().w}
           canvasH={getCanvasDims().h}
           index={i + 1}
+          isDragging={isDragging}
         />
       ))}
 
-      {/* Zone Highlight */}
-      {previewZone && (
-        <div style={{
-          position: 'absolute',
-          left: `${(previewZone.x * 100).toFixed(3)}%`,
-          top: `${(previewZone.y * 100).toFixed(3)}%`,
-          width: `${(previewZone.w * 100).toFixed(3)}%`,
-          height: `${(previewZone.h * 100).toFixed(3)}%`,
-          background: 'rgba(0, 210, 255, 0.08)',
-          pointerEvents: 'none',
-          zIndex: 5,
-        }} />
-      )}
-
-      {/* Preview Line */}
-      {preview && previewZone && (
+      {/* 3) Fixed Hover Reference Line: SOLID Accent Color */}
+      {!isDragging && !hoveredDiv && preview && previewZone && (
         <div style={{
             position: 'absolute',
-            left: `${((previewZone.x + (splitMode === 'v' ? preview.x * previewZone.w : 0)) * 100).toFixed(3)}%`,
-            top: `${((previewZone.y + (splitMode === 'h' ? preview.y * previewZone.h : 0)) * 100).toFixed(3)}%`,
-            width: splitMode === 'v' ? 2 : `${(previewZone.w * 100).toFixed(3)}%`,
-            height: splitMode === 'h' ? 2 : `${(previewZone.h * 100).toFixed(3)}%`,
-            background: 'var(--fz-accent)',
-            opacity: 0.8,
+            left: `${((previewZone.x + (splitMode === 'v' ? preview.x * previewZone.w : 0)) * 100).toFixed(6)}%`,
+            top: `${((previewZone.y + (splitMode === 'h' ? preview.y * previewZone.h : 0)) * 100).toFixed(6)}%`,
+            width: splitMode === 'v' ? 3 : `${(previewZone.w * 100).toFixed(6)}%`,
+            height: splitMode === 'h' ? 3 : `${(previewZone.h * 100).toFixed(6)}%`,
+            background: 'var(--fz-accent, #FFEA00)', // Solid yellow
+            opacity: 1, 
             pointerEvents: 'none',
-            zIndex: 30,
-            boxShadow: '0 0 10px var(--accent-glow)'
+            zIndex: 50,
+            boxShadow: '0 0 15px var(--fz-accent-glow), 0 0 5px rgba(0,0,0,0.4)',
+            borderRadius: 2
         }} />
       )}
 
@@ -112,15 +120,12 @@ export function ZoneCanvas({ grid, zones, spacing, selectedIds, onSelectZone, on
           canvasW={getCanvasDims().w}
           canvasH={getCanvasDims().h}
           onMove={onMoveDivider}
+          onCommit={safeCommit}
           isHovered={hoveredDiv?.id === div.id}
-          onHover={setHoveredDiv}
+          onHover={handleHover}
+          onDraggingChange={setIsDragging}
         />
       ))}
-      {(!zones || zones.length === 0) && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.3)', fontSize: 13, pointerEvents: 'none' }}>
-          Pulsa Tab para cambiar entre vertical/horizontal. Shift + Clic para dividir.
-        </div>
-      )}
     </div>
   );
 }

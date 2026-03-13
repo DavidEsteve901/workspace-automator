@@ -64,6 +64,27 @@
   --transition-fast: 0.12s ease;
 }
 
+/* ── Light Theme ──────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg-base:       #F0F2F5;
+  --bg-sidebar:    #E4E7EC;
+  --bg-main:       #F8F9FB;
+  --bg-card:       #FFFFFF;
+  --bg-hover:      #EAECF0;
+  --bg-active:     #DDE1E8;
+  --bg-elevated:   #FFFFFF;
+
+  --text-primary:  #111827;
+  --text-secondary:#374151;
+  --text-muted:    #6B7280;
+
+  --border:        rgba(0, 0, 0, 0.08);
+  --border-subtle: rgba(0, 0, 0, 0.04);
+
+  --shadow-sm:     0 2px 8px rgba(0,0,0,0.08);
+  --shadow-md:     0 4px 24px rgba(0,0,0,0.12);
+}
+
 /* ── Reset ────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 

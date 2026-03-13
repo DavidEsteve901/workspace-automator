@@ -53,7 +53,7 @@ public static class MonitorManager
                     WorkArea = mi.rcWork,
                     IsPrimary = (mi.dwFlags & 1) != 0,
                     DeviceName = deviceName,
-                    Name = "Pantalla " + (monitors.Count + 1),
+                    Name = "",                             // filled below: WMI → DeviceString → PtName → fallback
                     MonitorNumber = monitors.Count + 1
                 };
 
@@ -96,7 +96,7 @@ public static class MonitorManager
                             }
                         }
 
-                        if (!string.IsNullOrEmpty(md.DeviceString) && (string.IsNullOrEmpty(info.Name) || info.Name.Contains("Generic")))
+                        if (!string.IsNullOrEmpty(md.DeviceString) && string.IsNullOrEmpty(info.Name))
                         {
                             info.Name = md.DeviceString;
                         }
@@ -107,12 +107,19 @@ public static class MonitorManager
 
                 int w = lprcMonitor.Right - lprcMonitor.Left;
                 int h = lprcMonitor.Bottom - lprcMonitor.Top;
-                string resolution = $"{w}x{h}";
-                info.Name = (string.IsNullOrEmpty(info.Name) ? (info.PtName ?? deviceName) : info.Name) + $" ({resolution})";
+
+                // Fallback chain: WMI UserFriendlyName → DeviceString (already applied above)
+                //   → PtName (hardware model code, e.g. "AUS2723") → deviceName → "Pantalla N"
+                if (string.IsNullOrEmpty(info.Name) && !string.IsNullOrEmpty(info.PtName))
+                    info.Name = info.PtName;
+                if (string.IsNullOrEmpty(info.Name) && !string.IsNullOrEmpty(deviceName))
+                    info.Name = deviceName;
+                if (string.IsNullOrEmpty(info.Name))
+                    info.Name = $"Pantalla {monitors.Count + 1}";
 
                 GetDpiForMonitor(hMonitor, 0, out uint dpiX, out uint dpiY);
                 info.Scale = (int)Math.Round(dpiX * 100.0 / 96.0);
-                
+
                 Console.WriteLine($"[MonitorManager] Monitor: {info.Name} | Scale={info.Scale}% | PtName={info.PtName} | Serial={info.SerialNumber} | PtInst={info.PtInstance}");
                 monitors.Add(info);
             }

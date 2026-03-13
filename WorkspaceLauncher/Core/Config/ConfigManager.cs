@@ -28,6 +28,16 @@ public sealed class ConfigManager
 
     private ConfigManager() { }
 
+    /// <summary>
+    /// True when BOTH fz_sync_enabled is set AND the active zone engine is FancyZones.
+    /// Use this as the single authoritative discriminator for "should FancyZones sync run?"
+    /// The WebBridge validate/launch paths should use this instead of reading
+    /// FancyZonesSyncEnabled alone (which ignores the active engine setting).
+    /// </summary>
+    public bool IsFancyZonesSyncActive =>
+        _config.FancyZonesSyncEnabled &&
+        (_config.ZoneEngine ?? "fancyzones").Equals("fancyzones", StringComparison.OrdinalIgnoreCase);
+
     public void Load(string? baseDir = null)
     {
         if (!string.IsNullOrEmpty(baseDir))

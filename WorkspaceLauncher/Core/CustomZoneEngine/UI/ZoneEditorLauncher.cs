@@ -23,7 +23,7 @@ public sealed class ZoneEditorLauncher
     public static readonly ZoneEditorLauncher Instance = new();
     private ZoneEditorLauncher() { }
 
-    private readonly List<OverlayWindow>         _overlays     = [];
+    private readonly Dictionary<string, OverlayWindow> _overlaysByHandle = [];
     private ZoneEditorManagerWindow?             _manager;
     private ZoneCanvasEditorWindow?              _editCanvas;
     private ZoneEditorControlWindow?             _controlDialog;
@@ -34,41 +34,61 @@ public sealed class ZoneEditorLauncher
     private string? _lastDraftLayoutId;
     private bool    _isNewLayout;
 
-    // ── Public API ────────────────────────────────────────────────────────────
+    private System.Windows.Threading.DispatcherTimer? _desktopPollTimer;
+    private Guid? _lastKnownDesktopId;
 
-    private readonly SemaphoreSlim             _openLock     = new(1, 1);
-
-    public async void OpenManager() => await OpenManager(false);
-
-    public async Task OpenManager(bool forceOpen)
+    public async void ToggleManager()
     {
-        // Prevent concurrent execution of OpenManager
+        // Prevent concurrent execution
         if (!await _openLock.WaitAsync(0))
         {
-            Logger.Warn("[ZoneEditorLauncher] OpenManager is already running/starting.");
+            Logger.Warn("[ZoneEditorLauncher] ToggleManager/OpenManager is already running.");
             return;
         }
 
         try
         {
             var now = DateTime.Now;
-            if (!forceOpen && (now - _lastOpenTime).TotalMilliseconds < 500)
+            if ((now - _lastOpenTime).TotalMilliseconds < 400)
             {
-                Logger.Info("[ZoneEditorLauncher] Debouncing OpenManager call (too rapid)");
+                Logger.Info("[ZoneEditorLauncher] Debouncing ToggleManager call");
                 return;
             }
             _lastOpenTime = now;
 
-            // Robust Toggle: If state is NOT closed, or any window exists, close everything first
-            // Only if NOT forceOpen (restoration flow)
-            if (!forceOpen && (_state != CzeEditorState.Closed || _manager != null || _overlays.Count > 0))
+            // Robust Toggle: If state is NOT closed, close everything.
+            if (_state != CzeEditorState.Closed || _manager != null || _overlaysByHandle.Count > 0)
             {
-                Logger.Info($"[ZoneEditorLauncher] Toggle OFF: State={_state}, Manager={(_manager != null)}, Overlays={_overlays.Count}");
-                System.Windows.Application.Current.Dispatcher.Invoke(CloseAll);
+                Logger.Info($"[ZoneEditorLauncher] Toggle OFF: State={_state}, Manager={(_manager != null)}, Overlays={_overlaysByHandle.Count}");
+                System.Windows.Application.Current.Dispatcher.Invoke(CloseAllInternal);
                 return;
             }
 
-            Logger.Info("[ZoneEditorLauncher] Starting OpenManager (async data gather)");
+            Logger.Info("[ZoneEditorLauncher] Toggle ON: Starting OpenManager flow");
+            await OpenManagerInternal(false);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[ZoneEditorLauncher] Error in ToggleManager: {ex.Message}");
+        }
+        finally
+        {
+            _openLock.Release();
+        }
+    }
+
+    public async Task OpenManager(bool forceOpen)
+    {
+        if (!await _openLock.WaitAsync(0)) return;
+        try { await OpenManagerInternal(forceOpen); }
+        finally { _openLock.Release(); }
+    }
+
+    private async Task OpenManagerInternal(bool forceOpen)
+    {
+        try
+        {
+            Logger.Info("[ZoneEditorLauncher] Starting OpenManagerInternal (data gather)");
 
             // Gather heavy data on a background thread
             var data = await Task.Run(() =>
@@ -86,30 +106,27 @@ public sealed class ZoneEditorLauncher
             // Create UI elements on the Dispatcher thread
             System.Windows.Application.Current.Dispatcher.Invoke(() =>
             {
-                // One blocking overlay per monitor, covering exactly the WorkArea
+                // One blocking overlay per monitor
                 foreach (var mon in data.monitors)
                 {
                     var overlay = new OverlayWindow(blocking: true);
-                    overlay.SetupForMonitor(mon.WorkArea);
+                    overlay.SetupForMonitor(mon);
 
                     overlay.Closed += (_, _) => OnOverlayClosed();
                     overlay.Show();
-                    _overlays.Add(overlay);
+                    _overlaysByHandle[mon.Handle] = overlay;
                 }
 
-                // --- Background visualization: show current zones as static preview ---
                 RefreshBackgroundVisuals();
 
-                // Manager window owned by the primary overlay → always on top of it
                 var primaryIdx = data.monitors.FindIndex(m => m.IsPrimary);
                 if (primaryIdx < 0) primaryIdx = 0;
-                var primaryOverlay = _overlays[primaryIdx];
                 var primaryMon     = data.monitors[primaryIdx];
+                var primaryOverlay = _overlaysByHandle[primaryMon.Handle];
 
                 _manager = new ZoneEditorManagerWindow();
                 _manager.Owner = primaryOverlay;
 
-                // Size and center over the primary monitor's work area
                 double scale = primaryMon.Scale / 100.0;
                 double workLeft = primaryMon.WorkArea.Left / scale;
                 double workTop  = primaryMon.WorkArea.Top  / scale;
@@ -128,17 +145,20 @@ public sealed class ZoneEditorLauncher
                 _manager.Show();
                 _manager.Activate();
 
+                // Pin the manager window so it stays on all desktops
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(_manager).Handle;
+                VirtualDesktopManager.Instance.PinWindow(hwnd);
+
+                _lastKnownDesktopId = VirtualDesktopManager.Instance.GetCurrentDesktopId();
+                StartDesktopPolling();
+
                 SetState(CzeEditorState.Admin);
-                Logger.Info("[ZoneEditorLauncher] Opened Layout Manager (Async Flow Complete)");
+                Logger.Info("[ZoneEditorLauncher] Opened Layout Manager");
             });
         }
         catch (Exception ex)
         {
-            Logger.Error($"[ZoneEditorLauncher] Error in OpenManager: {ex.Message}");
-        }
-        finally
-        {
-            _openLock.Release();
+            Logger.Error($"[ZoneEditorLauncher] Error in OpenManagerInternal: {ex.Message}");
         }
     }
 
@@ -159,17 +179,27 @@ public sealed class ZoneEditorLauncher
             _editCanvas?.Close();
 
             // Clear background visuals while editing
-            foreach (var o in _overlays) o.ClearZones();
+            foreach (var o in _overlaysByHandle.Values) o.ClearZones();
 
             var monitors   = MonitorManager.GetActiveMonitors();
             int targetIdx  = monitors.FindIndex(m => m.HardwareId == monitorHardwareId);
             if (targetIdx < 0) targetIdx = monitors.FindIndex(m => m.IsPrimary);
             if (targetIdx < 0) targetIdx = 0;
 
-            var targetMon     = monitors[targetIdx];
-            var targetOverlay = targetIdx < _overlays.Count ? _overlays[targetIdx] : _overlays[0];
+            var targetMon = monitors[targetIdx];
+            if (!_overlaysByHandle.TryGetValue(targetMon.Handle, out var targetOverlay))
+            {
+                // Fallback to primary or any available if handle matching fails
+                targetOverlay = _overlaysByHandle.Values.FirstOrDefault();
+            }
 
-            _editCanvas    = new ZoneCanvasEditorWindow(targetMon.HardwareId, layoutId, "edit");
+            if (targetOverlay == null)
+            {
+                Logger.Error("[ZoneEditorLauncher] Cannot open canvas: No overlay window found.");
+                return;
+            }
+
+            _editCanvas = new ZoneCanvasEditorWindow(targetMon.HardwareId, layoutId, "edit");
             _editCanvas.Owner = targetOverlay;
 
             double scale = targetMon.Scale / 100.0;
@@ -217,7 +247,7 @@ public sealed class ZoneEditorLauncher
 
     public void ReturnToAdmin(bool isDiscard)
     {
-        System.Windows.Application.Current.Dispatcher.Invoke(() =>
+        System.Windows.Application.Current.Dispatcher.Invoke(async () =>
         {
             if (_state != CzeEditorState.Editing) return;
 
@@ -228,7 +258,7 @@ public sealed class ZoneEditorLauncher
             {
                 Logger.Info($"[ZoneEditorLauncher] Deleting discarded new layout: {_lastDraftLayoutId}");
                 ConfigManager.Instance.Config.CzeLayouts.Remove(_lastDraftLayoutId);
-                ConfigManager.Instance.Save();
+                await ConfigManager.Instance.SaveAsync();
             }
 
             // Detach handlers before closing to prevent recursion/crash
@@ -302,13 +332,19 @@ public sealed class ZoneEditorLauncher
     /// <summary>Legacy alias — RestoreManager now maps to ReturnToAdmin.</summary>
     public void RestoreManager() => ReturnToAdmin();
 
-    public void CloseAll()
+    // ── Internal / Lifecycle ────────────────────────────────────────────────
+
+    private readonly SemaphoreSlim             _openLock     = new(1, 1);
+
+    public void CloseAll() => CloseAllInternal();
+
+    private void CloseAllInternal()
     {
         System.Windows.Application.Current.Dispatcher.Invoke(() =>
         {
-            if (_state == CzeEditorState.Closed) return;
-            SetState(CzeEditorState.Closed);  // Set first to prevent re-entry
-
+            if (_state == CzeEditorState.Closed && _manager == null && _overlaysByHandle.Count == 0) return;
+            
+            SetState(CzeEditorState.Closed);
             Logger.Info("[ZoneEditorLauncher] Closing all Zone Editor windows.");
 
             if (_editCanvas != null)
@@ -331,11 +367,50 @@ public sealed class ZoneEditorLauncher
                 _manager = null;
             }
 
-            foreach (var o in _overlays.ToList()) o.Close();
-            _overlays.Clear();
+            StopDesktopPolling();
+
+            foreach (var o in _overlaysByHandle.Values.ToList()) o.Close();
+            _overlaysByHandle.Clear();
 
             Logger.Info("[ZoneEditorLauncher] Closed all Zone Editor windows");
         });
+    }
+
+    private void StartDesktopPolling()
+    {
+        if (_desktopPollTimer != null) return;
+
+        _desktopPollTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(500)
+        };
+        _desktopPollTimer.Tick += (s, e) => CheckDesktopSwitch();
+        _desktopPollTimer.Start();
+    }
+
+    private void StopDesktopPolling()
+    {
+        _desktopPollTimer?.Stop();
+        _desktopPollTimer = null;
+    }
+
+    private void CheckDesktopSwitch()
+    {
+        var currentId = VirtualDesktopManager.Instance.GetCurrentDesktopId();
+        if (currentId != _lastKnownDesktopId)
+        {
+            Logger.Info($"[ZoneEditorLauncher] Desktop switch detected: {_lastKnownDesktopId} -> {currentId}");
+            _lastKnownDesktopId = currentId;
+            
+            // Refresh visuals for the new desktop
+            RefreshBackgroundVisuals();
+            
+            // Notify frontend
+            Bridge.WebBridge.Broadcast("desktop_switched", new { 
+                desktopId = currentId?.ToString("D"),
+                currentId = currentId
+            });
+        }
     }
 
     // ── Private ───────────────────────────────────────────────────────────────
@@ -353,35 +428,117 @@ public sealed class ZoneEditorLauncher
         Bridge.WebBridge.BroadcastCzeState(state.ToString().ToLowerInvariant());
     }
 
-    private void RefreshBackgroundVisuals()
+    private WorkspaceLauncher.Core.CustomZoneEngine.Models.CZELayout? GetVirtualTemplate(string layoutId)
     {
-        try
+        var id = (layoutId ?? "").ToLowerInvariant();
+        var layout = new WorkspaceLauncher.Core.CustomZoneEngine.Models.CZELayout { Id = id, Name = id };
+
+        if (id == "foco")
         {
+            layout.Name = "Foco";
+            layout.Zones = [new WorkspaceLauncher.Core.CustomZoneEngine.Models.CZEZone { Id = 1, X = 1000, Y = 1000, W = 8000, H = 8000 }];
+        }
+        else if (id == "columnas")
+        {
+            layout.Name = "Columnas";
+            layout.Zones = [
+                new WorkspaceLauncher.Core.CustomZoneEngine.Models.CZEZone { Id = 1, X = 0,    Y = 0, W = 3333, H = 10000 },
+                new WorkspaceLauncher.Core.CustomZoneEngine.Models.CZEZone { Id = 2, X = 3333, Y = 0, W = 3334, H = 10000 },
+                new WorkspaceLauncher.Core.CustomZoneEngine.Models.CZEZone { Id = 3, X = 6667, Y = 0, W = 3333, H = 10000 }
+            ];
+        }
+        else if (id == "filas")
+        {
+            layout.Name = "Filas";
+            layout.Zones = [
+                new WorkspaceLauncher.Core.CustomZoneEngine.Models.CZEZone { Id = 1, X = 0, Y = 0,    W = 10000, H = 3333 },
+                new WorkspaceLauncher.Core.CustomZoneEngine.Models.CZEZone { Id = 2, X = 0, Y = 3333, W = 10000, H = 3334 },
+                new WorkspaceLauncher.Core.CustomZoneEngine.Models.CZEZone { Id = 3, X = 0, Y = 6667, W = 10000, H = 3333 }
+            ];
+        }
+        else if (id == "cuadricula")
+        {
+            layout.Name = "Cuadrícula";
+            layout.Zones = [
+                new WorkspaceLauncher.Core.CustomZoneEngine.Models.CZEZone { Id = 1, X = 0,    Y = 0,    W = 5000, H = 5000 },
+                new WorkspaceLauncher.Core.CustomZoneEngine.Models.CZEZone { Id = 2, X = 5000, Y = 0,    W = 5000, H = 5000 },
+                new WorkspaceLauncher.Core.CustomZoneEngine.Models.CZEZone { Id = 3, X = 0,    Y = 5000, W = 5000, H = 5000 },
+                new WorkspaceLauncher.Core.CustomZoneEngine.Models.CZEZone { Id = 4, X = 5000, Y = 5000, W = 5000, H = 5000 }
+            ];
+        }
+        else if (id == "sin")
+        {
+             return null;
+        }
+        else return null;
+
+        return layout;
+    }
+
+    public void RefreshBackgroundVisuals()
+    {
+        System.Windows.Application.Current.Dispatcher.Invoke(() =>
+        {
+            try
+            {
+            Logger.Info("[RefreshVisuals] Starting background refresh...");
+            MonitorManager.InvalidateCache(); // Force fresh monitor scan
             var monitors = MonitorManager.GetActiveMonitors();
+            FancyZonesReader.InvalidateCaches(); // Ensure fresh data
             var appliedLayouts = FancyZonesReader.ReadAppliedLayouts();
             var availableLayouts = FancyZonesReader.GetAvailableLayouts();
             var currentDesktopId = VirtualDesktopManager.Instance.GetCurrentDesktopId() ?? Guid.Empty;
             string currentDesktopStr = currentDesktopId.ToString().ToLowerInvariant();
             var engine = ConfigManager.Instance.Config.ZoneEngine;
 
-            for (int i = 0; i < monitors.Count && i < _overlays.Count; i++)
+            Logger.Info($"[RefreshVisuals] Engine={engine}, Desktop={currentDesktopStr}, Applying to {monitors.Count} monitors.");
+
+            foreach (var mon in monitors)
             {
-                var mon = monitors[i];
-                var overlay = _overlays[i];
+                Logger.Info($"[RefreshVisuals] Processing monitor: {mon.Name} ({mon.Handle})");
+                if (!_overlaysByHandle.TryGetValue(mon.Handle, out var overlay))
+                {
+                    Logger.Warn($"[RefreshVisuals] -> SKIPPING monitor {mon.Name}: No overlay window for handle {mon.Handle}. (Available: {string.Join(", ", _overlaysByHandle.Keys)})");
+                    continue;
+                }
                 overlay.ClearZones();
 
                 if (engine == "cze")
                 {
-                    if (ConfigManager.Instance.Config.CzeActiveLayouts.TryGetValue(mon.HardwareId, out var czeLayoutId))
+                    string normPtInstance = (mon.PtInstance ?? "").Trim('{', '}').ToLowerInvariant();
+                    string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(normPtInstance, currentDesktopId);
+                    
+                    if (ConfigManager.Instance.Config.CzeActiveLayouts.TryGetValue(key, out var czeLayoutId))
                     {
+                        Logger.Info($"[RefreshVisuals] Found active CZE layout ID {czeLayoutId} for monitor {mon.Name}");
                         if (ConfigManager.Instance.Config.CzeLayouts.TryGetValue(czeLayoutId, out var czeLayout))
                         {
-                            overlay.ShowCzeBackgroundPreview(czeLayout, mon.WorkArea);
+                            Logger.Info($"[RefreshVisuals] Rendering custom CZE layout {czeLayoutId}");
+                            overlay.ShowCzeBackgroundPreview(czeLayout, mon);
                         }
+                        else
+                        {
+                             // Fallback to virtual templates (Columns, Row, etc.)
+                             var template = GetVirtualTemplate(czeLayoutId);
+                             if (template != null)
+                             {
+                                 Logger.Info($"[RefreshVisuals] Rendering virtual template {czeLayoutId}");
+                                 overlay.ShowCzeBackgroundPreview(template, mon);
+                             }
+                             else
+                             {
+                                 Logger.Warn($"[RefreshVisuals] CZE Layout {czeLayoutId} not found in config or templates.");
+                             }
+                        }
+                    }
+                    else
+                    {
+                        Logger.Warn($"[RefreshVisuals] No CZE active layout found for key: {key}");
                     }
                 }
                 else
                 {
+                    Logger.Info($"[RefreshVisuals] FZ matching for {mon.Name} (PtInstance={mon.PtInstance}, PtName={mon.PtName})");
                     var match = appliedLayouts
                         .Where(ae => {
                             string monInstNorm = (mon.PtInstance ?? "").Trim('{', '}').ToLowerInvariant();
@@ -392,22 +549,29 @@ public sealed class ZoneEditorLauncher
                             string aeMonNorm = (ae.MonitorName ?? "").ToLowerInvariant();
                             string aeSerial = (ae.SerialNumber ?? "").ToLowerInvariant();
 
-                            bool mMatch = (!string.IsNullOrEmpty(monSerial) && monSerial == aeSerial) ||
-                                          (!string.IsNullOrEmpty(aeInstNorm) && aeInstNorm == monInstNorm) ||
-                                          (!string.IsNullOrEmpty(aeMonNorm) && (aeMonNorm == monPtNorm || aeMonNorm.Contains(monPtNorm)));
+                            bool sMatch = !string.IsNullOrEmpty(monSerial) && monSerial == aeSerial;
+                            bool iMatch = !string.IsNullOrEmpty(monInstNorm) && (monInstNorm == aeInstNorm || aeInstNorm.Contains(monInstNorm));
+                            bool nMatch = !string.IsNullOrEmpty(monPtNorm) && (monPtNorm == aeMonNorm || aeMonNorm.Contains(monPtNorm));
 
+                            bool mMatch = sMatch || iMatch || nMatch;
                             if (!mMatch) return false;
 
                             string aeDkNorm = (ae.DesktopId ?? "").Trim('{', '}').ToLowerInvariant();
                             bool isAllDesktops = string.IsNullOrEmpty(aeDkNorm) || aeDkNorm == "00000000-0000-0000-0000-000000000000";
                             bool isExactMatch = aeDkNorm == currentDesktopStr;
-                            return isExactMatch || isAllDesktops;
+                            
+                            bool finalMatch = isExactMatch || isAllDesktops;
+                            if (finalMatch) {
+                                Logger.Info($"[RefreshVisuals] -> Potential match: {ae.MonitorName} Layout={ae.LayoutUuid} Desktop={ae.DesktopId} (Exact={isExactMatch}, All={isAllDesktops})");
+                            }
+                            return finalMatch;
                         })
-                        .OrderByDescending(ae => ae.DesktopId == currentDesktopStr)
+                        .OrderByDescending(ae => (ae.DesktopId ?? "").Trim('{', '}').ToLowerInvariant() == currentDesktopStr)
                         .FirstOrDefault();
 
                     if (match != null)
                     {
+                        Logger.Info($"[RefreshVisuals] Found FZ match for {mon.Name}: Layout={match.LayoutUuid}");
                         var layout = availableLayouts.FirstOrDefault(l => l.uuid.Equals(match.LayoutUuid, StringComparison.OrdinalIgnoreCase))
                                      ?? availableLayouts.FirstOrDefault(l => l.type.Equals(match.LayoutType, StringComparison.OrdinalIgnoreCase));
 
@@ -418,13 +582,18 @@ public sealed class ZoneEditorLauncher
                             {
                                 if (match.Spacing >= 0) { fzLayout.Spacing = match.Spacing; fzLayout.ShowSpacing = match.ShowSpacing; }
                                 var zoneRects = ZoneCalculator.CalculateAllZones(fzLayout, mon.WorkArea);
-                                overlay.ShowBackgroundPreview(zoneRects, mon.WorkArea);
+                                overlay.ShowBackgroundPreview(zoneRects, mon);
                             }
                         }
+                    }
+                    else
+                    {
+                        Logger.Warn($"[RefreshVisuals] No FZ match for {mon.Name}");
                     }
                 }
             }
         }
         catch (Exception ex) { Logger.Error($"[ZoneEditorLauncher] RefreshBackgroundVisuals error: {ex.Message}"); }
+        });
     }
 }

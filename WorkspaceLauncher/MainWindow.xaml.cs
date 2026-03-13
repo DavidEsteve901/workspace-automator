@@ -222,8 +222,8 @@ public partial class MainWindow : Window
 
         // Centralized hotkey handling for Zone Editor
         HotkeyProcessor.Instance.OnOpenZoneEditorRequested += () => {
-            Logger.Info("[MainWindow] Hotkey detected, launching Zone Editor Manager");
-            WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.OpenManager();
+            Logger.Info("[MainWindow] Hotkey detected, toggling Zone Editor Manager");
+            WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.ToggleManager();
         };
         
         _hookManager.Start();

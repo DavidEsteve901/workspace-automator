@@ -4,7 +4,7 @@ import { bridge } from '../../api/bridge.js'
 import { renderZones } from '../../utils/fzUtils.jsx'
 import './SyncModal.css'
 
-export default function SyncModal({ category, validation, onClose, onSynced }) {
+export default function SyncModal({ category, validation, onClose, onSynced, fzSyncEnabled }) {
   const [syncing, setSyncing] = useState(false)
   const [done, setDone] = useState(false)
   const [resolutions, setResolutions] = useState({})
@@ -26,28 +26,36 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
   const handleSyncAll = async () => {
     setSyncing(true)
     try {
-      // 1. Solve Missing Layouts (importing definitions into PowerToys)
-      if (validation.missingLayouts?.length > 0) {
+      // 1. Solve Missing Layouts (importing definitions into PowerToys) - ONLY IF FZ SYNC IS ON
+      if (fzSyncEnabled && validation.missingLayouts?.length > 0) {
         await bridge.syncWorkspaceLayouts(validation.missingLayouts)
       }
 
-      // 2. Solve Mismatches (changing active layouts in PowerToys)
+      // 2. Solve Mismatches (changing active layouts)
       const warningsList = validation?.warnings || [];
       for (let i = 0; i < warningsList.length; i++) {
         const w = warningsList[i];
         if (w.type === 'layout_mismatch') {
           const selectedLayoutUuid = layoutResolutions[i] || w.layoutUuid;
-          const layoutObj = (validation.availableLayouts || []).find(l => l.uuid === selectedLayoutUuid);
           
-          // bridge.changeLayoutAssignment(monitorInstance, monitorName, desktopId, layoutUuid, layoutType)
-          await bridge.changeLayoutAssignment(
-            w.monitorInstance, 
-            w.monitorName, 
-            w.monitorSerial,
-            w.desktopId, 
-            selectedLayoutUuid, 
-            layoutObj?.type || w.layoutType || "custom"
-          );
+          if (fzSyncEnabled) {
+              const layoutObj = (validation.availableLayouts || []).find(l => l.uuid === selectedLayoutUuid);
+              await bridge.changeLayoutAssignment(
+                w.monitorInstance, 
+                w.monitorName, 
+                w.monitorSerial,
+                w.desktopId, 
+                selectedLayoutUuid, 
+                layoutObj?.type || w.layoutType || "custom"
+              );
+          } else {
+              // CZE sync
+              await bridge.czeSetLayoutByMonitor({
+                  monitorInstance: w.monitorInstance,
+                  desktopId: w.desktopId,
+                  layoutId: selectedLayoutUuid
+              });
+          }
         }
       }
 
@@ -91,16 +99,19 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
             <div className="sync-done">
               <CheckCircle2 size={48} color="var(--cat-url)" />
               <p>Workspace sincronizado correctamente</p>
-              <span>Los layouts han sido inyectados en PowerToys.</span>
+              <span>{fzSyncEnabled ? 'Los layouts han sido inyectados en PowerToys.' : 'La configuración del motor nativo ha sido actualizada.'}</span>
             </div>
           ) : (
             <>
               <div className="sync-intro">
                 <AlertCircle size={20} color="#f59e0b" />
-                <p>Se han detectado inconsistencias entre la configuración guardada y el entorno actual (monitores o PowerToys).</p>
+                <p>
+                  Se han detectado inconsistencias entre la configuración guardada y el entorno actual 
+                  ({fzSyncEnabled ? 'monitores o PowerToys' : 'monitores o layouts locales'}).
+                </p>
               </div>
 
-              {validation?.missingLayouts?.length > 0 && (
+              {fzSyncEnabled && validation?.missingLayouts?.length > 0 && (
                 <div className="sync-intro" style={{ background: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.3)', marginTop: '-8px' }}>
                   <Share2 size={20} color="#10b981" />
                   <p style={{ color: '#10b981' }}>
@@ -110,7 +121,7 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
               )}
 
               <div className="sync-warnings-list">
-                {warnings.filter(w => w.type === 'layout_missing').length > 0 && (
+                {fzSyncEnabled && warnings.filter(w => w.type === 'layout_missing').length > 0 && (
                   <div className="sync-warnings-group">
                     <div className="sync-warnings-group-title">
                       <Share2 size={16} /> Diseños a Importar (Portabilidad)
@@ -122,21 +133,31 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
                   </div>
                 )}
 
-                {warnings.filter(w => w.type !== 'layout_missing').length > 0 && (
-                  <div className="sync-warnings-group">
-                    <div className="sync-warnings-group-title">
-                      <AlertCircle size={16} /> Conflictos de Entorno
-                    </div>
-                    {warnings.map((w, i) => {
-                      if (w.type === 'layout_missing') return null;
-                      return renderWarning(w, i);
-                    })}
+                <div className="sync-warnings-group">
+                  <div className="sync-warnings-group-title">
+                    <AlertCircle size={16} /> Conflictos de Entorno
                   </div>
-                )}
+                  {warnings.map((w, i) => {
+                    if (fzSyncEnabled && w.type === 'layout_missing') return null;
+                    try {
+                        return renderWarning(w, i);
+                    } catch (e) {
+                        console.error("renderWarning error:", e, w);
+                        return (
+                            <div key={i} className="sync-warning-item error">
+                                <AlertCircle size={16} color="var(--cat-error)" />
+                                <span>Error al renderizar conflicto: {w.message}</span>
+                            </div>
+                        );
+                    }
+                  })}
+                </div>
               </div>
 
               <div className="sync-footer-info">
-                Al sincronizar, se intentarán crear los layouts faltantes en PowerToys utilizando las definiciones guardadas en el caché de la aplicación.
+                {fzSyncEnabled 
+                  ? 'Al sincronizar, se intentarán crear los layouts faltantes en PowerToys utilizando las definiciones guardadas en el caché de la aplicación.'
+                  : 'Al sincronizar, se ajustarán los layouts nativos asignados a cada monitor para que coincidan con los guardados en el workspace.'}
               </div>
             </>
           )}
@@ -174,7 +195,9 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
     } else if (w.type === 'desktop_missing') {
       solution = "Se crearán automáticamente al levantar el workspace.";
     } else {
-      solution = "Se creará e inyectará el Layout faltante en PowerToys.";
+      solution = fzSyncEnabled 
+        ? "Se creará e inyectará el Layout faltante en PowerToys."
+        : "Se asignará el diseño nativo configurado.";
     }
     
     return (
@@ -250,7 +273,7 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
                                         <div className="sync-layout-preview-label">Activo actualmente</div>
                                         <div className="sync-layout-preview-name">{w.activeLayout}</div>
                                         <div className="sync-layout-preview-box">
-                                          {renderZones(w.activeInfo, -1)}
+                                          {w.activeInfo && renderZones(w.activeInfo, -1)}
                                           {!w.activeInfo && <div className="fz-no-preview">Sin zonas</div>}
                                         </div>
                                       </div>
@@ -263,7 +286,7 @@ export default function SyncModal({ category, validation, onClose, onSynced }) {
                                     <div className="sync-layout-preview-label">Requerido por Workspace</div>
                                     <div className="sync-layout-preview-name">{w.assignedLayout || w.layoutName}</div>
                                     <div className="sync-layout-preview-box">
-                                      {renderZones(w.assignedInfo || w.info, -1)}
+                                      {(w.assignedInfo || w.info) && renderZones(w.assignedInfo || w.info, -1)}
                                       {!(w.assignedInfo || w.info) && <div className="fz-no-preview">Cargando...</div>}
                                     </div>
                                   </div>

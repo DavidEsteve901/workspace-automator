@@ -35,7 +35,7 @@ const DEFAULT_ITEM = {
   delay: '0'
 }
 
-export default function ItemDialog({ category, index, item, validation, onSave, onClose }) {
+export default function ItemDialog({ category, index, item, validation, fzSyncEnabled, czeActiveLayouts, onSave, onClose }) {
   // Wizard state: 1 = Type selection, 2 = Form details
   const [step, setStep] = useState(item ? 2 : 1)
   // Ensure we don't pick up null values from item that might break the state
@@ -46,13 +46,53 @@ export default function ItemDialog({ category, index, item, validation, onSave, 
     monitor: item?.monitor || 'Por defecto'
   })
 
-  // Data states - use the unified fzStatus endpoint
-  const [fzStatus, setFzStatus] = useState(null) // { entries, layouts, monitors, desktops }
+  // Data states
+  const [fzStatus, setFzStatus] = useState(null)    // Active FZ layout detection — only when fzSyncEnabled
+  const [fzLayouts, setFzLayouts] = useState([])    // FZ layout list — always loaded (independent of sync toggle)
+  const [czeLayouts, setCzeLayouts] = useState([])  // CZE layout list — always loaded
+  const [rawMonitors, setRawMonitors] = useState([]) // Monitors — always loaded
+  const [rawDesktops, setRawDesktops] = useState([]) // Desktops — always loaded
   const [syncState, setSyncState] = useState('idle') // 'idle' | 'syncing' | 'synced' | 'error'
-  const [detectedLayout, setDetectedLayout] = useState(null) // The auto-detected active layout
+  const [detectedLayout, setDetectedLayout] = useState(null)
 
-  // Load initial data using the unified endpoint
+  // Always load monitors + desktops (never gated by fzSyncEnabled)
+  const loadRawEnv = useCallback(async () => {
+    try {
+      const [mons, dks] = await Promise.all([bridge.listMonitors(), bridge.listDesktops()])
+      if (Array.isArray(mons)) setRawMonitors(mons)
+      if (Array.isArray(dks)) setRawDesktops(dks)
+    } catch (err) {
+      console.error("Error loading monitors/desktops:", err)
+    }
+  }, [])
+
+  // Always load FZ layout list (never gated by fzSyncEnabled — FZ layouts are always selectable)
+  const loadFzLayouts = useCallback(async () => {
+    try {
+      const layouts = await bridge.listFancyZones()
+      if (Array.isArray(layouts)) setFzLayouts(layouts)
+    } catch (_) {
+      setFzLayouts([]) // FZ not installed or files missing — silently show empty
+    }
+  }, [])
+
+  // Load CZE layouts (always)
+  const loadCzeLayouts = useCallback(async () => {
+    try {
+      const res = await bridge.czeGetLayouts()
+      if (res?.layouts) setCzeLayouts(res.layouts)
+    } catch (err) {
+      console.error("Error loading CZE layouts:", err)
+    }
+  }, [])
+
+  // Load FZ active-layout detection status — ONLY when fzSyncEnabled
+  // (reads applied-layouts.json and detects which layout is active per monitor+desktop)
   const loadFzStatus = useCallback(async () => {
+    if (!fzSyncEnabled) {
+      setSyncState('idle')
+      return
+    }
     setSyncState('syncing')
     try {
       const data = await bridge.getFzStatus()
@@ -65,30 +105,51 @@ export default function ItemDialog({ category, index, item, validation, onSave, 
       console.error("Error loading FZ status:", err)
       setSyncState('error')
     }
-  }, [])
+  }, [fzSyncEnabled])
 
+  // On mount: load everything. When fzSyncEnabled changes: reload all.
   useEffect(() => {
-    loadFzStatus()
-  }, [loadFzStatus])
+    loadRawEnv()
+    loadFzLayouts()
+    loadCzeLayouts()
+    if (fzSyncEnabled) loadFzStatus()
+    else setFzStatus(null) // Clear stale active-layout data when sync is disabled
+  }, [fzSyncEnabled, loadFzStatus, loadCzeLayouts, loadRawEnv, loadFzLayouts])
 
-  // Background polling to keep sync
+  // Background polling: refresh active-layout status + env periodically
   useEffect(() => {
-    const timer = setInterval(loadFzStatus, 8000)
+    const timer = setInterval(() => {
+      loadRawEnv()
+      loadFzLayouts()
+      loadFzStatus()
+    }, 8000)
     return () => clearInterval(timer)
-  }, [loadFzStatus])
+  }, [loadRawEnv, loadFzLayouts, loadFzStatus])
 
-  // Derived data from fzStatus
-  const monitors = useMemo(() => fzStatus?.monitors || [], [fzStatus])
-  const desktops = useMemo(() => fzStatus?.desktops || [], [fzStatus])
-  const availableLayouts = useMemo(() => {
-    const raw = fzStatus?.layouts || []
-    return {
-      custom: raw.filter(l => l.isCustom).map(l => ({ ...l })),
-      templates: raw.filter(l => !l.isCustom).map(l => ({ ...l }))
-    }
-  }, [fzStatus])
+  // Monitors and desktops always from independent sources (rawMonitors/rawDesktops).
+  // fzStatus.monitors is redundant now — rawMonitors comes from the same underlying data.
+  const monitors = useMemo(() => rawMonitors, [rawMonitors])
+  const desktops = useMemo(() => rawDesktops, [rawDesktops])
 
+  // Layouts: always expose BOTH CZE (native) and FZ layouts regardless of fzSyncEnabled.
+  // fzSyncEnabled only controls whether the app WRITES to PowerToys files at launch —
+  // it should never hide layouts from the editor.
+  const availableLayouts = useMemo(() => ({
+    native: czeLayouts.map(l => ({
+      uuid: l.id,
+      name: l.name,
+      isCustom: true,
+      isNative: true,
+      info: { zones: l.zones, spacing: l.spacing }
+    })),
+    // Filter out FZ layouts if sync is disabled — show only native CZE layouts
+    custom: fzSyncEnabled ? fzLayouts.filter(l => l.isCustom).map(l => ({ ...l })) : [],
+    templates: fzSyncEnabled ? fzLayouts.filter(l => !l.isCustom).map(l => ({ ...l })) : []
+  }), [czeLayouts, fzLayouts, fzSyncEnabled])
+
+  // flatLayouts: all layouts together — no fzSyncEnabled gate
   const flatLayouts = useMemo(() => [
+    ...(availableLayouts.native || []),
     ...(availableLayouts.custom || []),
     ...(availableLayouts.templates || [])
   ], [availableLayouts])
@@ -99,18 +160,19 @@ export default function ItemDialog({ category, index, item, validation, onSave, 
 
   // ── Auto-detect active layout when monitor/desktop changes ──────────
   useEffect(() => {
-    if (!fzStatus || form.monitor === 'Por defecto') {
+    if (form.monitor === 'Por defecto') {
       setDetectedLayout(null)
       return
     }
 
-    const entries = fzStatus.entries || []
     const monitor = monitors.find(m =>
-      m.ptName === form.monitor ||
-      m.name === form.monitor ||
-      m.label === form.monitor ||
+      (m.ptName && m.ptName === form.monitor) ||
+      (m.name && m.name === form.monitor) ||
+      (m.label && m.label === form.monitor) ||
       String(m.id) === String(form.monitor) ||
-      (m.displayLabel && (m.displayLabel === form.monitor || m.displayLabel.replace(' ★', '').trim() === form.monitor))
+      (m.displayLabel && (m.displayLabel === form.monitor || m.displayLabel.replace(' ★', '').trim() === form.monitor)) ||
+      (m.name && m.name.includes(form.monitor)) ||
+      (m.label && m.label.includes(form.monitor))
     )
     if (!monitor) {
       setDetectedLayout(null)
@@ -120,30 +182,28 @@ export default function ItemDialog({ category, index, item, validation, onSave, 
     const desktop = desktops.find(d => d.name === form.desktop)
     const desktopId = desktop?.id
 
-    // Find the matching entry from the pre-resolved status
-    let match = entries.find(e => {
-      const monMatch = e.monitorId === monitor.id ||
-        e.monitorPtName === monitor.ptName ||
-        e.monitorPtInstance === monitor.ptInstance
-      const dkMatch = desktopId
-        ? (e.desktopId === desktopId)
-        : e.desktopIsCurrent
-      return monMatch && dkMatch
-    })
-
-    // Fallback: try any desktop for this monitor
-    if (!match?.activeLayoutUuid && desktopId) {
-      match = entries.find(e => {
+    // ── PATH A: FancyZones Sync is ENABLED ──
+    if (fzSyncEnabled && fzStatus) {
+      const entries = fzStatus.entries || []
+      let match = entries.find(e => {
         const monMatch = e.monitorId === monitor.id ||
           e.monitorPtName === monitor.ptName ||
           e.monitorPtInstance === monitor.ptInstance
-        return monMatch && e.activeLayoutUuid
+        const dkMatch = desktopId ? (e.desktopId === desktopId) : e.desktopIsCurrent
+        return monMatch && dkMatch
       })
-    }
 
-    if (match?.activeLayoutUuid) {
-      const layoutInfo = match.activeLayout;
-      if (layoutInfo) {
+      if (!match?.activeLayoutUuid && desktopId) {
+        match = entries.find(e => {
+          const monMatch = e.monitorId === monitor.id ||
+            e.monitorPtName === monitor.ptName ||
+            e.monitorPtInstance === monitor.ptInstance
+          return monMatch && e.activeLayoutUuid
+        })
+      }
+
+      if (match?.activeLayoutUuid && match.activeLayout) {
+        const layoutInfo = match.activeLayout;
         setDetectedLayout({
           uuid: layoutInfo.uuid,
           name: layoutInfo.name,
@@ -152,31 +212,43 @@ export default function ItemDialog({ category, index, item, validation, onSave, 
           desktopName: match.desktopName
         })
 
-        // Auto-select the detected layout only if it's CUSTOM and the user hasn't picked one yet
         if (layoutInfo.isCustom) {
-          setForm(f => {
-            if (f.fancyzone_uuid && f.fancyzone_uuid !== '') return f;
-            return {
-              ...f,
-              fancyzone_uuid: layoutInfo.uuid,
-              fancyzone: `${layoutInfo.name} - Zona 1`
-            }
-          })
+          setForm(f => (f.fancyzone_uuid ? f : { ...f, fancyzone_uuid: layoutInfo.uuid, fancyzone: `${layoutInfo.name} - Zona 1` }))
         }
-      } else {
-        setDetectedLayout(null)
+        return
       }
-    } else {
-      setDetectedLayout(null)
     }
-  }, [form.monitor, form.desktop, fzStatus, monitors, desktops, flatLayouts])
+
+    // ── PATH B: CustomZoneEngine (Fallback/Sync Disabled) ──
+    if (!fzSyncEnabled && czeActiveLayouts && monitor.ptInstance) {
+      const dId = desktopId || "00000000-0000-0000-0000-000000000000"
+      const key = `${monitor.ptInstance}:${dId.toLowerCase()}`
+      const activeLayoutId = czeActiveLayouts[key]
+
+      if (activeLayoutId) {
+        const layout = availableLayouts.native.find(l => l.uuid === activeLayoutId)
+        if (layout) {
+          setDetectedLayout({
+            uuid: layout.uuid,
+            name: layout.name,
+            isCustom: true,
+            isNative: true,
+            monitorLabel: monitor.displayLabel || monitor.name,
+            desktopName: form.desktop
+          })
+          
+          setForm(f => (f.fancyzone_uuid ? f : { ...f, fancyzone_uuid: layout.uuid, fancyzone: `${layout.name} - Zona 1` }))
+          return
+        }
+      }
+    }
+
+    setDetectedLayout(null)
+  }, [form.monitor, form.desktop, fzSyncEnabled, fzStatus, czeActiveLayouts, monitors, desktops, availableLayouts.native])
 
   // Trigger refresh when monitor/desktop changes
-  const handleEnvChange = async (key, val) => {
+  const handleEnvChange = (key, val) => {
     set(key, val)
-    // Force fresh sync to get the latest state for the new selection
-    // but don't let fzStatus refresh overwrite our manual selection
-    setTimeout(() => loadFzStatus(), 0)
   }
 
   const handleBrowsePath = useCallback(async () => {
@@ -320,9 +392,10 @@ export default function ItemDialog({ category, index, item, validation, onSave, 
           {/* Active layout detection indicator */}
           {form.monitor !== 'Por defecto' && (
             <ActiveLayoutIndicator
-              detectedLayout={detectedLayout}
+              fzStatus={fzStatus}
               syncState={syncState}
               onRefresh={loadFzStatus}
+              fzSyncEnabled={fzSyncEnabled}
             />
           )}
 
@@ -332,6 +405,7 @@ export default function ItemDialog({ category, index, item, validation, onSave, 
             set={set}
             availableLayouts={availableLayouts}
             flatLayouts={flatLayouts}
+            fzSyncEnabled={fzSyncEnabled}
             detectedLayout={detectedLayout}
             onRefresh={loadFzStatus}
             validation={validation}
@@ -372,11 +446,23 @@ function Field({ label, children }) {
 }
 
 // ── Active Layout Detection Indicator ───────────────────────────────────
-function ActiveLayoutIndicator({ detectedLayout, syncState, onRefresh }) {
+function ActiveLayoutIndicator({ fzStatus, syncState, onRefresh, fzSyncEnabled }) {
+  if (!fzSyncEnabled) return null;
+
+  const isRunning = fzStatus?.isFzRunning;
+  const detectedLayout = fzStatus?.entries?.length > 0 ? fzStatus.entries[0].activeLayout : null;
+
   return (
-    <div className="fz-active-indicator">
+    <div className={`fz-active-indicator ${!isRunning ? 'warning-critical' : ''}`}>
       <div className="fz-active-indicator-content">
-        {syncState === 'syncing' ? (
+        {!isRunning ? (
+          <>
+            <AlertCircle size={14} style={{ color: 'var(--cat-error)' }} />
+            <span className="fz-indicator-text" style={{ color: 'var(--cat-error)' }}>
+              <strong>FancyZones no está ejecutándose.</strong> La sincronización no funcionará hasta que abras PowerToys.
+            </span>
+          </>
+        ) : syncState === 'syncing' ? (
           <>
             <RotateCw size={14} className="fz-spin" />
             <span className="fz-indicator-text">Sincronizando con PowerToys...</span>
@@ -394,15 +480,12 @@ function ActiveLayoutIndicator({ detectedLayout, syncState, onRefresh }) {
               ) : (
                 <>Detectado layout por defecto: <strong>{detectedLayout.name}</strong>. Se recomienda asignar uno personalizado.</>
               )}
-              <span className="fz-indicator-sub">
-                {detectedLayout.monitorLabel} · {detectedLayout.desktopName}
-              </span>
             </span>
           </>
         ) : (
           <>
             <AlertCircle size={14} style={{ color: 'var(--warning)' }} />
-            <span className="fz-indicator-text">No se detectó un layout activo para esta posición</span>
+            <span className="fz-indicator-text">No se detectó un layout activo en FancyZones</span>
           </>
         )}
       </div>
@@ -418,7 +501,7 @@ function ActiveLayoutIndicator({ detectedLayout, syncState, onRefresh }) {
 }
 
 // ── Mini-Motor Renderizador de FancyZones ──────────────────────────────────
-function FancyZonesVisualizer({ form, set, availableLayouts, flatLayouts, detectedLayout, onRefresh, validation }) {
+function FancyZonesVisualizer({ form, set, availableLayouts, flatLayouts, fzSyncEnabled, detectedLayout, onRefresh, validation }) {
   // Obtener el layout actual
   const currentLayout = flatLayouts.find(l => l.uuid === form.fancyzone_uuid) || null
 
@@ -463,9 +546,19 @@ function FancyZonesVisualizer({ form, set, availableLayouts, flatLayouts, detect
               className={isActiveLayout ? 'fz-select-active' : ''}
             >
               <option value="Ninguna">Ninguno / Libre</option>
-              
+
+              {availableLayouts.native.length > 0 && (
+                <optgroup label="Diseños Propios (CZE)">
+                  {availableLayouts.native.map(l => (
+                    <option key={l.uuid} value={l.uuid}>
+                      {l.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+
               {availableLayouts.custom.length > 0 && (
-                <optgroup label="Diseños Personalizados">
+                <optgroup label="Diseños Personalizados FancyZones">
                   {availableLayouts.custom.map(l => (
                     <option key={l.uuid} value={l.uuid}>
                       {l.name} {detectedLayout?.uuid === l.uuid ? '✓ ACTIVO' : ''}

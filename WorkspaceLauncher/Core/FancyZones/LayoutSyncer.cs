@@ -21,9 +21,29 @@ public static class LayoutSyncer
     /// </summary>
     public static void SyncForWorkspace(IEnumerable<AppItem> items, Dictionary<string, string> appliedMappings)
     {
+        var config = ConfigManager.Instance.Config;
+
+        // ── Guard: only sync when FancyZones sync is enabled AND engine is FancyZones ──
+        // When sync is disabled the user explicitly opted out; when the CZE engine is
+        // active we must NOT write to PowerToys files (it would corrupt applied-layouts.json
+        // with stale CZE-era zone assignments and trigger false FZ overlays).
+        if (!config.FancyZonesSyncEnabled)
+        {
+            Console.WriteLine("[LayoutSyncer] Skipping FancyZones sync — fz_sync_enabled=false.");
+            return;
+        }
+        if ((config.ZoneEngine ?? "fancyzones").Equals("custom", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("[LayoutSyncer] Skipping FancyZones sync — zone_engine=custom.");
+            return;
+        }
+
+        // Invalidate caches when sync is (re-)enabled so we get fresh data from disk,
+        // avoiding false "layout not found" errors after a sync-off period.
+        FancyZonesReader.InvalidateCaches();
+
         var customLayouts = FancyZonesReader.ReadCustomLayouts();
         var activeMonitors = MonitorManager.GetActiveMonitors();
-        var config = ConfigManager.Instance.Config;
 
         // Track which (uuid, monitor) pairs we've already synced to avoid redundant writes
         var synced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

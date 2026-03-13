@@ -29,6 +29,9 @@ public class AppConfig
     [JsonPropertyName("fz_custom_path")]
     public string? FzCustomPath { get; set; }
 
+    [JsonPropertyName("fz_sync_enabled")]
+    public bool FancyZonesSyncEnabled { get; set; } = true;
+
     [JsonPropertyName("zone_engine")]
     public string ZoneEngine { get; set; } = "fancyzones";
 
@@ -37,6 +40,12 @@ public class AppConfig
 
     [JsonPropertyName("cze_active_layouts")]
     public Dictionary<string, string> CzeActiveLayouts { get; set; } = [];
+
+    [JsonPropertyName("theme_mode")]
+    public string ThemeMode { get; set; } = "dark";
+
+    [JsonPropertyName("accent_color")]
+    public string AccentColor { get; set; } = "";
 }
 
 public class AppItem
