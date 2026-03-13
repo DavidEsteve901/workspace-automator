@@ -68,10 +68,24 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
   }, [canvasOnly, editingLayout, zones, grid, spacing]);
 
   useEffect(() => {
+    // Escuchar actualizaciones globales para refrescar la lista de diseños y estados
+    const handleRefresh = () => {
+      console.log("[CZE] Refreshing due to bridge event");
+      loadAll();
+    };
+
+    onEvent('state_update', handleRefresh);
+    onEvent('cze_state_changed', handleRefresh);
+
     // Close menu when clicking outside
     const handleClick = () => setMenuOpenId(null);
     window.addEventListener('click', handleClick);
-    return () => window.removeEventListener('click', handleClick);
+    
+    return () => {
+      offEvent('state_update', handleRefresh);
+      offEvent('cze_state_changed', handleRefresh);
+      window.removeEventListener('click', handleClick);
+    };
   }, []);
 
   async function loadAll() {
@@ -171,14 +185,22 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
         h: Math.round(z.h * 10000),
       }));
 
-      const res = await bridge.czeSaveLayout({
+      // If it's a new layout (no ID yet), ensure name is set
+      const layoutToSave = {
         ...editingLayout,
         zones:     intZones,
         spacing:   spacing,
         gridState: JSON.stringify(grid),
         refWidth,
         refHeight,
-      });
+      };
+
+      if (!layoutToSave.id) {
+          layoutToSave.id = `layout_${Date.now()}`;
+          if (!layoutToSave.name) layoutToSave.name = `Nuevo diseño ${layouts.length + 1}`;
+      }
+
+      const res = await bridge.czeSaveLayout(layoutToSave);
 
       if (res?.ok) {
         if (closeAfterSave) {
@@ -209,13 +231,12 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
   }
 
   async function createNewLayout() {
-    const newId = `layout_${Date.now()}`;
-    const newLayout = { id: newId, name: `Nuevo diseño ${layouts.length + 1}`, spacing: 8, zones: [{ id: 1, x: 0, y: 0, w: 1, h: 1 }] };
-    const res = await bridge.czeSaveLayout(newLayout);
-    if (res?.ok) {
-      await loadAll();
-      openCanvasEditor(activeMonitorId, newId, true);
-    }
+    const newId = ``; // Let saveLayoutProperties generate it or use a temp one
+    const newLayout = { id: '', name: `Nuevo diseño ${layouts.length + 1}`, spacing: 8, zones: [{ id: 1, x: 0, y: 0, w: 1, h: 1 }] };
+    // DO NOT SAVE YET
+    setEditingLayout(newLayout);
+    setGridFromZones(newLayout.zones, newLayout.spacing);
+    openCanvasEditor(activeMonitorId, '', true);
   }
 
   async function deleteLayout(id) {
@@ -345,7 +366,7 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
         <style>{`
           html, body, #root { background: transparent !important; background-color: transparent !important; }
         `}</style>
-        <ZoneCanvas grid={grid} zones={zones} spacing={spacing} selectedIds={selectedIds} onSelectZone={selectZone} onSplitZone={splitZone} onMoveDivider={moveDivider} onRemoveDivider={removeDivider} onClearSelection={clearSelection} onCommit={() => saveLayoutProperties(false)} />
+        <ZoneCanvas grid={grid} zones={zones} spacing={spacing} selectedIds={selectedIds} onSelectZone={selectZone} onSplitZone={splitZone} onMoveDivider={moveDivider} onRemoveDivider={removeDivider} onClearSelection={clearSelection} onCommit={null} />
       </div>
     );
   }

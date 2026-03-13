@@ -2,6 +2,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using WorkspaceLauncher.Core.Config;
 using WorkspaceLauncher.Core.NativeInterop;
 using WorkspaceLauncher.Core.Utils;
@@ -25,9 +26,78 @@ public partial class OverlayWindow : Window
 
         if (blocking)
         {
-            // Dimmer effect: dark, semi-transparent background (alpha 180 out of 255)
-            RootGrid.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(180, 0, 0, 0));
+            // Dimmer effect: dark, semi-transparent background - follow user's expectation of premium glass
+            RootGrid.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(160, 10, 10, 12));
         }
+    }
+
+    private System.Windows.Media.Color GetAccentColor(byte alphaInt = 255)
+    {
+        try
+        {
+            string hex = ConfigManager.Instance.Config.AccentColor;
+            if (string.IsNullOrEmpty(hex)) return System.Windows.Media.Color.FromArgb(alphaInt, 0, 120, 215);
+
+            var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hex);
+            return System.Windows.Media.Color.FromArgb(alphaInt, color.R, color.G, color.B);
+        }
+        catch { return System.Windows.Media.Color.FromArgb(alphaInt, 0, 120, 215); }
+    }
+
+    private void AddZoneVisual(int index, double x, double y, double w, double h, double scale, int spacing, bool isHighlighted = false)
+    {
+        var grid = new Grid { Width = Math.Max(1, w), Height = Math.Max(1, h), Tag = index };
+        
+        byte fillAlpha = isHighlighted ? (byte)140 : (byte)80;
+        byte strokeAlpha = isHighlighted ? (byte)255 : (byte)180;
+        double thickness = isHighlighted ? 3.5 : 1.5;
+
+        double margin = spacing / 2.0;
+
+        var rect = new System.Windows.Shapes.Rectangle
+        {
+            Fill            = new SolidColorBrush(GetAccentColor(fillAlpha)),
+            Stroke          = new SolidColorBrush(GetAccentColor(strokeAlpha)),
+            StrokeThickness = thickness,
+            RadiusX         = 8,
+            RadiusY         = 8,
+            Margin          = new Thickness(margin)
+        };
+        grid.Children.Add(rect);
+
+        var labelStack = new StackPanel
+        {
+            VerticalAlignment = System.Windows.VerticalAlignment.Center,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            IsHitTestVisible = false
+        };
+
+        labelStack.Children.Add(new TextBlock
+        {
+            Text = (index + 1).ToString(),
+            FontSize = 42,
+            FontWeight = FontWeights.ExtraBold,
+            Foreground = new SolidColorBrush(System.Windows.Media.Colors.White),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            Effect = new DropShadowEffect { BlurRadius = 8, ShadowDepth = 0, Opacity = 0.6 }
+        });
+
+        labelStack.Children.Add(new TextBlock
+        {
+            Text = $"{(int)Math.Round(w * scale)} x {(int)Math.Round(h * scale)}",
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(System.Windows.Media.Colors.White),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            Opacity = 0.8,
+            Margin = new Thickness(0, 2, 0, 0)
+        });
+
+        grid.Children.Add(labelStack);
+
+        Canvas.SetLeft(grid, x);
+        Canvas.SetTop(grid, y);
+        OverlayCanvas.Children.Add(grid);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -87,26 +157,16 @@ public partial class OverlayWindow : Window
         SetupForMonitor(mon);
         OverlayCanvas.Children.Clear();
 
-        foreach (var ze in layout.Zones)
+        double scale = mon.Scale / 100.0;
+        for (int i = 0; i < layout.Zones.Count; i++)
         {
-            double x = (double)ze.X / 10000 * mon.WorkArea.Width;
-            double y = (double)ze.Y / 10000 * mon.WorkArea.Height;
-            double w = (double)ze.W / 10000 * mon.WorkArea.Width;
-            double h = (double)ze.H / 10000 * mon.WorkArea.Height;
+            var ze = layout.Zones[i];
+            double x = (double)ze.X / 10000 * mon.WorkArea.Width / scale;
+            double y = (double)ze.Y / 10000 * mon.WorkArea.Height / scale;
+            double w = (double)ze.W / 10000 * mon.WorkArea.Width / scale;
+            double h = (double)ze.H / 10000 * mon.WorkArea.Height / scale;
 
-            var rect = new System.Windows.Shapes.Rectangle
-            {
-                Width           = Math.Max(1, w),
-                Height          = Math.Max(1, h),
-                Fill            = new SolidColorBrush(System.Windows.Media.Color.FromArgb(60,  88, 166, 255)),
-                Stroke          = new SolidColorBrush(System.Windows.Media.Color.FromArgb(180, 88, 166, 255)),
-                StrokeThickness = 1.5,
-                RadiusX         = 8,
-                RadiusY         = 8,
-            };
-            Canvas.SetLeft(rect, x);
-            Canvas.SetTop(rect, y);
-            OverlayCanvas.Children.Add(rect);
+            AddZoneVisual(i, x, y, w, h, scale, layout.Spacing);
         }
 
         this.Show();
@@ -122,28 +182,16 @@ public partial class OverlayWindow : Window
 
         double scale = mon.Scale / 100.0;
 
-        foreach (var z in zones)
+        for (int i = 0; i < zones.Count; i++)
         {
+            var z = zones[i];
             // Convert Absolute RECT to WorkArea-Relative dimensions and adjust for DPI scale
             double x = (z.Left - mon.WorkArea.Left) / scale;
             double y = (z.Top - mon.WorkArea.Top) / scale;
             double w = z.Width / scale;
             double h = z.Height / scale;
 
-            var rect = new System.Windows.Shapes.Rectangle
-            {
-                Width           = Math.Max(1, w),
-                Height          = Math.Max(1, h),
-                // Grayish blue with higher opacity for better visibility
-                Fill            = new SolidColorBrush(System.Windows.Media.Color.FromArgb(80, 88, 166, 255)),
-                Stroke          = new SolidColorBrush(System.Windows.Media.Color.FromArgb(200, 88, 166, 255)),
-                StrokeThickness = 3,
-                RadiusX         = 6,
-                RadiusY         = 6,
-            };
-            Canvas.SetLeft(rect, x);
-            Canvas.SetTop(rect, y);
-            OverlayCanvas.Children.Add(rect);
+            AddZoneVisual(i, x, y, w, h, scale, 0);
         }
 
         this.Show();
@@ -159,28 +207,16 @@ public partial class OverlayWindow : Window
 
         double scale = mon.Scale / 100.0;
 
-        foreach (var ze in layout.Zones)
+        for (int i = 0; i < layout.Zones.Count; i++)
         {
+            var ze = layout.Zones[i];
             // CZE layout units (0-10000) mapped to WorkArea, then adjusted for DPI scale
             double x = ((double)ze.X / 10000 * mon.WorkArea.Width) / scale;
             double y = ((double)ze.Y / 10000 * mon.WorkArea.Height) / scale;
             double w = ((double)ze.W / 10000 * mon.WorkArea.Width) / scale;
             double h = ((double)ze.H / 10000 * mon.WorkArea.Height) / scale;
 
-            var rect = new System.Windows.Shapes.Rectangle
-            {
-                Width           = Math.Max(1, w),
-                Height          = Math.Max(1, h),
-                // Slightly more opaque and thick for "Premium" visibility
-                Fill            = new SolidColorBrush(System.Windows.Media.Color.FromArgb(90, 88, 166, 255)),
-                Stroke          = new SolidColorBrush(System.Windows.Media.Color.FromArgb(220, 88, 166, 255)),
-                StrokeThickness = 3,
-                RadiusX         = 10,
-                RadiusY         = 10,
-            };
-            Canvas.SetLeft(rect, x);
-            Canvas.SetTop(rect, y);
-            OverlayCanvas.Children.Add(rect);
+            AddZoneVisual(i, x, y, w, h, scale, layout.Spacing);
         }
 
         this.Show();
@@ -197,26 +233,15 @@ public partial class OverlayWindow : Window
 
         double scale = mon.Scale / 100.0;
 
-        foreach (var ze in layout.Zones)
+        for (int i = 0; i < layout.Zones.Count; i++)
         {
+            var ze = layout.Zones[i];
             double x = ((double)ze.X / 10000 * mon.WorkArea.Width) / scale;
             double y = ((double)ze.Y / 10000 * mon.WorkArea.Height) / scale;
             double w = ((double)ze.W / 10000 * mon.WorkArea.Width) / scale;
             double h = ((double)ze.H / 10000 * mon.WorkArea.Height) / scale;
 
-            var rect = new System.Windows.Shapes.Rectangle
-            {
-                Width           = Math.Max(1, w),
-                Height          = Math.Max(1, h),
-                Fill            = new SolidColorBrush(System.Windows.Media.Color.FromArgb(90, 88, 166, 255)),
-                Stroke          = new SolidColorBrush(System.Windows.Media.Color.FromArgb(220, 88, 166, 255)),
-                StrokeThickness = 3,
-                RadiusX         = 10,
-                RadiusY         = 10,
-            };
-            Canvas.SetLeft(rect, x);
-            Canvas.SetTop(rect, y);
-            OverlayCanvas.Children.Add(rect);
+            AddZoneVisual(i, x, y, w, h, scale, layout.Spacing);
         }
 
         this.Show();
@@ -224,15 +249,17 @@ public partial class OverlayWindow : Window
 
     public void HighlightZone(int index)
     {
-        if (index < 0 || index >= OverlayCanvas.Children.Count) return;
-        for (int i = 0; i < OverlayCanvas.Children.Count; i++)
+        foreach (var child in OverlayCanvas.Children)
         {
-            if (OverlayCanvas.Children[i] is System.Windows.Shapes.Rectangle rect)
+            if (child is Grid zoneGrid && zoneGrid.Tag is int zoneIdx)
             {
-                rect.Fill = (i == index)
-                    ? new SolidColorBrush(System.Windows.Media.Color.FromArgb(120, 88, 166, 255))
-                    : new SolidColorBrush(System.Windows.Media.Color.FromArgb(60,  88, 166, 255));
-                rect.StrokeThickness = (i == index) ? 3 : 1.5;
+                var rect = zoneGrid.Children.OfType<System.Windows.Shapes.Rectangle>().FirstOrDefault();
+                if (rect != null)
+                {
+                    bool isHit = (zoneIdx == index);
+                    rect.Fill = new SolidColorBrush(GetAccentColor(isHit ? (byte)150 : (byte)80));
+                    rect.StrokeThickness = isHit ? 3.5 : 1.5;
+                }
             }
         }
     }

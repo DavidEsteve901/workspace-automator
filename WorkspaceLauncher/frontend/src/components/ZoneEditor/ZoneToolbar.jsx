@@ -7,7 +7,7 @@ const PRESETS = [
   { key: 'main-left',  label: 'Izq. + principal' },
 ];
 
-export function ZoneToolbar({ selectedCount, onPreset, onMerge, onReset }) {
+export function ZoneToolbar({ selectedCount, spacing, onSpacingChange, onPreset, onMerge, onReset }) {
   const btnStyle = (color = '#3d4450') => ({
     padding: '4px 10px',
     borderRadius: 4,

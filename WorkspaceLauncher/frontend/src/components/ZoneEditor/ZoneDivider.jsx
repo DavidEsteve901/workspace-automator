@@ -1,20 +1,20 @@
 import { useRef } from 'react';
 
-const HANDLE_SIZE    = 16;
-const MIN_ZONE_FRAC  = 500 / 10000;
+const HANDLE_SIZE = 16;
+const MIN_ZONE_FRAC = 500 / 10000;
 
 export function ZoneDivider({ divider, canvasW, canvasH, onMove, onCommit, isHovered, onHover, onDraggingChange }) {
   const dragStart = useRef(null);
-  const posRef    = useRef(divider.position);
-  const dragging  = useRef(false);
-  const isV       = divider.axis === 'v';
+  const posRef = useRef(divider.position);
+  const dragging = useRef(false);
+  const isV = divider.axis === 'v';
 
   const handleMouseDown = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    dragging.current  = true;
+    dragging.current = true;
     onDraggingChange?.(true);
-    posRef.current    = divider.position;
+    posRef.current = divider.position;
     dragStart.current = { x: e.clientX, y: e.clientY };
 
     const onMouseMove = (me) => {
@@ -23,29 +23,29 @@ export function ZoneDivider({ divider, canvasW, canvasH, onMove, onCommit, isHov
       const dy = (me.clientY - dragStart.current.y) / canvasH;
       dragStart.current = { x: me.clientX, y: me.clientY };
 
-      const rawDelta  = isV ? dx : dy;
-      const proposed  = posRef.current + rawDelta;
+      const rawDelta = isV ? dx : dy;
+      const proposed = posRef.current + rawDelta;
 
-      const lo        = MIN_ZONE_FRAC;
-      const hi        = 1 - MIN_ZONE_FRAC;
-      const clamped   = Math.max(lo, Math.min(hi, proposed));
-      const delta     = clamped - posRef.current;
-      posRef.current  = clamped;
+      const lo = MIN_ZONE_FRAC;
+      const hi = 1 - MIN_ZONE_FRAC;
+      const clamped = Math.max(lo, Math.min(hi, proposed));
+      const delta = clamped - posRef.current;
+      posRef.current = clamped;
 
       if (Math.abs(delta) > 1e-6) onMove(divider, delta);
     };
 
     const onMouseUp = () => {
-      dragging.current  = false;
+      dragging.current = false;
       onDraggingChange?.(false);
       dragStart.current = null;
       window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup',   onMouseUp);
+      window.removeEventListener('mouseup', onMouseUp);
       onCommit?.();
     };
 
     window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup',   onMouseUp);
+    window.addEventListener('mouseup', onMouseUp);
   };
 
   const handleMouseEnter = () => onHover(divider);
@@ -53,23 +53,23 @@ export function ZoneDivider({ divider, canvasW, canvasH, onMove, onCommit, isHov
 
   const hitStyle = isV
     ? {
-        position: 'absolute',
-        left:     `calc(${(divider.position * 100).toFixed(4)}% - ${HANDLE_SIZE / 2}px)`,
-        top:      `${(divider.overlapStart * 100).toFixed(4)}%`,
-        width:    HANDLE_SIZE,
-        height:   `${((divider.overlapEnd - divider.overlapStart) * 100).toFixed(4)}%`,
-        cursor:   'col-resize',
-        zIndex:   30,
-      }
+      position: 'absolute',
+      left: `calc(${(divider.position * 100).toFixed(4)}% - ${HANDLE_SIZE / 2}px)`,
+      top: `${(divider.overlapStart * 100).toFixed(4)}%`,
+      width: HANDLE_SIZE,
+      height: `${((divider.overlapEnd - divider.overlapStart) * 100).toFixed(4)}%`,
+      cursor: 'col-resize',
+      zIndex: 30,
+    }
     : {
-        position: 'absolute',
-        top:      `calc(${(divider.position * 100).toFixed(4)}% - ${HANDLE_SIZE / 2}px)`,
-        left:     `${(divider.overlapStart * 100).toFixed(4)}%`,
-        width:    `${((divider.overlapEnd - divider.overlapStart) * 100).toFixed(4)}%`,
-        height:   HANDLE_SIZE,
-        cursor:   'row-resize',
-        zIndex:   30,
-      };
+      position: 'absolute',
+      top: `calc(${(divider.position * 100).toFixed(4)}% - ${HANDLE_SIZE / 2}px)`,
+      left: `${(divider.overlapStart * 100).toFixed(4)}%`,
+      width: `${((divider.overlapEnd - divider.overlapStart) * 100).toFixed(4)}%`,
+      height: HANDLE_SIZE,
+      cursor: 'row-resize',
+      zIndex: 30,
+    };
 
   const isHighlighted = isHovered || dragging.current;
 

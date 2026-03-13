@@ -50,8 +50,8 @@ export function ZoneCanvas({ grid, zones, spacing, selectedIds, onSelectZone, on
 
   const handleZoneMouseMove = useCallback((zoneId, x, y) => {
     if (isDragging || activeHoverId.current) {
-        if (preview) setPreview(null);
-        return;
+      if (preview) setPreview(null);
+      return;
     }
     setPreview({ zoneId, x, y });
   }, [isDragging, preview]);
@@ -99,17 +99,17 @@ export function ZoneCanvas({ grid, zones, spacing, selectedIds, onSelectZone, on
       {/* 3) Fixed Hover Reference Line: SOLID Accent Color */}
       {!isDragging && !hoveredDiv && preview && previewZone && (
         <div style={{
-            position: 'absolute',
-            left: `${((previewZone.x + (splitMode === 'v' ? preview.x * previewZone.w : 0)) * 100).toFixed(6)}%`,
-            top: `${((previewZone.y + (splitMode === 'h' ? preview.y * previewZone.h : 0)) * 100).toFixed(6)}%`,
-            width: splitMode === 'v' ? 3 : `${(previewZone.w * 100).toFixed(6)}%`,
-            height: splitMode === 'h' ? 3 : `${(previewZone.h * 100).toFixed(6)}%`,
-            background: 'var(--fz-accent, #FFEA00)', // Solid yellow
-            opacity: 1, 
-            pointerEvents: 'none',
-            zIndex: 50,
-            boxShadow: '0 0 15px var(--fz-accent-glow), 0 0 5px rgba(0,0,0,0.4)',
-            borderRadius: 2
+          position: 'absolute',
+          left: `${((previewZone.x + (splitMode === 'v' ? preview.x * previewZone.w : 0)) * 100).toFixed(6)}%`,
+          top: `${((previewZone.y + (splitMode === 'h' ? preview.y * previewZone.h : 0)) * 100).toFixed(6)}%`,
+          width: splitMode === 'v' ? 3 : `${(previewZone.w * 100).toFixed(6)}%`,
+          height: splitMode === 'h' ? 3 : `${(previewZone.h * 100).toFixed(6)}%`,
+          background: 'var(--fz-accent, var(--accent, #fff))', // White fallback instead of blue
+          opacity: 1,
+          pointerEvents: 'none',
+          zIndex: 50,
+          boxShadow: '0 0 15px var(--fz-accent-glow), 0 0 5px rgba(0,0,0,0.4)',
+          borderRadius: 2
         }} />
       )}
 

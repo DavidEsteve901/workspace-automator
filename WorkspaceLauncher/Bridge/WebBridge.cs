@@ -1619,6 +1619,10 @@ public sealed class WebBridge
             config.CzeLayouts[id] = entry;
             await ConfigManager.Instance.SaveAsync();
 
+            // Refresh background visuals and notify all windows
+            BroadcastStateUpdate();
+            WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.RefreshBackgroundVisuals();
+
             return new { ok = true, id, layout = entry };
         }
         catch (Exception ex)

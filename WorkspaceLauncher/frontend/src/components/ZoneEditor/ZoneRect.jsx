@@ -40,12 +40,11 @@ export function ZoneRect({ zone, spacing, selected, onSelect, onSplit, onMouseMo
 
   const transitionStyle = isDragging ? 'none' : 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)';
 
-  const accentColor = 'var(--fz-accent, #FFEA00)';
-  
-  // Bug 4: Semitransparent fill (40% opacity)
-  const dynamicBackground = (selected || isHovered) 
-    ? 'var(--fz-accent-dim, rgba(255, 234, 0, 0.4))' 
-    : 'transparent';
+  const accentColor = 'var(--fz-accent, var(--accent, #00D2FF))';
+
+  const dynamicBackground = (selected || isHovered)
+    ? 'var(--fz-accent-dim, rgba(128, 128, 128, 0.15))'
+    : 'var(--fz-accent-low, rgba(128, 128, 128, 0.05))';
 
   return (
     <div
@@ -73,9 +72,9 @@ export function ZoneRect({ zone, spacing, selected, onSelect, onSplit, onMouseMo
         height: '100%',
         borderRadius: 12,
         // Border: Fixed at 2px (No size jump, only color transition)
-        border: (selected || isHovered) 
-          ? `2px solid ${accentColor}` 
-          : '2px solid rgba(255, 255, 255, 0.2)',
+        border: (selected || isHovered)
+          ? `2px solid ${accentColor}`
+          : `2px solid var(--fz-accent-low, rgba(255, 255, 255, 0.15))`, // Faint white border if no theme
         background: dynamicBackground,
         display: 'flex',
         flexDirection: 'column',
@@ -83,36 +82,37 @@ export function ZoneRect({ zone, spacing, selected, onSelect, onSplit, onMouseMo
         justifyContent: 'center',
         transition: transitionStyle,
         boxShadow: (selected || isHovered) ? '0 0 25px var(--fz-accent-glow)' : 'none',
-        backdropFilter: 'none', 
+        backdropFilter: 'none',
       }}>
         {/* Number: No background, just color as requested */}
-        <div style={{ 
-          fontSize: 64, 
-          opacity: isDragging ? 0.3 : (selected || isHovered ? 1 : 0.65), 
+        <div style={{
+          fontSize: 64,
+          opacity: isDragging ? 0.3 : (selected || isHovered ? 1 : 0.8),
           fontWeight: 800,
-          color: (selected || isHovered) ? accentColor : '#fff',
-          letterSpacing: '-0.05em', 
-          lineHeight: 1, 
-          textShadow: (selected || isHovered) ? 'none' : '0 2px 10px rgba(0,0,0,0.6)',
+          color: (selected || isHovered) ? accentColor : accentColor,
+          letterSpacing: '-0.05em',
+          lineHeight: 1,
+          textShadow: '0 2px 15px rgba(0,0,0,0.8)',
           transition: transitionStyle,
           pointerEvents: 'none',
           background: 'transparent',
         }}>
           {index}
         </div>
-        
-        {/* Dimensions: No background, only solid color */}
-        <div style={{ 
-          fontSize: 13, 
-          opacity: isDragging ? 0.2 : (selected || isHovered ? 0.9 : 0.5), 
-          color: (selected || isHovered) ? accentColor : '#fff',
-          fontWeight: 700, 
-          marginTop: 10, 
-          letterSpacing: '0.06em', 
-          textShadow: '0 2px 5px rgba(0,0,0,0.5)',
+
+        <div style={{
+          fontSize: 14,
+          opacity: isDragging ? 0.2 : (selected || isHovered ? 0.95 : 0.75),
+          color: '#fff',
+          fontWeight: 700,
+          marginTop: 10,
+          letterSpacing: '0.06em',
+          textShadow: '0 2px 8px rgba(0,0,0,1)',
           transition: transitionStyle,
           pointerEvents: 'none',
-          background: 'transparent',
+          background: 'rgba(0,0,0,0.35)',
+          padding: '2px 8px',
+          borderRadius: 6,
         }}>
           {`${pixelW} × ${pixelH} px`}
         </div>

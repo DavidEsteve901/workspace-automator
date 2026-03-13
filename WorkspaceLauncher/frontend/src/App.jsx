@@ -265,7 +265,15 @@ export default function App() {
     setCleanModal(activeCategory)
   }, [activeCategory])
 
-  // Standalone Routing (Highest Priority)
+  if (!state) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--fz-bg)' }}>
+        <div style={{ color: 'var(--fz-text-muted)' }}>Cargando...</div>
+      </div>
+    )
+  }
+
+  // Standalone Routing (Now after state is loaded so theme/accent colors are available)
   if (route === 'zone-editor') {
     return <ZoneEditorModal standalone onClose={() => window.close()} />
   }
@@ -295,14 +303,6 @@ export default function App() {
           html, body, #root { background: transparent !important; }
         `}</style>
         <ZoneEditorModal standalone controlOnly initialMonitorId={monitorId} initialLayoutId={layoutId} onClose={() => window.close()} />
-      </div>
-    )
-  }
-
-  if (!state) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--fz-bg)' }}>
-        <div style={{ color: 'var(--fz-text-muted)' }}>Cargando...</div>
       </div>
     )
   }
