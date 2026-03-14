@@ -98,6 +98,7 @@ export const bridge = {
   czeOpenCanvas: (monitorHardwareId, layoutId = '', isNew = false) =>
     postMessage("cze_open_canvas", { monitorHardwareId, layoutId, isNew }),
   czeGetState: () => invoke("cze_get_state"),
+  czeSwitchToDesktop: (desktopId) => invoke("cze_switch_to_desktop", { desktopId }),
 };
 
 const listeners = {};

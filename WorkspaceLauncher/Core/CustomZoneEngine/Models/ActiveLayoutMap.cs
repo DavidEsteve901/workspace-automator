@@ -7,5 +7,8 @@ namespace WorkspaceLauncher.Core.CustomZoneEngine.Models;
 public static class ActiveLayoutMap
 {
     public static string MakeKey(string ptInstance, Guid desktopId)
-        => $"{ptInstance}|{desktopId:D}";
+    {
+        string normalizedPt = (ptInstance ?? "").Trim('{', '}').ToLowerInvariant();
+        return $"{normalizedPt}|{desktopId:D}";
+    }
 }

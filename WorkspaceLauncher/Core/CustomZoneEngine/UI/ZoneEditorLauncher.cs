@@ -36,6 +36,7 @@ public sealed class ZoneEditorLauncher
 
     private System.Windows.Threading.DispatcherTimer? _desktopPollTimer;
     private Guid? _lastKnownDesktopId;
+    private bool  _isManualSwitchInProgress;
 
     public async void ToggleManager()
     {
@@ -106,16 +107,38 @@ public sealed class ZoneEditorLauncher
             // Create UI elements on the Dispatcher thread
             System.Windows.Application.Current.Dispatcher.Invoke(() =>
             {
-                // One blocking overlay per monitor
-                foreach (var mon in data.monitors)
+                if (_manager != null)
                 {
-                    var overlay = new OverlayWindow(blocking: true);
-                    overlay.SetupForMonitor(mon);
-
-                    overlay.Closed += (_, _) => OnOverlayClosed();
-                    overlay.Show();
-                    _overlaysByHandle[mon.Handle] = overlay;
+                    var hwnd = new System.Windows.Interop.WindowInteropHelper(_manager).Handle;
+                    if (VirtualDesktopManager.Instance.IsWindowOnCurrentDesktop(hwnd))
+                    {
+                        ActivateManager();
+                        return;
+                    }
+                    else
+                    {
+                        Logger.Info("[ZoneEditorLauncher] Manager found on wrong desktop. Hard-resetting window.");
+                        CloseManagerOnly();
+                    }
                 }
+
+                if (_state == CzeEditorState.Closed || _overlaysByHandle.Count == 0)
+                {
+                    // Clean up and recreate overlays if needed
+                    foreach (var ov in _overlaysByHandle.Values.ToList()) ov.Close();
+                    _overlaysByHandle.Clear();
+
+                    // One blocking overlay per monitor
+                    foreach (var mon in data.monitors)
+                    {
+                        var overlay = new OverlayWindow(blocking: true);
+                        overlay.SetupForMonitor(mon);
+                        overlay.Closed += (_, _) => OnOverlayClosed();
+                        overlay.Show();
+                        _overlaysByHandle[mon.Handle] = overlay;
+                    }
+                }
+
 
                 RefreshBackgroundVisuals();
 
@@ -125,7 +148,7 @@ public sealed class ZoneEditorLauncher
                 var primaryOverlay = _overlaysByHandle[primaryMon.Handle];
 
                 _manager = new ZoneEditorManagerWindow();
-                _manager.Owner = primaryOverlay;
+                // _manager.Owner = primaryOverlay; // Removed to allow independent desktop pinning/movement
 
                 double scale = primaryMon.Scale / 100.0;
                 double workLeft = primaryMon.WorkArea.Left / scale;
@@ -141,13 +164,15 @@ public sealed class ZoneEditorLauncher
                 _manager.Left = workLeft + (workWidth  - _manager.Width)  / 2;
                 _manager.Top  = workTop  + (workHeight - _manager.Height) / 2;
 
-                _manager.Closed += (_, _) => CloseAll();
-                _manager.Show();
-                _manager.Activate();
+                _manager.Closed += (s, _) => { if (_manager == (Window)s!) _manager = null; };
+                
+                // Use ActivateManager to handle Show/Activate/Move logic consistently
+                ActivateManager();
 
-                // Pin the manager window so it stays on all desktops
-                var hwnd = new System.Windows.Interop.WindowInteropHelper(_manager).Handle;
-                VirtualDesktopManager.Instance.PinWindow(hwnd);
+
+                // Removed PinWindow call to avoid rubber-banding focus issues.
+                // Movement is now handled explicitly via Hide-Move-Show in MoveAllExistingToDesktop.
+
 
                 _lastKnownDesktopId = VirtualDesktopManager.Instance.GetCurrentDesktopId();
                 StartDesktopPolling();
@@ -300,22 +325,131 @@ public sealed class ZoneEditorLauncher
         });
     }
 
+    /// <summary>
+    /// Closes only the Manager window. Used during desktop transitions to break focal ties.
+    /// Does NOT close overlays or clear the session state.
+    /// </summary>
+    public void CloseManagerOnly()
+    {
+        System.Windows.Application.Current.Dispatcher.Invoke(() =>
+        {
+            if (_manager != null)
+            {
+                Logger.Info("[ZoneEditorLauncher] Closing Manager window for desktop transition.");
+                _manager.Close();
+                _manager = null;
+            }
+        });
+    }
+
     public void ActivateManager()
     {
         System.Windows.Application.Current.Dispatcher.Invoke(() =>
         {
             if (_manager == null) return;
             
-            var hwnd = new System.Windows.Interop.WindowInteropHelper(_manager).Handle;
-            if (hwnd == nint.Zero) return;
+            // Ensure the window has a handle (HWND) created
+            var helper = new System.Windows.Interop.WindowInteropHelper(_manager);
+            var hwnd = helper.EnsureHandle();
 
             // Ensure not minimized
             if (User32.IsIconic(hwnd))
                 User32.ShowWindow(hwnd, User32.SW_RESTORE);
 
+            // 1. Show all overlays first (background) and ensure they are on current desktop
+            foreach (var overlay in _overlaysByHandle.Values) 
+            {
+                var oHelper = new System.Windows.Interop.WindowInteropHelper(overlay);
+                var oHwnd = oHelper.EnsureHandle();
+                if (oHwnd != nint.Zero) VirtualDesktopManager.Instance.MoveWindowToCurrentDesktop(oHwnd);
+                overlay.Show();
+            }
+
+            // 2. Show and activate manager
             _manager.Show();
             _manager.Activate();
             User32.SetForegroundWindow(hwnd);
+
+            // Re-assert TopMost just in case overlays covered it
+            User32.SetWindowPos(hwnd, (nint)(-1) /* HWND_TOPMOST */, 0, 0, 0, 0,
+                User32.SWP_NOMOVE | User32.SWP_NOSIZE | User32.SWP_SHOWWINDOW);
+
+        });
+    }
+    
+    /// <summary>
+    /// Manually updates the last known desktop ID without triggering refresh visuals.
+    /// Used by the bridge during manual switches to prevent the polling timer from 
+    /// detecting a "new" switch and double-firing transition logic.
+    /// </summary>
+    public void SyncDesktopState(Guid desktopId)
+    {
+        Logger.Info($"[ZoneEditorLauncher] SyncDesktopState: Manually updating lastKnownId to {desktopId}");
+        _lastKnownDesktopId = desktopId;
+    }
+
+    public void SetManualSwitchInProgress(bool active)
+    {
+        _isManualSwitchInProgress = active;
+    }
+
+    /// <summary>
+    /// Forcefully moves the Manager, Overlays, and any active Editor windows to a specific desktop.
+    /// Useful when the user switches desktops via the UI and expects the editor to follow.
+    /// </summary>
+    public void MoveAllExistingToDesktop(Guid desktopId)
+    {
+        System.Windows.Application.Current.Dispatcher.Invoke(() =>
+        {
+            Logger.Info($"[ZoneEditorLauncher] Moving all editor windows to desktop {desktopId}");
+            var vdm = VirtualDesktopManager.Instance;
+
+            // 1. Hide windows to minimize visual artifacts and avoid focus-pulling during move
+            _manager?.Hide();
+            foreach (var overlay in _overlaysByHandle.Values) overlay.Hide();
+
+            // 2. Move the Manager Window
+            if (_manager != null)
+            {
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(_manager).Handle;
+                if (hwnd != nint.Zero) vdm.MoveWindowToDesktopInternal(hwnd, desktopId);
+            }
+
+            // 3. Move all Overlays
+            foreach (var overlay in _overlaysByHandle.Values)
+            {
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(overlay).Handle;
+                if (hwnd != nint.Zero) vdm.MoveWindowToDesktopInternal(hwnd, desktopId);
+            }
+
+            // 4. Move active editor/canvas if open
+            if (_editCanvas != null)
+            {
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(_editCanvas).Handle;
+                if (hwnd != nint.Zero) vdm.MoveWindowToDesktopInternal(hwnd, desktopId);
+            }
+            if (_controlDialog != null)
+            {
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(_controlDialog).Handle;
+                if (hwnd != nint.Zero) vdm.MoveWindowToDesktopInternal(hwnd, desktopId);
+            }
+
+            // 5. DO NOT restore windows here. 
+            // We wait for the desktop switch to complete and then call ActivateManager().
+            // This ensures they only reappear once the new desktop is fully active.
+            Logger.Info("[ZoneEditorLauncher] Windows moved and stay hidden for desktop switch transition.");
+
+
+            // FINAL STEP: Ensure Manager is on TOP of all moved windows/overlays
+            if (_manager != null)
+            {
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(_manager).Handle;
+                if (hwnd != nint.Zero)
+                {
+                    User32.SetWindowPos(hwnd, (nint)(-1) /* HWND_TOPMOST */, 0, 0, 0, 0,
+                        User32.SWP_NOMOVE | User32.SWP_NOSIZE | User32.SWP_SHOWWINDOW | User32.SWP_NOACTIVATE);
+                }
+            }
         });
     }
 
@@ -382,7 +516,7 @@ public sealed class ZoneEditorLauncher
 
         _desktopPollTimer = new System.Windows.Threading.DispatcherTimer
         {
-            Interval = TimeSpan.FromMilliseconds(500)
+            Interval = TimeSpan.FromMilliseconds(250) // Faster polling for better "following"
         };
         _desktopPollTimer.Tick += (s, e) => CheckDesktopSwitch();
         _desktopPollTimer.Start();
@@ -396,14 +530,25 @@ public sealed class ZoneEditorLauncher
 
     private void CheckDesktopSwitch()
     {
+        if (_isManualSwitchInProgress) return;
+
         var currentId = VirtualDesktopManager.Instance.GetCurrentDesktopId();
         if (currentId != _lastKnownDesktopId)
         {
             Logger.Info($"[ZoneEditorLauncher] Desktop switch detected: {_lastKnownDesktopId} -> {currentId}");
             _lastKnownDesktopId = currentId;
             
-            // Refresh visuals for the new desktop
+            // ENSURE windows follow the user to the new desktop
+            if (currentId.HasValue)
+            {
+                MoveAllExistingToDesktop(currentId.Value);
+            }
+
+            // Refresh visuals for the new desktop FIRST
             RefreshBackgroundVisuals();
+            
+            // ENSURE manager is visible and on top on the new desktop
+            ActivateManager();
             
             // Notify frontend
             Bridge.WebBridge.Broadcast("desktop_switched", new { 
@@ -505,8 +650,7 @@ public sealed class ZoneEditorLauncher
 
                 if (engine == "cze")
                 {
-                    string normPtInstance = (mon.PtInstance ?? "").Trim('{', '}').ToLowerInvariant();
-                    string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(normPtInstance, currentDesktopId);
+                    string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(mon.PtInstance ?? "", currentDesktopId);
                     
                     if (ConfigManager.Instance.Config.CzeActiveLayouts.TryGetValue(key, out var czeLayoutId))
                     {
@@ -594,6 +738,9 @@ public sealed class ZoneEditorLauncher
             }
         }
         catch (Exception ex) { Logger.Error($"[ZoneEditorLauncher] RefreshBackgroundVisuals error: {ex.Message}"); }
+        
+        // RE-ASSERT Manager Z-Order so it's not covered by the newly shown overlays
+        ActivateManager();
         });
     }
 }

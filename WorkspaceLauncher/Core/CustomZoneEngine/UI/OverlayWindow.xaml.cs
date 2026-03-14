@@ -119,6 +119,9 @@ public partial class OverlayWindow : Window
             User32.SetWindowLongPtr(hwnd, User32.GWL_EXSTYLE,
                 exStyle | User32.WS_EX_LAYERED | User32.WS_EX_TRANSPARENT | User32.WS_EX_TOOLWINDOW);
         }
+
+        // Ensure persistent visibility across virtual desktops - DISABLED to avoid rubber-banding focus issues
+        // VirtualDesktopManager.Instance.PinWindow(hwnd);
     }
 
     public string MonitorHandle { get; private set; } = "";
@@ -154,6 +157,7 @@ public partial class OverlayWindow : Window
     /// </summary>
     public void ShowLayout(CzeLayoutEntry layout, MonitorInfo mon)
     {
+        NoLayoutMessage.Visibility = Visibility.Collapsed;
         SetupForMonitor(mon);
         OverlayCanvas.Children.Clear();
 
@@ -169,6 +173,17 @@ public partial class OverlayWindow : Window
             AddZoneVisual(i, x, y, w, h, scale, layout.Spacing);
         }
 
+        this.Show();
+    }
+
+    /// <summary>
+    /// Shows a message indicating no layout is assigned to the monitor.
+    /// </summary>
+    public void ShowNoLayoutMessage(MonitorInfo mon)
+    {
+        SetupForMonitor(mon);
+        OverlayCanvas.Children.Clear();
+        NoLayoutMessage.Visibility = Visibility.Visible;
         this.Show();
     }
 
@@ -257,8 +272,19 @@ public partial class OverlayWindow : Window
                 if (rect != null)
                 {
                     bool isHit = (zoneIdx == index);
-                    rect.Fill = new SolidColorBrush(GetAccentColor(isHit ? (byte)150 : (byte)80));
-                    rect.StrokeThickness = isHit ? 3.5 : 1.5;
+                    rect.Fill = new SolidColorBrush(GetAccentColor(isHit ? (byte)160 : (byte)80));
+                    rect.Stroke = new SolidColorBrush(isHit ? Colors.White : GetAccentColor(180));
+                    rect.StrokeThickness = isHit ? 4.5 : 1.5;
+                    
+                    // Add subtle glow to highlighted zone
+                    if (isHit)
+                    {
+                        rect.Effect = new DropShadowEffect { BlurRadius = 15, Color = Colors.White, Opacity = 0.5, ShadowDepth = 0 };
+                    }
+                    else
+                    {
+                        rect.Effect = null;
+                    }
                 }
             }
         }

@@ -6,7 +6,7 @@ import { ZoneToolbar } from './ZoneToolbar';
 import { 
   Info, Save, Trash2, Plus, Monitor, Layout, X, 
   Settings, Edit3, Trash, Copy, MoreVertical, ChevronRight,
-  Maximize2, MousePointer2, Keyboard
+  Maximize2, MousePointer2, Keyboard, Layers
 } from 'lucide-react';
 
 export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = false, controlOnly = false, canvasMode = 'edit', initialMonitorId = null, initialLayoutId = null }) {
@@ -14,6 +14,20 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
   const [layouts, setLayouts] = useState([]);
   const [activeLayouts, setActiveLayouts] = useState([]);
   const [currentDesktopId, setCurrentDesktopId] = useState(null);
+  const [desktops, setDesktops] = useState([]);
+  const [selectedDesktopId, setSelectedDesktopId] = useState(null);
+  
+  const handleSwitchDesktop = async (id, isManual = false) => {
+    setSelectedDesktopId(id);
+    if (!id) return;
+    
+    if (!isManual) {
+      await bridge.czeSwitchToDesktop(id);
+    } else {
+      // If manual (from backend event), just refresh everything for that desktop
+      await loadAll();
+    }
+  };
   const [activeMonitorId, setActiveMonitorId] = useState(initialMonitorId);
   const [editingLayout, setEditingLayout] = useState(null);
   const [menuOpenId, setMenuOpenId] = useState(null);
@@ -74,8 +88,17 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
       loadAll();
     };
 
+    const handleDesktopSwitched = async (data) => {
+      console.log("[CZE] Manual desktop switch detected:", data);
+      const newId = data.desktopId;
+      if (newId) {
+        handleSwitchDesktop(newId, true);
+      }
+    };
+
     onEvent('state_update', handleRefresh);
     onEvent('cze_state_changed', handleRefresh);
+    onEvent('desktop_switched', handleDesktopSwitched);
 
     // Close menu when clicking outside
     const handleClick = () => setMenuOpenId(null);
@@ -84,16 +107,18 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
     return () => {
       offEvent('state_update', handleRefresh);
       offEvent('cze_state_changed', handleRefresh);
+      offEvent('desktop_switched', handleDesktopSwitched);
       window.removeEventListener('click', handleClick);
     };
   }, []);
 
   async function loadAll() {
     try {
-      const [lRes, aRes, mRes] = await Promise.all([
+      const [lRes, aRes, mRes, dRes] = await Promise.all([
         bridge.czeGetLayouts(),
         bridge.czeGetActiveLayouts(),
-        bridge.listMonitors()
+        bridge.listMonitors(),
+        bridge.listDesktops()
       ]);
 
       // Normalize zones from int units (0–10000) to fractions (0.0–1.0)
@@ -112,13 +137,19 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
       setLayouts(normalizedLayouts);
       setActiveLayouts(aRes?.entries ?? []);
       setMonitors(mRes ?? []);
+      setDesktops(dRes ?? []);
       setCurrentDesktopId(aRes?.currentDesktopId);
+      
+      // If no desktop is selected yet, use the current active one
+      if (!selectedDesktopId) {
+        setSelectedDesktopId(aRes?.currentDesktopId);
+      }
 
       const monitorId = activeMonitorId || (mRes?.length > 0 ? mRes[0].hardwareId : null);
       if (!activeMonitorId) setActiveMonitorId(monitorId);
 
       const activeMon = mRes.find(m => m.hardwareId === monitorId);
-      const activeEntry = aRes?.entries?.find(a => a.monitorPtInstance === activeMon?.ptInstance && a.isCurrentDesktop);
+      const activeEntry = aRes?.entries?.find(a => a.monitorPtInstance === activeMon?.ptInstance && a.desktopId === (selectedDesktopId || aRes?.currentDesktopId));
       if (activeEntry?.layoutId) setSelectedLayoutId(activeEntry.layoutId);
 
       if ((canvasOnly || controlOnly) && monitorId) {
@@ -250,8 +281,6 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
   }
 
   const activeMonitor = monitors.find(m => m.hardwareId === activeMonitorId);
-  const activeEntryForMonitor = activeLayouts.find(a => a.monitorPtInstance === activeMonitor?.ptInstance && a.isCurrentDesktop);
-  const activeLayoutIdForMonitor = activeEntryForMonitor?.layoutId;
 
   const templates = [
     { id: 'sin', name: 'Sin diseño', zones: [], isTemplate: true },
@@ -298,33 +327,17 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
           </div>
           <div style={{ marginBottom: 32, fontSize: 13, lineHeight: '2' }}>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              <li style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
+              <li style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
                 <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
-                <span><strong>Shift + Clic</strong> — dividir zona</span>
+                <span><strong>Doble Clic</strong> — dividir zona</span>
               </li>
-              <li style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
+              <li style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
                 <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
-                <span><strong>Doble Clic</strong> — seleccionar/foco</span>
+                <span><strong>Suprimir</strong> — eliminar línea resaltada (al pasar el ratón)</span>
               </li>
-              <li style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
+              <li style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
                 <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
                 <span><strong>Tab</strong> — cambiar dirección (V/H)</span>
-              </li>
-              <li style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
-                <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
-                <span><strong>Suprimir</strong> — eliminar línea resaltada</span>
-              </li>
-              <li style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
-                <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
-                <span><strong>Ctrl + Clic</strong> — selección múltiple</span>
-              </li>
-              <li style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
-                <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
-                <span><strong>Enter</strong> — guardar cambios</span>
-              </li>
-              <li style={{ display: 'flex', gap: 12 }}>
-                <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
-                <span><strong>Escape</strong> — cancelar</span>
               </li>
             </ul>
           </div>
@@ -405,94 +418,116 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
             border: standalone ? 'none' : '1px solid var(--fz-border)'
           }}
         >
-        <div className="fz-monitor-bar">
-          {monitors.map(mon => {
-            const isActiveMon = activeMonitorId === mon.hardwareId;
-            return (
-              <div
-                key={mon.hardwareId}
-                className={`fz-monitor-item ${isActiveMon ? 'active' : ''}`}
-                onClick={() => setActiveMonitorId(mon.hardwareId)}
-              >
-                {/* Monitor silhouette icon */}
-                <div style={{ position: 'relative', width: 38, height: 26 }}>
-                  <div style={{
-                    width: '100%', height: '100%',
-                    border: `1.5px solid ${isActiveMon ? 'var(--fz-accent)' : 'var(--fz-border)'}`,
-                    borderRadius: 4,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    transition: 'border-color 0.25s ease',
-                    background: isActiveMon ? 'var(--fz-accent-low)' : 'transparent',
-                  }}>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: isActiveMon ? 'var(--fz-accent)' : 'var(--fz-text-muted)', transition: 'color 0.25s ease', letterSpacing: '-0.02em' }}>
-                      {mon.monitorNumber}
-                    </span>
+        <div className="fz-monitor-bar" style={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          alignItems: 'center', 
+          paddingTop: 32,
+          position: 'relative',
+          minHeight: 120
+        }}>
+          {/* Desktop Switcher - Positioned Top Right */}
+          <div style={{ 
+            position: 'absolute', 
+            top: 24, 
+            right: 24, 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: 12, 
+            padding: '8px 16px',
+            background: 'rgba(255,255,255,0.03)',
+            borderRadius: 12,
+            border: '1px solid var(--fz-border)',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
+          }}>
+            <div style={{ color: 'var(--fz-text-muted)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Layers size={14} />
+              <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Escritorio</span>
+            </div>
+            <select 
+              value={selectedDesktopId || ''} 
+              onChange={(e) => handleSwitchDesktop(e.target.value)}
+              style={{
+                background: 'rgba(255,255,255,0.05)',
+                color: 'white',
+                border: '1px solid var(--fz-border)',
+                borderRadius: 8,
+                padding: '4px 12px',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+                outline: 'none',
+                minWidth: 140
+              }}
+            >
+              {desktops.map(d => (
+                <option key={d.id} value={d.id}>
+                  {d.name} {d.id === currentDesktopId ? '(Actual)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Centered Monitors */}
+          <div style={{ display: 'flex', gap: 16, justifyContent: 'center' }}>
+            {monitors.map(mon => {
+              const isActiveMon = activeMonitorId === mon.hardwareId;
+              return (
+                <div
+                  key={mon.hardwareId}
+                  className={`fz-monitor-item ${isActiveMon ? 'active' : ''}`}
+                  onClick={() => setActiveMonitorId(mon.hardwareId)}
+                  style={{ width: 100, cursor: 'pointer' }}
+                >
+                  <div style={{ position: 'relative', width: 60, height: 40, margin: '0 auto' }}>
+                    <div style={{
+                      width: '100%', height: '100%',
+                      border: `2px solid ${isActiveMon ? 'var(--fz-accent)' : 'var(--fz-border)'}`,
+                      borderRadius: 6,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      transition: 'all 0.25s ease',
+                      background: isActiveMon ? 'var(--fz-accent-low)' : 'rgba(255,255,255,0.02)',
+                      boxShadow: isActiveMon ? '0 0 15px var(--fz-accent-dim)' : 'none'
+                    }}>
+                      <span style={{ fontSize: 14, fontWeight: 900, color: isActiveMon ? 'var(--fz-accent)' : 'var(--fz-text-muted)', transition: 'color 0.25s ease' }}>
+                        {mon.monitorNumber}
+                      </span>
+                    </div>
+                    <div style={{
+                      position: 'absolute', bottom: -6, left: '50%', transform: 'translateX(-50%)',
+                      width: 16, height: 4,
+                      background: isActiveMon ? 'var(--fz-accent)' : 'var(--fz-border)',
+                      borderRadius: '0 0 4px 4px',
+                      transition: 'background 0.25s ease',
+                    }} />
                   </div>
-                  {/* Stand */}
-                  <div style={{
-                    position: 'absolute', bottom: -4, left: '50%', transform: 'translateX(-50%)',
-                    width: 10, height: 3,
-                    background: isActiveMon ? 'var(--fz-accent)' : 'var(--fz-border)',
-                    borderRadius: '0 0 3px 3px',
-                    transition: 'background 0.25s ease',
-                  }} />
-                </div>
-                <div style={{ fontSize: 9.5, fontWeight: 600, color: isActiveMon ? 'var(--fz-accent)' : 'var(--fz-text-muted)', letterSpacing: '0.02em', marginTop: 4, transition: 'color 0.25s ease' }}>
-                  {mon.bounds.width}×{mon.bounds.height}
-                </div>
-                {mon.isPrimary && (
-                  <div style={{ fontSize: 8, fontWeight: 700, color: isActiveMon ? 'var(--fz-accent)' : 'var(--fz-text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', transition: 'color 0.25s ease' }}>
-                    Principal
+                  <div style={{ fontSize: 10, fontWeight: 700, textAlign: 'center', color: isActiveMon ? 'var(--fz-accent)' : 'var(--fz-text-muted)', letterSpacing: '0.02em', marginTop: 12, transition: 'color 0.25s ease' }}>
+                    {mon.bounds.width}×{mon.bounds.height}
                   </div>
-                )}
-              </div>
-            );
-          })}
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '0 60px 60px' }}>
           <div className="fz-section-title">Plantillas del Sistema</div>
           <div className="fz-grid">
-            {templates.map((t, idx) => (
-              <LayoutCard 
-                key={t.id} 
-                layout={{...t, staggerIndex: idx}} 
-                isActive={activeLayoutIdForMonitor === t.id} 
-                isSelected={selectedLayoutId === t.id}
-                onSelect={() => setSelectedLayoutId(t.id)}
-                onActivate={() => setActiveLayout(activeMonitor?.ptInstance, currentDesktopId || activeEntryForMonitor?.desktopId || '00000000-0000-0000-0000-000000000000', t.id)}
-                isInitialLoad={isInitialLoad}
-                menuOpenId={menuOpenId}
-                setMenuOpenId={setMenuOpenId}
-                monitors={monitors}
-                activeMonitorId={activeMonitorId}
-                setEditingLayout={setEditingLayout}
-                setGridFromGridState={setGridFromGridState}
-                setGridFromZones={setGridFromZones}
-                openCanvasEditor={openCanvasEditor}
-                duplicateLayout={duplicateLayout}
-                deleteLayout={deleteLayout}
-              />
-            ))}
-          </div>
+            {templates.map((t, idx) => {
+              const isActiveForSelected = activeLayouts.find(a => 
+                a.monitorPtInstance === activeMonitor?.ptInstance && 
+                a.desktopId === selectedDesktopId &&
+                a.layoutId === t.id
+              );
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 48, marginBottom: 14 }}>
-            <div className="fz-section-title" style={{ margin: 0, flex: 1, marginRight: 16 }}>Mis Diseños Personalizados</div>
-            <button className="fz-btn-primary" onClick={createNewLayout} style={{ padding: '7px 14px', borderRadius: 9, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, flexShrink: 0 }}>
-              <Plus size={13} /> Nuevo
-            </button>
-          </div>
-          
-          {customLayouts.length > 0 ? (
-            <div className="fz-grid">
-              {customLayouts.map((l, idx) => (
-                <LayoutCard
-                  key={l.id}
-                  layout={{...l, staggerIndex: templates.length + idx}}
-                  isActive={activeLayoutIdForMonitor === l.id}
-                  isSelected={selectedLayoutId === l.id}
-                  onSelect={() => setSelectedLayoutId(l.id)}
-                  onActivate={() => setActiveLayout(activeMonitor?.ptInstance, currentDesktopId || activeEntryForMonitor?.desktopId || '00000000-0000-0000-0000-000000000000', l.id)}
+              return (
+                <LayoutCard 
+                  key={t.id} 
+                  layout={{...t, staggerIndex: idx}} 
+                  isActive={!!isActiveForSelected} 
+                  isSelected={selectedLayoutId === t.id}
+                  onSelect={() => setSelectedLayoutId(t.id)}
+                  onActivate={() => setActiveLayout(activeMonitor?.ptInstance, selectedDesktopId, t.id)}
                   isInitialLoad={isInitialLoad}
                   menuOpenId={menuOpenId}
                   setMenuOpenId={setMenuOpenId}
@@ -505,7 +540,48 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
                   duplicateLayout={duplicateLayout}
                   deleteLayout={deleteLayout}
                 />
-              ))}
+              );
+            })}
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 48, marginBottom: 14 }}>
+            <div className="fz-section-title" style={{ margin: 0, flex: 1, marginRight: 16 }}>Mis Diseños Personalizados</div>
+            <button className="fz-btn-primary" onClick={createNewLayout} style={{ padding: '7px 14px', borderRadius: 9, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, flexShrink: 0 }}>
+              <Plus size={13} /> Nuevo
+            </button>
+          </div>
+          
+          {customLayouts.length > 0 ? (
+            <div className="fz-grid">
+              {customLayouts.map((l, idx) => {
+                const isActiveForSelected = activeLayouts.find(a => 
+                  a.monitorPtInstance === activeMonitor?.ptInstance && 
+                  a.desktopId === selectedDesktopId &&
+                  a.layoutId === l.id
+                );
+
+                return (
+                  <LayoutCard
+                    key={l.id}
+                    layout={{...l, staggerIndex: templates.length + idx}}
+                    isActive={!!isActiveForSelected}
+                    isSelected={selectedLayoutId === l.id}
+                    onSelect={() => setSelectedLayoutId(l.id)}
+                    onActivate={() => setActiveLayout(activeMonitor?.ptInstance, selectedDesktopId, l.id)}
+                    isInitialLoad={isInitialLoad}
+                    menuOpenId={menuOpenId}
+                    setMenuOpenId={setMenuOpenId}
+                    monitors={monitors}
+                    activeMonitorId={activeMonitorId}
+                    setEditingLayout={setEditingLayout}
+                    setGridFromGridState={setGridFromGridState}
+                    setGridFromZones={setGridFromZones}
+                    openCanvasEditor={openCanvasEditor}
+                    duplicateLayout={duplicateLayout}
+                    deleteLayout={deleteLayout}
+                  />
+                );
+              })}
             </div>
           ) : (
             <div style={{ padding: '52px 28px', textAlign: 'center', background: 'rgba(255,255,255,0.018)', borderRadius: 18, border: '1px dashed rgba(255,255,255,0.07)', position: 'relative', overflow: 'hidden' }}>

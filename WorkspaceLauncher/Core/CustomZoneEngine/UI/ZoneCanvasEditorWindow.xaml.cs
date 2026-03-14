@@ -35,6 +35,9 @@ public partial class ZoneCanvasEditorWindow : Window
         // Ensure we are physically above everything else, including overlays
         User32.SetWindowPos(hwnd, (nint)(-1) /* HWND_TOPMOST */, 0, 0, 0, 0,
             User32.SWP_NOMOVE | User32.SWP_NOSIZE | User32.SWP_SHOWWINDOW);
+
+        // Pin to all virtual desktops
+        VirtualDesktopManager.Instance.PinWindow(hwnd);
     }
 
     private async void ZoneCanvasEditorWindow_Loaded(object sender, RoutedEventArgs e)

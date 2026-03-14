@@ -1,4 +1,5 @@
 using WorkspaceLauncher.Core.NativeInterop;
+using WorkspaceLauncher.Core.Utils;
 
 namespace WorkspaceLauncher.Core.ZoneEngine;
 
@@ -93,8 +94,8 @@ public sealed class ZoneAutoRegistrar : IDisposable
     {
         try
         {
-            // Small delay so FancyZones has time to finish snapping
-            Thread.Sleep(200);
+            // Minimal delay so FancyZones has time to finish snapping
+            Thread.Sleep(50);
 
             // Detect the zone the window is now sitting at
             var newKey = ZoneCycler.DetectZoneByPosition(hwnd);
@@ -110,11 +111,11 @@ public sealed class ZoneAutoRegistrar : IDisposable
             if (oldKey != null)
             {
                 ZoneStack.Instance.Unregister(hwnd);
-                Console.WriteLine($"[ZoneAutoRegistrar] Unregistered hwnd={hwnd} from old zone {oldKey.Zone}");
+                Logger.Info($"[ZoneAutoRegistrar] Unregistered hwnd={hwnd} from old zone {oldKey.Zone}");
             }
 
             ZoneStack.Instance.Register(newKey, hwnd);
-            Console.WriteLine($"[ZoneAutoRegistrar] Registered hwnd={hwnd} → zone {newKey.Zone} layout={newKey.Layout[..8]}...");
+            Logger.Success($"[ZoneAutoRegistrar] Registered hwnd={hwnd} → zone {newKey.Zone} layout={newKey.Layout[..8]}...");
         }
         catch (Exception ex)
         {

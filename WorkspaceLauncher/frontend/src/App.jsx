@@ -338,6 +338,7 @@ export default function App() {
               configPath={state.configPath}
               themeMode={state.themeMode}
               accentColor={state.accentColor}
+              desktopAnimationsEnabled={state.desktopAnimationsEnabled}
               onSave={handleSaveConfig}
               onClose={() => setView('main')}
             />

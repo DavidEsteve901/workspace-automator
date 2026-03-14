@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using WorkspaceLauncher.Core.Utils;
 
 namespace WorkspaceLauncher.Core.NativeInterop;
 
@@ -132,6 +133,9 @@ public static partial class User32
 
     [LibraryImport("user32.dll")]
     public static partial nint MonitorFromWindow(nint hwnd, uint dwFlags);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint MonitorFromPoint(POINT pt, uint dwFlags);
 
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -271,6 +275,30 @@ public static partial class User32
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsZoomed(nint hwnd);
+
+    // ── System Parameters (Animations) ──────────────────────────────────────
+    public const uint SPI_GETCLIENTAREAANIMATION = 0x1042;
+    public const uint SPI_SETCLIENTAREAANIMATION = 0x1043;
+    public const uint SPIF_UPDATEINIFILE = 0x01;
+    public const uint SPIF_SENDCHANGE = 0x02;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SystemParametersInfoW(uint uiAction, uint uiParam, nint pvParam, uint fWinIni);
+
+    public static void SetSystemAnimations(bool enabled)
+    {
+        try
+        {
+            uint val = enabled ? 1u : 0u;
+            bool success = SystemParametersInfoW(SPI_SETCLIENTAREAANIMATION, 0, (nint)val, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+            Logger.Info($"[User32] System animations set to {enabled} (Success: {success})");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[User32] Failed to set system animations: {ex.Message}");
+        }
+    }
 }
 
 public static class DpiHelper

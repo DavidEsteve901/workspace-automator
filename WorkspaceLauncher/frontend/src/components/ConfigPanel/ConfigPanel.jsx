@@ -23,7 +23,7 @@ const HOTKEY_LABELS = {
   open_zone_editor: { label: 'Abrir Editor de Zonas', icon: LayoutGrid },
 }
 
-export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetectedPath, fzSyncEnabled, configPath, themeMode, accentColor, onSave, onClose }) {
+export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetectedPath, fzSyncEnabled, configPath, themeMode, accentColor, desktopAnimationsEnabled, onSave, onClose }) {
   const [hk, setHk] = useState({ ...hotkeys })
   const [pip, setPip] = useState(pipWatcher)
   const [fzPath, setFzPath] = useState(fzCustomPath || '')
@@ -36,6 +36,7 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
   const [theme, setTheme] = useState(themeMode || 'dark')
   const [accent, setAccent] = useState(accentColor || '')
   const [winAccent, setWinAccent] = useState('')
+  const [desktopAnims, setDesktopAnims] = useState(desktopAnimationsEnabled ?? true)
 
   useEffect(() => {
     async function loadEngine() {
@@ -53,7 +54,15 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
   }, [])
 
   async function handleSave() {
-    onSave({ hotkeys: hk, pipWatcherEnabled: pip, fzCustomPath: fzPath, fzSyncEnabled: fzSync, themeMode: theme, accentColor: accent })
+    onSave({ 
+      hotkeys: hk, 
+      pipWatcherEnabled: pip, 
+      fzCustomPath: fzPath, 
+      fzSyncEnabled: fzSync, 
+      themeMode: theme, 
+      accentColor: accent,
+      desktopAnimationsEnabled: desktopAnims
+    })
     await bridge.czeSetZoneEngine(engine)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
@@ -190,6 +199,11 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
             label="Mostrar consola de depuración"
             value={hk.show_system_console}
             onChange={v => setHotkey('show_system_console', v)}
+          />
+          <Toggle
+            label="Animaciones de transición de escritorio"
+            value={desktopAnims}
+            onChange={setDesktopAnims}
           />
         </Section>
 

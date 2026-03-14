@@ -1,3 +1,4 @@
+using System.Linq;
 using WorkspaceLauncher.Core.Config;
 using WorkspaceLauncher.Core.CustomZoneEngine.Adapters;
 using WorkspaceLauncher.Core.CustomZoneEngine.Interfaces;
@@ -9,8 +10,8 @@ public static class ZoneEngineManager
     public static IZoneEngine Current =>
         (ConfigManager.Instance.Config.ZoneEngine ?? "fancyzones").ToLowerInvariant() switch
         {
-            "custom" => CustomZoneEngineImpl.Instance,
-            _        => FancyZonesAdapter.Instance,
+            "custom" or "cze" => CustomZoneEngineImpl.Instance,
+            _                 => FancyZonesAdapter.Instance,
         };
 
     /// <summary>
@@ -20,7 +21,7 @@ public static class ZoneEngineManager
     /// to ensure consistent engine resolution across the codebase.
     /// </summary>
     public static bool IsFancyZonesActive =>
-        (ConfigManager.Instance.Config.ZoneEngine ?? "fancyzones").ToLowerInvariant() != "custom";
+        !new[] { "custom", "cze" }.Contains((ConfigManager.Instance.Config.ZoneEngine ?? "fancyzones").ToLowerInvariant());
 
     /// <summary>
     /// True when the active zone engine is the CustomZoneEngine.

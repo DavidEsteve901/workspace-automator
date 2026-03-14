@@ -31,7 +31,7 @@ public sealed class VirtualDesktopManager : IDisposable
     public bool IsAvailable => _initialized;
     public string? InitError { get; private set; }
 
-    private enum BuildVariant { Unknown, Build22H2, Build24H2, KeyboardFallback }
+    private enum BuildVariant { Unknown, Legacy, Modern, KeyboardFallback }
 
     private VirtualDesktopManager() { }
 
@@ -62,72 +62,43 @@ public sealed class VirtualDesktopManager : IDisposable
         if (_initialized || _initAttempted) return;
         _initAttempted = true;
 
-        int build = GetWindowsBuild();
-        string arch = RuntimeInformation.OSArchitecture.ToString();
-        int inputSize = Marshal.SizeOf<INPUT>();
-        Logger.Info($"[VirtualDesktopManager] Windows build: {build}, Arch: {arch}, InputSize: {inputSize}");
-
-        // Try build-specific COM initialization
-        if (build >= 26000)
-            _initialized = TryInit24H2();
-
-        if (!_initialized && build >= 22000)
-            _initialized = TryInit22H2();
-
-        // Try all variants as fallback
-        if (!_initialized) _initialized = TryInit24H2();
-        if (!_initialized) _initialized = TryInit22H2();
-
-        if (_initialized)
-        {
-            Logger.Info($"[VirtualDesktopManager] COM initialized (variant: {_variant})");
-        }
-        else
-        {
-            _variant = BuildVariant.KeyboardFallback;
-            InitError = "COM init failed for all known interface versions. Using keyboard simulation fallback.";
-            Logger.Warn($"[VirtualDesktopManager] {InitError}");
-        }
-    }
-
-    // ── COM Initialization Strategies ────────────────────────────────────────
-
-    private bool TryInit22H2()
-    {
         try
         {
-            var shell = (IServiceProvider)new ImmersiveShell22H2();
+            var shell = (IServiceProvider)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("C2F03A33-21F5-47FA-B4BB-156362A2F239"))!)!;
             _shell = shell;
-            var mgrGuid = typeof(IVirtualDesktopManagerInternal_22H2).GUID;
-            shell.QueryService(ref mgrGuid, ref mgrGuid, out object mgrObj);
-            _manager = (IVirtualDesktopManagerInternal_22H2)mgrObj;
-            _variant = BuildVariant.Build22H2;
-            return true;
+
+            var mgrGuid = new Guid("A2000A25-C6C3-43D4-9C78-577F32D065C8");
+            int hr = shell.QueryService(ref mgrGuid, ref mgrGuid, out object mgrObj);
+            
+            if (hr == 0 && mgrObj != null)
+            {
+                _manager = mgrObj;
+                int build = GetWindowsBuild();
+                
+                // Modern: vtable with GetAllCurrentDesktops (24H2+, build 25309+)
+                // Legacy: vtable for standard 22H2/23H2 (no GetAllCurrentDesktops)
+                if (build >= 25309)
+                {
+                    _variant = BuildVariant.Modern;
+                }
+                else
+                {
+                    _variant = BuildVariant.Legacy;
+                }
+
+                _initialized = true;
+                Logger.Success($"[VirtualDesktopManager] COM initialized successfully (variant: {_variant}, build: {build})");
+                return;
+            }
         }
         catch (Exception ex)
         {
-            Logger.Error($"[VirtualDesktopManager] 22H2 init failed: {ex.Message}");
-            return false;
+            Logger.Error($"[VirtualDesktopManager] COM Init Failed: {ex.Message}");
         }
-    }
 
-    private bool TryInit24H2()
-    {
-        try
-        {
-            var shell = (IServiceProvider)new ImmersiveShell24H2();
-            _shell = shell;
-            var mgrGuid = typeof(IVirtualDesktopManagerInternal_24H2).GUID;
-            shell.QueryService(ref mgrGuid, ref mgrGuid, out object mgrObj);
-            _manager = (IVirtualDesktopManagerInternal_24H2)mgrObj;
-            _variant = BuildVariant.Build24H2;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Logger.Error($"[VirtualDesktopManager] 24H2 init failed: {ex.Message}");
-            return false;
-        }
+        _variant = BuildVariant.KeyboardFallback;
+        InitError = "COM initialization failed. Using keyboard simulation.";
+        Logger.Warn($"[VirtualDesktopManager] Fallback: {InitError}");
     }
 
     /// <summary>
@@ -190,31 +161,25 @@ public sealed class VirtualDesktopManager : IDisposable
             if (_manager != null)
             {
                 IObjectArray? arr = null;
-                if (_variant == BuildVariant.Build24H2)
+                if (_variant == BuildVariant.Modern)
                 {
-                    int hr = ((IVirtualDesktopManagerInternal_24H2)_manager).GetDesktops(out arr);
-                    if (hr != 0 || arr == null)
-                    {
-                        Logger.Warn($"[VirtualDesktopManager] GetDesktops failed (HR: 0x{hr:X}). Trying GetAllCurrentDesktops...");
-                        hr = ((IVirtualDesktopManagerInternal_24H2)_manager).GetAllCurrentDesktops(out arr);
-                    }
-                    
-                    if (hr != 0) Logger.Error($"[VirtualDesktopManager] GetDesktops/GetAll COM returned HR: 0x{hr:X}");
+                    int hr = ((IVirtualDesktopManagerInternal_Modern)_manager).GetDesktops(out arr);
+                    if (hr != 0 || arr == null) hr = ((IVirtualDesktopManagerInternal_Modern)_manager).GetAllCurrentDesktops(out arr);
                 }
-                else
+                else if (_variant == BuildVariant.Legacy)
                 {
-                    int hr = ((IVirtualDesktopManagerInternal_22H2)_manager).GetDesktops(out arr);
+                    int hr = ((IVirtualDesktopManagerInternal_Legacy)_manager).GetDesktops(out arr);
                     if (hr != 0) Logger.Error($"[VirtualDesktopManager] GetDesktops COM returned HR: 0x{hr:X}");
                 }
 
                 if (arr != null)
                 {
                     arr.GetCount(out uint count);
-                    var iidDesktop = GetDesktopIID();
+                    var iidDesktop = _variant == BuildVariant.Modern ? typeof(IVirtualDesktop_Modern).GUID : typeof(IVirtualDesktop_Legacy).GUID;
                     for (uint i = 0; i < count; i++)
                     {
-                        arr.GetAt(i, ref iidDesktop, out object obj);
-                        if (obj == null) continue;
+                        int hrAt = arr.GetAt(i, ref iidDesktop, out object obj);
+                        if (hrAt != 0 || obj == null) continue;
                         GetDesktopId(obj, out Guid id);
                         result.Add(id);
                     }
@@ -251,21 +216,16 @@ public sealed class VirtualDesktopManager : IDisposable
         {
             try
             {
-                object? desktop = null;
-                if (_variant == BuildVariant.Build24H2)
+                if (_variant == BuildVariant.Modern)
                 {
-                    ((IVirtualDesktopManagerInternal_24H2)_manager).GetCurrentDesktop(out var d);
-                    desktop = d;
+                    ((IVirtualDesktopManagerInternal_Modern)_manager).GetCurrentDesktop(out IVirtualDesktop_Modern d);
+                    GetDesktopId(d, out Guid g);
+                    id = g;
                 }
-                else
+                else if (_variant == BuildVariant.Legacy)
                 {
-                    ((IVirtualDesktopManagerInternal_22H2)_manager).GetCurrentDesktop(out var d);
-                    desktop = d;
-                }
-                
-                if (desktop != null)
-                {
-                    GetDesktopId(desktop, out Guid g);
+                    ((IVirtualDesktopManagerInternal_Legacy)_manager).GetCurrentDesktop(out IVirtualDesktop_Legacy d);
+                    GetDesktopId(d, out Guid g);
                     id = g;
                 }
             }
@@ -318,37 +278,88 @@ public sealed class VirtualDesktopManager : IDisposable
         catch { return null; }
     }
 
+    /// <summary>
+    /// Forces a window to the current active desktop if it's not already there.
+    /// This is the key to preventing "rubber-banding" jump-backs.
+    /// </summary>
+    public bool MoveWindowToCurrentDesktop(nint hwnd)
+    {
+        if (!User32.IsWindow(hwnd)) return false;
+        
+        var current = GetCurrentDesktopId();
+        if (!current.HasValue) return false;
+
+        var windowDesktop = GetWindowDesktopId(hwnd);
+        if (windowDesktop == current.Value) return true;
+
+        Logger.Info($"[VDM] MoveWindowToCurrentDesktop: Moving {hwnd} from {windowDesktop} to {current.Value}");
+        return MoveWindowToDesktop(hwnd, current.Value);
+    }
+
     public bool MoveWindowToDesktop(nint hwnd, Guid desktopId)
     {
         if (!User32.IsWindow(hwnd)) return false;
         
         try
         {
-            var standardMgr = (IVirtualDesktopManager)new VirtualDesktopManagerClass();
-            int hr = standardMgr.MoveWindowToDesktop(hwnd, ref desktopId);
-            
-            if (hr != 0)
-            {
-                Logger.Error($"[VirtualDesktopManager] MoveWindowToDesktop COM error: 0x{hr:X} for HWND {hwnd}");
-                return false;
-            }
+            // The standard official IVirtualDesktopManager is often not registered on Win11 24H2
+            // We'll try it, but if it fails we don't log it as an error if we have an internal manager.
+            var standardMgr = (IVirtualDesktopManager?)null;
+            try { standardMgr = (IVirtualDesktopManager)new VirtualDesktopManagerClass(); } catch {}
 
-            // Verification Pulse
-            var actual = GetWindowDesktopId(hwnd);
-            if (actual == desktopId)
+            if (standardMgr != null)
             {
-                Logger.Success($"[VirtualDesktopManager] Ventana {hwnd} movida correctamente a {desktopId}");
-                return true;
+                int hr = standardMgr.MoveWindowToDesktop(hwnd, ref desktopId);
+                if (hr == 0)
+                {
+                    Logger.Success($"[VirtualDesktopManager] MoveWindowToDesktop: Ventana {hwnd} movida vía API estándar.");
+                    return true;
+                }
             }
             
-            Logger.Warn($"[VirtualDesktopManager] El movimiento de {hwnd} no se reflejó. Reintentando vía COM...");
-            return false;
+            // If standard fails or is missing, use the internal one
+            return MoveWindowToDesktopInternal(hwnd, desktopId);
         }
         catch (Exception ex)
         {
-            Logger.Error($"[VirtualDesktopManager] MoveWindowToDesktop Exception: {ex.Message}");
+            Logger.Error($"[VirtualDesktopManager] MoveWindowToDesktop Global Exception: {ex.Message}");
             return false;
         }
+    }
+
+    public bool MoveWindowToDesktopInternal(nint hwnd, Guid desktopId)
+    {
+        if (!User32.IsWindow(hwnd)) return false;
+        
+        // Then try the internal one which is more robust for modern Windows
+        if (!EnsurePinningServices()) return false;
+        
+        try
+        {
+            var desktop = FindDesktopById(desktopId);
+            if (desktop == null) return false;
+
+            int hr = _viewCollection!.GetViewForHwnd(hwnd, out object view);
+            if (hr != 0 || view == null) return false;
+
+            if (_variant == BuildVariant.Modern)
+                hr = ((IVirtualDesktopManagerInternal_Modern)_manager!).MoveViewToDesktop(view, (IVirtualDesktop_Modern)desktop);
+            else if (_variant == BuildVariant.Legacy)
+                hr = ((IVirtualDesktopManagerInternal_Legacy)_manager!).MoveViewToDesktop(view, (IVirtualDesktop_Legacy)desktop);
+
+            if (hr == 0)
+            {
+                Logger.Success($"[VirtualDesktopManager] MoveWindowToDesktopInternal: Ventana {hwnd} movida a {desktopId}");
+                return true;
+            }
+
+            Logger.Warn($"[VirtualDesktopManager] MoveInternal falló con HR: 0x{hr:X}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[VirtualDesktopManager] MoveInternal Exception: {ex.Message}");
+        }
+        return false;
     }
 
     private Guid? GetCurrentDesktopIdFromRegistry()
@@ -388,30 +399,27 @@ public sealed class VirtualDesktopManager : IDisposable
 
             try
             {
-                if (_variant == BuildVariant.Build24H2)
+                int hr = 0;
+                if (_variant == BuildVariant.Modern)
                 {
-                    Logger.Info($"[VirtualDesktopManager] Calling SwitchDesktop (Build24H2) for {desktopId}");
-                    int hr = ((IVirtualDesktopManagerInternal_24H2)_manager).SwitchDesktop((IVirtualDesktop_24H2)desktop);
-                    if (hr != 0) 
-                    {
-                        Logger.Error($"[VirtualDesktopManager] SwitchDesktop COM returned HR: 0x{hr:X}. Falling back to keyboard simulation.");
-                        return FallbackSwitch(desktopId);
-                    }
+                    Logger.Info($"[VirtualDesktopManager] Calling SwitchDesktop (Modern) for {desktopId}");
+                    hr = ((IVirtualDesktopManagerInternal_Modern)_manager).SwitchDesktop((IVirtualDesktop_Modern)desktop);
                 }
-                else
+                else if (_variant == BuildVariant.Legacy)
                 {
-                    Logger.Info($"[VirtualDesktopManager] Calling SwitchDesktop (Build22H2) for {desktopId}");
-                    int hr = ((IVirtualDesktopManagerInternal_22H2)_manager).SwitchDesktop((IVirtualDesktop_22H2)desktop);
-                    if (hr != 0)
-                    {
-                        Logger.Error($"[VirtualDesktopManager] SwitchDesktop COM returned HR: 0x{hr:X}. Falling back to keyboard simulation.");
-                        return FallbackSwitch(desktopId);
-                    }
+                    Logger.Info($"[VirtualDesktopManager] Calling SwitchDesktop (Legacy) for {desktopId}");
+                    hr = ((IVirtualDesktopManagerInternal_Legacy)_manager).SwitchDesktop((IVirtualDesktop_Legacy)desktop);
+                }
+
+                if (hr != 0)
+                {
+                    Logger.Error($"[VirtualDesktopManager] SwitchDesktop COM returned HR: 0x{hr:X}. Falling back to keyboard simulation.");
+                    return FallbackSwitch(desktopId);
                 }
             }
             catch (Exception ex)
             {
-                Logger.Error($"[VirtualDesktopManager] SwitchDesktop COM failed: {ex.Message}. Falling back to keyboard simulation.");
+                Logger.Error($"[VirtualDesktopManager] SwitchDesktop COM exception: {ex.Message}. Falling back to keyboard simulation.");
                 return FallbackSwitch(desktopId);
             }
 
@@ -446,14 +454,65 @@ public sealed class VirtualDesktopManager : IDisposable
         bool forward = diff > 0;
         int steps = Math.Abs(diff);
 
+        // Circular optimization for simulation:
+        // If we are at 1 (idx 0) and want to go to 3 (idx 2) in a 3-desktop setup,
+        // it's 2 steps Forward OR 1 step Backward.
+        // Standard Windows doesn't wrap around, so we usually HAVE to step.
+        // However, if the user describes 1 -> 2 -> 3, they want to reach it.
+        // If 'steps' is large, we check if going the 'other way' would be shorter
+        // BUT only if we assume some local wrapping. Since we don't, we stick to the direct path.
+
         Logger.Info($"[VirtualDesktopManager] FallbackSwitch: From {fromIdx} to {toIdx} ({steps} steps)");
         
-        for (int i = 0; i < steps; i++)
+        if (steps > 1)
         {
-            if (!SimulateDesktopSwitch(forward)) return false;
-            Thread.Sleep(100);
+            return SimulateMultipleDesktopSwitches(forward, steps);
         }
-        return true;
+        else
+        {
+            return SimulateDesktopSwitch(forward);
+        }
+    }
+
+    private static bool SimulateMultipleDesktopSwitches(bool forward, int steps)
+    {
+        try
+        {
+            byte vkDirection = forward ? (byte)User32.VK_RIGHT : (byte)User32.VK_LEFT;
+            
+            // Sequence: [Win Down, Ctrl Down], [Arrow Down, Arrow Up] x N, [Ctrl Up, Win Up]
+            var inputs = new List<INPUT>();
+
+            // Key down: Win + Ctrl
+            inputs.Add(MakeKeyInput(User32.VK_LWIN, 0));
+            inputs.Add(MakeKeyInput(User32.VK_CTRL, 0));
+
+            for (int i = 0; i < steps; i++)
+            {
+                inputs.Add(MakeKeyInput(vkDirection, 0));
+                inputs.Add(MakeKeyInput(vkDirection, KEYEVENTF_KEYUP));
+            }
+
+            // Key up: Ctrl + Win
+            inputs.Add(MakeKeyInput(User32.VK_CTRL, KEYEVENTF_KEYUP));
+            inputs.Add(MakeKeyInput(User32.VK_LWIN, KEYEVENTF_KEYUP));
+
+            uint sent = SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>());
+            if (sent != inputs.Count)
+            {
+                Logger.Error($"[VirtualDesktopManager] SimulateMultiple: SendInput sent {sent}/{inputs.Count}.");
+                return false;
+            }
+
+            Logger.Info($"[VirtualDesktopManager] SimulateMultiple ({steps} steps {(forward ? "Forward" : "Backward")}) sequence sent.");
+            Thread.Sleep(150 + (steps * 50));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[VirtualDesktopManager] Multiple switch failed: {ex.Message}");
+            return false;
+        }
     }
 
     public bool SwitchNextDesktop()
@@ -499,19 +558,19 @@ public sealed class VirtualDesktopManager : IDisposable
         _desktopsCacheTime = DateTime.MinValue; // Invalidate cache — a new desktop was created
         try
         {
-            object newDesktop;
-            if (_variant == BuildVariant.Build24H2)
+            if (_variant == BuildVariant.Modern)
             {
-                ((IVirtualDesktopManagerInternal_24H2)_manager).CreateDesktopW(out var d);
-                newDesktop = d;
+                ((IVirtualDesktopManagerInternal_Modern)_manager!).CreateDesktopW(out IVirtualDesktop_Modern d);
+                GetDesktopId(d, out Guid id);
+                return id;
             }
-            else
+            else if (_variant == BuildVariant.Legacy)
             {
-                ((IVirtualDesktopManagerInternal_22H2)_manager).CreateDesktopW(out var d);
-                newDesktop = d;
+                ((IVirtualDesktopManagerInternal_Legacy)_manager!).CreateDesktopW(out IVirtualDesktop_Legacy d);
+                GetDesktopId(d, out Guid id);
+                return id;
             }
-            GetDesktopId(newDesktop, out Guid id);
-            return id;
+            return null;
         }
         catch (Exception ex)
         {
@@ -538,24 +597,38 @@ public sealed class VirtualDesktopManager : IDisposable
     {
         if (!User32.IsWindow(hwnd)) return;
         if (!EnsurePinningServices()) return;
-        try
-        {
-            int hr = _viewCollection!.GetViewForHwnd(hwnd, out object view);
-            if (hr != 0 || view == null)
+        
+        // Retry logic: sometimes the window isn't immediately "ready" in the shell's view collection
+        Task.Run(async () => {
+            int attempts = 3;
+            while (attempts > 0)
             {
-                Logger.Warn($"[VDM] PinWindow: no IApplicationView for HWND {hwnd} (hr=0x{hr:X})");
-                return;
+                bool success = false;
+                System.Windows.Application.Current.Dispatcher.Invoke(() => {
+                    try {
+                        int hr = _viewCollection!.GetViewForHwnd(hwnd, out object view);
+                        if (hr == 0 && view != null)
+                        {
+                            hr = _pinnedApps!.PinView(view);
+                            if (hr == 0) {
+                                Logger.Success($"[VDM] Window {hwnd} pinned successfully (stickied).");
+                                success = true;
+                            } else {
+                                Logger.Warn($"[VDM] PinView returned hr=0x{hr:X} for HWND {hwnd}");
+                            }
+                        } else {
+                            Logger.Warn($"[VDM] PinWindow: no IApplicationView yet for HWND {hwnd} (hr=0x{hr:X})");
+                        }
+                    } catch (Exception ex) {
+                        Logger.Warn($"[VDM] PinWindow attempt error: {ex.Message}");
+                    }
+                });
+
+                if (success) break;
+                attempts--;
+                if (attempts > 0) await Task.Delay(500);
             }
-            hr = _pinnedApps!.PinView(view);
-            if (hr == 0)
-                Logger.Success($"[VDM] Window {hwnd} pinned to all desktops.");
-            else
-                Logger.Warn($"[VDM] PinView returned hr=0x{hr:X} for HWND {hwnd}");
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn($"[VDM] PinWindow failed for HWND {hwnd}: {ex.Message}");
-        }
+        });
     }
 
     public void UnpinWindow(nint hwnd)
@@ -578,34 +651,76 @@ public sealed class VirtualDesktopManager : IDisposable
 
     private Guid GetDesktopIID()
     {
-        return _variant == BuildVariant.Build24H2
-            ? typeof(IVirtualDesktop_24H2).GUID
-            : typeof(IVirtualDesktop_22H2).GUID;
+        return _variant == BuildVariant.Modern ? typeof(IVirtualDesktop_Modern).GUID : typeof(IVirtualDesktop_Legacy).GUID;
     }
 
     private void GetDesktopId(object desktop, out Guid id)
     {
-        if (_variant == BuildVariant.Build24H2)
-            ((IVirtualDesktop_24H2)desktop).GetID(out id);
+        if (_variant == BuildVariant.Modern)
+            ((IVirtualDesktop_Modern)desktop).GetID(out id);
+        else if (_variant == BuildVariant.Legacy)
+            ((IVirtualDesktop_Legacy)desktop).GetID(out id);
         else
-            ((IVirtualDesktop_22H2)desktop).GetID(out id);
+            id = Guid.Empty;
     }
 
     private object? FindDesktopById(Guid id)
     {
-        IObjectArray arr;
-        if (_variant == BuildVariant.Build24H2)
-            ((IVirtualDesktopManagerInternal_24H2)_manager!).GetDesktops(out arr);
-        else
-            ((IVirtualDesktopManagerInternal_22H2)_manager!).GetDesktops(out arr);
+        if (_manager == null) return null;
 
-        arr.GetCount(out uint count);
-        var iidDesktop = GetDesktopIID();
-        for (uint i = 0; i < count; i++)
+        try
         {
-            arr.GetAt(i, ref iidDesktop, out object obj);
-            GetDesktopId(obj, out Guid dId);
-            if (dId == id) return obj;
+            int hr = 0;
+            object? result = null;
+
+            if (_variant == BuildVariant.Modern)
+            {
+                hr = ((IVirtualDesktopManagerInternal_Modern)_manager).FindDesktop(ref id, out IVirtualDesktop_Modern desktop);
+                result = desktop;
+            }
+            else if (_variant == BuildVariant.Legacy)
+            {
+                hr = ((IVirtualDesktopManagerInternal_Legacy)_manager).FindDesktop(ref id, out IVirtualDesktop_Legacy desktop);
+                result = desktop;
+            }
+
+            if (hr == 0 && result != null)
+            {
+                return result;
+            }
+
+            Logger.Warn($"[VirtualDesktopManager] FindDesktop COM failed for {id} (HR: 0x{hr:X}). Falling back to list iteration...");
+
+            IObjectArray? arr = null;
+            if (_variant == BuildVariant.Modern)
+            {
+                hr = ((IVirtualDesktopManagerInternal_Modern)_manager).GetDesktops(out arr);
+                if (hr != 0 || arr == null) hr = ((IVirtualDesktopManagerInternal_Modern)_manager).GetAllCurrentDesktops(out arr);
+            }
+            else if (_variant == BuildVariant.Legacy)
+            {
+                hr = ((IVirtualDesktopManagerInternal_Legacy)_manager).GetDesktops(out arr);
+            }
+
+            if (arr != null)
+            {
+                arr.GetCount(out uint count);
+                var iidDesktop = GetDesktopIID();
+                for (uint i = 0; i < count; i++)
+                {
+                    int hrAt = arr.GetAt(i, ref iidDesktop, out object obj);
+                    if (hrAt != 0 || obj == null) continue;
+                    GetDesktopId(obj, out Guid dId);
+                    Logger.Info($"[VirtualDesktopManager] FindDesktopById: Comparando {dId} vs {id}");
+                    if (dId == id) return obj;
+                }
+            }
+            
+            Logger.Warn($"[VirtualDesktopManager] FindDesktopById: Desktop {id} not found after all attempts.");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[VirtualDesktopManager] FindDesktopById exception: {ex.Message}");
         }
         return null;
     }
@@ -768,72 +883,57 @@ public sealed class VirtualDesktopManager : IDisposable
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // COM Interfaces - Windows 11 22H2 (builds 22621-22631)
+    // COM Interfaces - Windows 11 Legacy (builds < 25309)
     // ══════════════════════════════════════════════════════════════════════════
 
-    // ImmersiveShell CLSID for 22H2
-    [ComImport, Guid("C2F03A33-21F5-47FA-B4BB-156362A2F239"), ClassInterface(ClassInterfaceType.None)]
-    private class ImmersiveShell22H2 { }
-
     [ComImport, Guid("ff72ffdd-be7e-43fc-9c03-ad81681e88e4"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IVirtualDesktop_22H2
+    private interface IVirtualDesktop_Legacy
     {
-        [PreserveSig] int IsViewVisible([MarshalAs(UnmanagedType.IUnknown)] object pView,
-            [MarshalAs(UnmanagedType.Bool)] out bool pfVisible);
+        [PreserveSig] int IsViewVisible([MarshalAs(UnmanagedType.IUnknown)] object pView, [MarshalAs(UnmanagedType.Bool)] out bool pfVisible);
         [PreserveSig] int GetID(out Guid pGuid);
     }
 
     [ComImport, Guid("f31574d6-b682-4cdc-bd56-1827860abec6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IVirtualDesktopManagerInternal_22H2
+    private interface IVirtualDesktopManagerInternal_Legacy
     {
         [PreserveSig] int GetCount(out uint pCount);
-        [PreserveSig] int MoveViewToDesktop([MarshalAs(UnmanagedType.IUnknown)] object pView, IVirtualDesktop_22H2 pDesktop);
+        [PreserveSig] int MoveViewToDesktop([MarshalAs(UnmanagedType.IUnknown)] object pView, IVirtualDesktop_Legacy pDesktop);
         [PreserveSig] int CanViewMoveDesktops([MarshalAs(UnmanagedType.IUnknown)] object pView, [MarshalAs(UnmanagedType.Bool)] out bool pfCanMove);
-        [PreserveSig] int GetCurrentDesktop(out IVirtualDesktop_22H2 desktop);
+        [PreserveSig] int GetCurrentDesktop(out IVirtualDesktop_Legacy desktop);
         [PreserveSig] int GetDesktops(out IObjectArray ppDesktops);
-        [PreserveSig] int GetAdjacentDesktop(IVirtualDesktop_22H2 pDesktopReference, uint uDirection, out IVirtualDesktop_22H2 ppAdjacentDesktop);
-        [PreserveSig] int SwitchDesktop(IVirtualDesktop_22H2 pDesktop);
-        [PreserveSig] int CreateDesktopW(out IVirtualDesktop_22H2 ppNewDesktop);
-        [PreserveSig] int RemoveDesktop(IVirtualDesktop_22H2 pRemove, IVirtualDesktop_22H2 pFallbackDesktop);
-        [PreserveSig] int FindDesktop(ref Guid desktopId, out IVirtualDesktop_22H2 ppDesktop);
+        [PreserveSig] int GetAdjacentDesktop(IVirtualDesktop_Legacy pDesktopReference, uint uDirection, out IVirtualDesktop_Legacy ppAdjacentDesktop);
+        [PreserveSig] int SwitchDesktop(IVirtualDesktop_Legacy pDesktop);
+        [PreserveSig] int CreateDesktopW(out IVirtualDesktop_Legacy ppNewDesktop);
+        [PreserveSig] int RemoveDesktop(IVirtualDesktop_Legacy pRemove, IVirtualDesktop_Legacy pFallbackDesktop);
+        [PreserveSig] int FindDesktop(ref Guid desktopId, out IVirtualDesktop_Legacy ppDesktop);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // COM Interfaces - Windows 11 24H2 (builds 26100+)
-    // Note: ImmersiveShell uses same CLSID, but internal interfaces differ.
-    //       24H2 added GetAllCurrentDesktops() which shifts the vtable.
+    // COM Interfaces - Windows 11 Modern (builds >= 25309, 24H2+)
     // ══════════════════════════════════════════════════════════════════════════
 
-    // ImmersiveShell CLSID for 24H2 (same as 22H2)
-    [ComImport, Guid("C2F03A33-21F5-47FA-B4BB-156362A2F239"), ClassInterface(ClassInterfaceType.None)]
-    private class ImmersiveShell24H2 { }
-
     [ComImport, Guid("3F07F4BE-B107-441A-AF0F-39D82529072C"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IVirtualDesktop_24H2
+    private interface IVirtualDesktop_Modern
     {
-        [PreserveSig] int IsViewVisible([MarshalAs(UnmanagedType.IUnknown)] object pView,
-            [MarshalAs(UnmanagedType.Bool)] out bool pfVisible);
+        [PreserveSig] int IsViewVisible([MarshalAs(UnmanagedType.IUnknown)] object pView, [MarshalAs(UnmanagedType.Bool)] out bool pfVisible);
         [PreserveSig] int GetID(out Guid pGuid);
     }
 
-    // 24H2 vtable: GetCount, MoveViewToDesktop, CanViewMoveDesktops, GetCurrentDesktop,
-    //              GetAllCurrentDesktops (NEW), GetDesktops, GetAdjacentDesktop,
-    //              SwitchDesktop, CreateDesktopW, MoveDesktop, RemoveDesktop, FindDesktop
-    [ComImport, Guid("88846798-1611-4BBB-8BFA-8D1C1AD0A48B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IVirtualDesktopManagerInternal_24H2
+    [ComImport, Guid("536d3495-b208-4cc9-ae26-7df56efda23a"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IVirtualDesktopManagerInternal_Modern
     {
         [PreserveSig] int GetCount(out uint pCount);
-        [PreserveSig] int MoveViewToDesktop([MarshalAs(UnmanagedType.IUnknown)] object pView, IVirtualDesktop_24H2 pDesktop);
+        [PreserveSig] int MoveViewToDesktop([MarshalAs(UnmanagedType.IUnknown)] object pView, IVirtualDesktop_Modern pDesktop);
         [PreserveSig] int CanViewMoveDesktops([MarshalAs(UnmanagedType.IUnknown)] object pView, [MarshalAs(UnmanagedType.Bool)] out bool pfCanMove);
-        [PreserveSig] int GetCurrentDesktop(out IVirtualDesktop_24H2 desktop);
-        [PreserveSig] int GetAllCurrentDesktops(out IObjectArray ppDesktops); // NEW in 24H2!
+        [PreserveSig] int GetCurrentDesktop(out IVirtualDesktop_Modern desktop);
+        [PreserveSig] int GetAllCurrentDesktops(out IObjectArray ppDesktops); // Added in build 25309+
         [PreserveSig] int GetDesktops(out IObjectArray ppDesktops);
-        [PreserveSig] int GetAdjacentDesktop(IVirtualDesktop_24H2 pDesktopReference, uint uDirection, out IVirtualDesktop_24H2 ppAdjacentDesktop);
-        [PreserveSig] int SwitchDesktop(IVirtualDesktop_24H2 pDesktop);
-        [PreserveSig] int CreateDesktopW(out IVirtualDesktop_24H2 ppNewDesktop);
-        [PreserveSig] int MoveDesktop(IVirtualDesktop_24H2 pDesktop, uint nIndex);
-        [PreserveSig] int RemoveDesktop(IVirtualDesktop_24H2 pRemove, IVirtualDesktop_24H2 pFallbackDesktop);
-        [PreserveSig] int FindDesktop(ref Guid desktopId, out IVirtualDesktop_24H2 ppDesktop);
+        [PreserveSig] int GetAdjacentDesktop(IVirtualDesktop_Modern pDesktopReference, uint uDirection, out IVirtualDesktop_Modern ppAdjacentDesktop);
+        [PreserveSig] int SwitchDesktop(IVirtualDesktop_Modern pDesktop);
+        [PreserveSig] int CreateDesktopW(out IVirtualDesktop_Modern ppNewDesktop);
+        [PreserveSig] int MoveDesktop(IVirtualDesktop_Modern pDesktop, uint nIndex);
+        [PreserveSig] int RemoveDesktop(IVirtualDesktop_Modern pRemove, IVirtualDesktop_Modern pFallbackDesktop);
+        [PreserveSig] int FindDesktop(ref Guid desktopId, out IVirtualDesktop_Modern ppDesktop);
     }
 
     // ══════════════════════════════════════════════════════════════════════════

@@ -35,6 +35,9 @@ public partial class ZoneEditorManagerWindow : Window
         // Ensure this control window is always above the canvas and overlays
         User32.SetWindowPos(hwnd, (nint)(-1) /* HWND_TOPMOST */, 0, 0, 0, 0,
             User32.SWP_NOMOVE | User32.SWP_NOSIZE | User32.SWP_SHOWWINDOW);
+
+        // STICKY: Pin to all desktops
+        VirtualDesktopManager.Instance.PinWindow(hwnd);
     }
 
     private async void ZoneEditorManagerWindow_Loaded(object sender, RoutedEventArgs e)
@@ -54,6 +57,16 @@ public partial class ZoneEditorManagerWindow : Window
 
             _bridge = new WebBridge(webView.CoreWebView2, this); // Important: pass 'this'
             _bridge.Initialize();
+
+            // Retry pinning after a small delay to ensure shell registration
+            _ = Task.Run(async () => {
+                await Task.Delay(500);
+                Dispatcher.Invoke(() => {
+                    var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+                    Logger.Info($"[ZoneEditorManagerWindow] Retrying PinWindow for HWND {hwnd}");
+                    VirtualDesktopManager.Instance.PinWindow(hwnd);
+                });
+            });
 
             string? devUrl = Environment.GetEnvironmentVariable("WL_DEV_URL");
             if (!string.IsNullOrEmpty(devUrl))

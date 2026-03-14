@@ -46,6 +46,9 @@ public class AppConfig
 
     [JsonPropertyName("accent_color")]
     public string AccentColor { get; set; } = "";
+
+    [JsonPropertyName("desktop_animations_enabled")]
+    public bool DesktopAnimationsEnabled { get; set; } = true;
 }
 
 public class AppItem

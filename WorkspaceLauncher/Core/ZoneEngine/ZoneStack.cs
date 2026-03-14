@@ -21,6 +21,9 @@ public sealed class ZoneStack
     {
         lock (_lock)
         {
+            // Ensure window is only in one zone at a time
+            Unregister(hwnd);
+
             if (!_stacks.TryGetValue(key, out var list))
             {
                 list = [];

@@ -35,6 +35,9 @@ public partial class ZoneEditorControlWindow : Window
         var bgHex = isDark ? "#0A0A0A" : "#F0F2F5";
         Background = new System.Windows.Media.SolidColorBrush(
             (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(bgHex));
+
+        // Pin to all virtual desktops
+        VirtualDesktopManager.Instance.PinWindow(hwnd);
     }
 
     private async void ZoneEditorControlWindow_Loaded(object sender, RoutedEventArgs e)

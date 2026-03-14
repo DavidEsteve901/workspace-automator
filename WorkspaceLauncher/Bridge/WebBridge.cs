@@ -383,6 +383,46 @@ public sealed class WebBridge
                     WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.ActivateManager();
                     break;
 
+                case "cze_switch_to_desktop":
+                    if (payload.TryGetProperty("desktopId", out var dkIdProp) && Guid.TryParse(dkIdProp.GetString(), out var dkGuid))
+                    {
+                        Logger.Info($"[Bridge] Requesting switch + move to desktop: {dkGuid}");
+                        var launcher = WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance;
+                        
+                        try
+                        {
+                            launcher.SetManualSwitchInProgress(true);
+                            
+                            // 1. Sync state so polling timer doesn't think it's a NEW switch later
+                            launcher.SyncDesktopState(dkGuid);
+
+                            // 2. CLOSE the manager window completely to break the "homing" link
+                            launcher.CloseManagerOnly();
+                            
+                            // 3. Perform the actual desktop switch while no manager window exists
+                            var success = VirtualDesktopManager.Instance.SwitchToDesktop(dkGuid);
+                            
+                            // 4. Wait for Windows 11 desktop transition animation to settle
+                            await Task.Delay(800); 
+                            
+                            // 5. RE-OPEN a fresh manager window on the new desktop
+                            launcher.OpenManager();
+
+                            Logger.Info($"[Bridge] Switch to desktop {dkGuid} result: {success}. Fresh window opened.");
+                            ReplyInvoke(reqId, new { success });
+                        }
+                        finally
+                        {
+                             launcher.SetManualSwitchInProgress(false);
+                        }
+                    }
+                    else
+                    {
+                        Logger.Warn("[Bridge] cze_switch_to_desktop: Invalid or missing desktopId");
+                        ReplyInvoke(reqId, new { success = false, error = "Invalid desktopId" });
+                    }
+                    break;
+
                 default:
                     Console.WriteLine($"[Bridge] Unknown action: {action}");
                     break;
@@ -435,7 +475,8 @@ public sealed class WebBridge
             czeActiveLayouts = config.CzeActiveLayouts,
             configPath     = ConfigManager.Instance.ConfigPath,
             themeMode      = config.ThemeMode,
-            accentColor    = config.AccentColor
+            accentColor    = config.AccentColor,
+            desktopAnimationsEnabled = config.DesktopAnimationsEnabled
         });
     }
 
@@ -617,6 +658,13 @@ public sealed class WebBridge
             config.ThemeMode = tm.GetString() ?? "dark";
         if (payload.TryGetProperty("accentColor", out var ac))
             config.AccentColor = ac.GetString() ?? "";
+        
+        if (payload.TryGetProperty("desktopAnimationsEnabled", out var dae))
+        {
+            config.DesktopAnimationsEnabled = dae.GetBoolean();
+            User32.SetSystemAnimations(config.DesktopAnimationsEnabled);
+        }
+
         await ConfigManager.Instance.SaveAsync();
         // Broadcast to ALL open windows (main + ZoneEditor), not just this bridge
         BroadcastStateUpdate();
@@ -1206,7 +1254,7 @@ public sealed class WebBridge
                         {
                             // Find what's currently active on that specific monitor in PT
                             string monSerial = (mon.SerialNumber ?? "").ToLowerInvariant();
-                            string monInstNorm = (mon.PtInstance ?? "").Trim('{', '}').ToLowerInvariant();
+                            string monInstNorm = mon.PtInstance ?? "";
                             string monPtNorm = (mon.PtName ?? "").ToLowerInvariant();
 
                             var active = (AppliedLayoutEntry?)null;
@@ -1667,8 +1715,7 @@ public sealed class WebBridge
             for (int d = 0; d < desktops.Count; d++)
             {
                 var desktopId = desktops[d];
-                string normPtInstance = (monitor.PtInstance ?? "").Trim('{', '}').ToLowerInvariant();
-                string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(normPtInstance, desktopId);
+                string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(monitor.PtInstance ?? "", desktopId);
                 config.CzeActiveLayouts.TryGetValue(key, out string? layoutId);
                 entries.Add(new
                 {
@@ -1698,8 +1745,7 @@ public sealed class WebBridge
             if (!Guid.TryParse(desktopIdStr, out Guid desktopId))
                 return new { ok = false, error = "Invalid desktopId" };
 
-            string normPtInstance = (ptInstance ?? "").Trim('{', '}').ToLowerInvariant();
-            string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(normPtInstance, desktopId);
+            string key = WorkspaceLauncher.Core.CustomZoneEngine.Models.ActiveLayoutMap.MakeKey(ptInstance, desktopId);
             var config = ConfigManager.Instance.Config;
 
             if (string.IsNullOrEmpty(layoutId))
