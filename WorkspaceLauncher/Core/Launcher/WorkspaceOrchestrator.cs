@@ -28,9 +28,16 @@ public sealed class WorkspaceOrchestrator
     public async Task LaunchWorkspaceAsync(string category)
     {
         var config = ConfigManager.Instance.Config;
-        if (!config.Apps.TryGetValue(category, out var items) || items.Count == 0)
+        if (!config.Apps.TryGetValue(category, out var allItems) || allItems.Count == 0)
         {
             Report("No items in workspace.", 0);
+            return;
+        }
+
+        var items = allItems.Where(i => i.IsEnabled).ToList();
+        if (items.Count == 0)
+        {
+            Report("No hay aplicaciones habilitadas en este workspace.", 100);
             return;
         }
 
@@ -268,9 +275,16 @@ public sealed class WorkspaceOrchestrator
     public async Task RestoreWorkspaceAsync(string category)
     {
         var config = ConfigManager.Instance.Config;
-        if (!config.Apps.TryGetValue(category, out var items) || items.Count == 0)
+        if (!config.Apps.TryGetValue(category, out var allItems) || allItems.Count == 0)
         {
             Report("No items in workspace.", 0);
+            return;
+        }
+
+        var items = allItems.Where(i => i.IsEnabled).ToList();
+        if (items.Count == 0)
+        {
+            Report("No hay aplicaciones habilitadas para restaurar.", 100);
             return;
         }
 
@@ -352,9 +366,16 @@ public sealed class WorkspaceOrchestrator
     public async Task CleanWorkspaceAsync(string category)
     {
         var config = ConfigManager.Instance.Config;
-        if (!config.Apps.TryGetValue(category, out var items) || items.Count == 0)
+        if (!config.Apps.TryGetValue(category, out var allItems) || allItems.Count == 0)
         {
             Report("No items in workspace.", 0);
+            return;
+        }
+
+        var items = allItems.Where(i => i.IsEnabled).ToList();
+        if (items.Count == 0)
+        {
+            Report("No hay aplicaciones habilitadas para limpiar.", 100);
             return;
         }
 
@@ -459,14 +480,16 @@ public sealed class WorkspaceOrchestrator
     {
         var currentWindows = WindowManager.GetVisibleWindows().ToList();
         var vdm = VirtualDesktopManager.Instance;
-        bool engineIsCze = (config.ZoneEngine ?? "fancyzones").Equals("custom", StringComparison.OrdinalIgnoreCase);
+        bool engineIsCze = ZoneEngineManager.IsCzeActive;
 
         // Two internal passes per sweep call: first lenient, second strict
+        var activeItems = items.Where(i => i.IsEnabled).ToList();
+
         for (int pass = 1; pass <= 2; pass++)
         {
             Logger.Info($"[Orchestrator] Integridad (silent={silent}): Pase {pass}/2...");
 
-            foreach (var item in items)
+            foreach (var item in activeItems)
             {
                 // Skip items that have no zone for the ACTIVE engine
                 bool hasFzZone  = !engineIsCze && item.Fancyzone != "Ninguna" && !string.IsNullOrEmpty(item.FancyzoneUuid);
@@ -540,7 +563,7 @@ public sealed class WorkspaceOrchestrator
 
     private void RegisterInZoneStack(AppItem item, nint hwnd, AppConfig config)
     {
-        bool engineIsCze = (config.ZoneEngine ?? "fancyzones").Equals("custom", StringComparison.OrdinalIgnoreCase);
+        bool engineIsCze = ZoneEngineManager.IsCzeActive;
 
         Guid desktopGuid = ResolveDesktopGuid(item) ?? Guid.Empty;
         if (desktopGuid == Guid.Empty)
@@ -612,6 +635,7 @@ public sealed class WorkspaceOrchestrator
     private async Task EnsureVirtualDesktopsAsync(List<AppItem> items)
     {
         var needed = items
+            .Where(i => i.IsEnabled)
             .Select(i => i.Desktop)
             .Where(d => d != "Por defecto")
             .Distinct()
@@ -637,7 +661,7 @@ public sealed class WorkspaceOrchestrator
 
     internal RECT? ResolveZoneRect(AppItem item, AppConfig config)
     {
-        bool engineIsCze = (config.ZoneEngine ?? "fancyzones").Equals("custom", StringComparison.OrdinalIgnoreCase);
+        bool engineIsCze = ZoneEngineManager.IsCzeActive;
 
         // ── CZE path: only when global engine is CZE and item has CZE config ────
         if (engineIsCze && !string.IsNullOrEmpty(item.CzeLayoutId) && item.CzeZoneIndex.HasValue)
@@ -877,3 +901,5 @@ public sealed class WorkspaceOrchestrator
         }
     }
 }
+
+

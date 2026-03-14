@@ -7,7 +7,7 @@ using WorkspaceLauncher.Core.Utils;
 
 namespace WorkspaceLauncher.Core.CustomZoneEngine.UI;
 
-public partial class ZoneEditorManagerWindow : Window
+public partial class ZoneEditorManagerWindow : System.Windows.Window
 {
     private WebBridge? _bridge;
 
@@ -27,12 +27,12 @@ public partial class ZoneEditorManagerWindow : Window
         bool isDark = WorkspaceLauncher.Core.Config.ConfigManager.Instance.Config.ThemeMode != "light";
         DwmHelper.UseImmersiveDarkMode(hwnd, isDark);
 
-        // Keep window background in sync with theme (avoids flash in light mode)
+        // Keep System.Windows.Window background in sync with theme (avoids flash in light mode)
         var bgHex = isDark ? "#0A0A0A" : "#F0F2F5";
         Background = new System.Windows.Media.SolidColorBrush(
             (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(bgHex));
 
-        // Ensure this control window is always above the canvas and overlays
+        // Ensure this control System.Windows.Window is always above the canvas and overlays
         User32.SetWindowPos(hwnd, (nint)(-1) /* HWND_TOPMOST */, 0, 0, 0, 0,
             User32.SWP_NOMOVE | User32.SWP_NOSIZE | User32.SWP_SHOWWINDOW);
 
@@ -84,3 +84,11 @@ public partial class ZoneEditorManagerWindow : Window
         }
     }
 }
+
+
+
+
+
+
+
+

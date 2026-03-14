@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from 'react';
 
 const BASE = 10000;      // All percents sum to this
-const MIN_P = 500;       // 5% minimum zone size in BASE units (MinZoneSize 500)
+const MIN_P = 100;       // 1% minimum zone size in BASE units (MinZoneSize 100)
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -18,6 +18,7 @@ export function initialGrid() {
 
 /** Grid → [{id,x,y,w,h}] — reading-order, deduplicated. */
 export function gridToZones(grid) {
+  if (!grid || !grid.rows || !grid.cols || !grid.rowPercents || !grid.colPercents || !grid.cellChildMap) return [];
   const { rows, cols, rowPercents, colPercents, cellChildMap } = grid;
   const seen = new Set();
   const zones = [];
@@ -108,6 +109,7 @@ export function zonesToGrid(zones) {
 
 /** Compute dividers (vertical & horizontal) for the grid. */
 export function computeGridDividers(grid) {
+  if (!grid || !grid.rows || !grid.cols || !grid.rowPercents || !grid.colPercents) return [];
   const { rows, cols, rowPercents, colPercents, cellChildMap } = grid;
   const dividers = [];
 
@@ -210,6 +212,7 @@ export function computeGridDividers(grid) {
 // ── Grid operations ──────────────────────────────────────────────────────────
 
 function splitGrid(grid, zoneId, clickFracX, clickFracY, forcedAxis = null) {
+  if (!grid || !grid.cellChildMap) return grid;
   const { rows, cols, rowPercents, colPercents, cellChildMap } = grid;
 
   // Find zone bounding box
@@ -331,21 +334,39 @@ function mergeGrid(grid, zoneIds) {
   return { ...grid, cellChildMap: newMap };
 }
 
-function moveDividerInGrid(grid, divider, deltaFrac) {
-  const delta = Math.round(deltaFrac * BASE);
-  if (divider.axis === 'v') {
-    const arr = [...grid.colPercents];
-    const i = divider.index;
-    const d = clamp(delta, -(arr[i] - MIN_P), arr[i + 1] - MIN_P);
-    arr[i] += d; arr[i + 1] -= d;
-    return { ...grid, colPercents: arr };
-  } else {
-    const arr = [...grid.rowPercents];
-    const i = divider.index;
-    const d = clamp(delta, -(arr[i] - MIN_P), arr[i + 1] - MIN_P);
-    arr[i] += d; arr[i + 1] -= d;
-    return { ...grid, rowPercents: arr };
-  }
+function moveDividerInGrid(grid, divider, targetPos) {
+  const isV = divider.axis === 'v';
+  const arr = [...(isV ? grid.colPercents : grid.rowPercents)];
+  const i = divider.index;
+
+  // Calculate absolute boundaries (PrefixSum)
+  // prevSplitterPos is the absolute position of the divider to the left/top of the current one.
+  const prevSplitterPos = arr.slice(0, i).reduce((sum, p) => sum + p, 0);
+  
+  // nextSplitterPos is the absolute position of the divider to the right/bottom of the current one.
+  // If there are no more splitters, the boundary is 10,000.
+  const nextSplitterPos = (i + 2 < arr.length) 
+    ? arr.slice(0, i + 2).reduce((sum, p) => sum + p, 0)
+    : BASE;
+
+  const targetPos10k = Math.round(targetPos * BASE);
+  
+  // Strict Clamp: [PrevPos + MIN_P, NextPos - MIN_P]
+  const clampedTarget = clamp(targetPos10k, prevSplitterPos + MIN_P, nextSplitterPos - MIN_P);
+  
+  // Recalculate relative percentages for the two affected zones
+  const newLeftP = clampedTarget - prevSplitterPos;
+  const newRightP = nextSplitterPos - clampedTarget;
+
+  // No change? Return original grid
+  if (arr[i] === newLeftP && arr[i+1] === newRightP) return grid;
+
+  arr[i] = newLeftP;
+  arr[i+1] = newRightP;
+
+  return isV 
+    ? { ...grid, colPercents: arr }
+    : { ...grid, rowPercents: arr };
 }
 
 function removeDividerInGrid(grid, divider) {
@@ -419,10 +440,13 @@ export function useZoneEditor(initialZones = []) {
 
   const setGridFromGridState = useCallback((gridStateJson, newSpacing) => {
     try {
+      if (!gridStateJson) return;
       const g = JSON.parse(gridStateJson);
-      setGrid(g);
-      if (newSpacing !== undefined) setSpacing(newSpacing);
-      setSelectedIds(new Set());
+      if (g && Array.isArray(g.rowPercents) && Array.isArray(g.colPercents) && Array.isArray(g.cellChildMap)) {
+        setGrid(g);
+        if (newSpacing !== undefined) setSpacing(newSpacing);
+        setSelectedIds(new Set());
+      }
     } catch {
       // ignore parse errors
     }
@@ -451,8 +475,8 @@ export function useZoneEditor(initialZones = []) {
     setSelectedIds(new Set());
   }, [selectedIds]);
 
-  const moveDivider = useCallback((divider, deltaFrac) => {
-    setGrid(prev => moveDividerInGrid(prev, divider, deltaFrac));
+  const moveDivider = useCallback((divider, targetPos) => {
+    setGrid(prev => moveDividerInGrid(prev, divider, targetPos));
   }, []);
 
   const removeDivider = useCallback((divider) => {

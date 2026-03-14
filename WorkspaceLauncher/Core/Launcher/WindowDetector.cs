@@ -273,3 +273,5 @@ public static class WindowDetector
         => Math.Abs(a.Left - b.Left) + Math.Abs(a.Top - b.Top) +
            Math.Abs(a.Right - b.Right) + Math.Abs(a.Bottom - b.Bottom);
 }
+
+

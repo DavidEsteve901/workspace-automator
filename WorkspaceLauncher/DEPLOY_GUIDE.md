@@ -1,74 +1,64 @@
-# 🚀 Guía de Compilación y Publicación - Workspace Launcher
+# 🛡️ Estrategia de Distribución Segura - Workspace Launcher
 
-Esta guía explica detalladamente cómo generar el archivo ejecutable (`.exe`) de la aplicación y cómo publicarlo correctamente en GitHub para su distribución.
+Este documento detalla el sistema de compilación y distribución diseñado para proteger la propiedad intelectual y facilitar el despliegue a testers y clientes finales.
 
-## 1. Compilación (Generar el .exe)
+## 🏗️ Filosofía de "Binario Sellado"
 
-La aplicación está configurada para compilarse en un **único archivo ejecutable (Single File)** que incluye tanto el backend (C#) como el frontend (React).
+Para garantizar que el código fuente (C#) y los activos de la interfaz (React/Vite) no sean visibles ni manipulables por el usuario final, hemos implementado las siguientes medidas:
 
-### Pasos
-
-1. Abre una terminal (PowerShell) en la carpeta `WorkspaceLauncher`.
-
-2. Ejecuta el script de compilación con el flag de publicación:
-
-   ```powershell
-   .\build.ps1 -Publish
-   ```
-
-3. El script realizará las siguientes tareas:
-   - Compilará el frontend de React (`npm run build`).
-   - Compilará el proyecto C# en modo *Release*.
-   - Empaquetará todo en un archivo único optimizado para Windows x64.
-
-### Resultado
-
-El archivo generado se encontrará en:
-`WorkspaceLauncher\publish\WorkspaceLauncher.exe`
+1.  **Incrustación de Recursos (Embedded Resources):** Todo el contenido de la carpeta `frontend/dist` se compila directamente dentro del ensamblado de C#. No se generan carpetas `wwwroot` ni archivos `.js`/`.html` externos.
+2.  **Servidor de Recursos Interno:** La aplicación utiliza un manejador de recursos en memoria para servir la interfaz a través de `https://launcher.local/` sin tocar el disco duro.
+3.  **Ejecutable Autónomo (Self-Contained):** El `.exe` generado incluye todas las librerías de .NET necesarias, permitiendo que funcione en cualquier PC con Windows 10/11 sin instalar nada previamente.
 
 ---
 
-## 2. Preparación para la Distribución
+## 🚀 Compilación Local (Para el Desarrollador)
 
-Aunque el `.exe` es portable, para que la aplicación funcione con tus datos existentes (Workspaces), se recomienda distribuirlo de la siguiente manera:
+Si deseas generar el ejecutable manualmente en tu máquina:
 
-1. Crea una carpeta nueva (ej: `WorkspaceLauncher_v1.0.0`).
-2. Copia el `WorkspaceLauncher.exe` dentro.
-3. Copia tu archivo `mis_apps_config_v2.json` dentro de esa misma carpeta.
-4. **Comprime la carpeta en un archivo .ZIP**. Esto es lo que subirás a GitHub.
-
----
-
-## 3. Publicación en GitHub (Releases)
-
-Para que tu proyecto tenga un aspecto profesional y sea fácil de descargar:
-
-1. Ve a tu repositorio en GitHub.
-2. En la barra lateral derecha, haz clic en **"Releases"** -> **"Create a new release"**.
-3. **Tag version**: Pon un número de versión, por ejemplo `v1.0.0`.
-4. **Release title**: Un nombre descriptivo, ej: `Workspace Launcher v1.0.0 - Stable`.
-5. **Description**: Describe los cambios o nuevas funcionalidades.
-6. **Binaries (Assets)**: Arrastra y suelta el archivo **.ZIP** que creaste en el punto anterior.
-7. Haz clic en **"Publish release"**.
+1.  Asegúrate de tener instalados **Node.js 20+** y **.NET 8 SDK**.
+2.  Ejecuta el script de automatización:
+    ```powershell
+    .\build.ps1 -Publish
+    ```
+3.  El resultado estará en `publish/WorkspaceLauncher.exe`. **Este es el único archivo que necesitas distribuir.**
 
 ---
 
-## 4. Cómo instalar/usar (Instrucciones para el usuario)
+## 🤖 Automatización con GitHub Actions
 
-Cuando alguien (o tú mismo en otro PC) descargue la app:
+Hemos configurado un flujo de trabajo profesional en `.github/workflows/release.yml` que se activa automáticamente.
 
-1. Descargar el `.ZIP` desde la sección de *Releases*.
+### 1. Generación de Versiones (Releases)
+Cada vez que crees una "Etiqueta" (Tag) en Git, GitHub compilará el proyecto desde cero y creará una descarga oficial:
+- **Paso 1:** Crea el tag y súbelo: `git tag v1.0.0-beta && git push origin v1.0.0-beta`
+- **Paso 2:** Ve a la pestaña **Actions** en GitHub.
+- **Paso 3:** Una vez finalizado, el archivo `WorkspaceLauncher.zip` estará disponible en la sección de **Releases** de tu repositorio privado.
 
-2. Extraer el contenido en cualquier carpeta (ej: `C:\Herramientas\Launcher`).
-
-3. Ejecutar `WorkspaceLauncher.exe`.
-   - *Nota: La app se iniciará y se minimizará automáticamente al área de notificación (System Tray).*
-
-4. Para abrir la interfaz, haz clic en el icono de la app junto al reloj de Windows.
+### 2. Descarga Directa para Testers (Artifacts)
+Si quieres pasarle el ejecutable a un amigo sin invitarle a GitHub:
+1.  Ve a la última ejecución exitosa en **Actions**.
+2.  Al final de la página, encontrarás una sección llamada **Artifacts**.
+3.  Descarga el `WorkspaceLauncher-Binary`, súbelo a Google Drive o pásaselo directamente.
 
 ---
 
-### Notas Pro
+## ⚙️ Configuración Dinámica Cero
 
-- **DPI / Resolución**: La app está optimizada para monitores de alta resolución.
-- **Portabilidad**: No escribe nada en el registro de Windows, todo se guarda en el archivo JSON local.
+Para evitar errores en el PC de los testers, el sistema de configuración (`ConfigManager.cs`) se ha rediseñado:
+
+- **Búsqueda Inteligente:** Primero busca el archivo `mis_apps_config_v2.json` junto al ejecutable (ideal para portabilidad).
+- **Fallback en AppData:** Si no lo encuentra, crea automáticamente una carpeta en `%AppData%\WorkspaceLauncher` y genera una configuración por defecto.
+- **Resiliencia:** La aplicación nunca "explota" si falta el archivo de configuración; siempre garantiza un estado inicial válido.
+
+---
+
+## 🔒 Recomendaciones de Seguridad
+
+1.  **Repositorio Privado:** Mantén siempre el repositorio en modo "Privado" en GitHub Settings.
+2.  **Ofuscación (Opcional):** Para una protección extra de nivel bancario, podrías pasar el `.exe` final por un ofuscador de .NET (como *Obfuscar* o *ConfuserEx*), aunque la compilación *Single-File* ya añade una capa importante de dificultad para la ingeniería inversa.
+
+---
+
+> [!IMPORTANT]
+> **No compartas nunca el código fuente**. Distribuye únicamente el archivo `.zip` generado por los Artifacts de GitHub o la sección de Releases.

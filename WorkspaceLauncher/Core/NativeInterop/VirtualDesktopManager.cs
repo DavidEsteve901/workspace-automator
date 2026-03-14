@@ -330,17 +330,40 @@ public sealed class VirtualDesktopManager : IDisposable
     public bool MoveWindowToDesktopInternal(nint hwnd, Guid desktopId)
     {
         if (!User32.IsWindow(hwnd)) return false;
-        
-        // Then try the internal one which is more robust for modern Windows
         if (!EnsurePinningServices()) return false;
         
         try
         {
             var desktop = FindDesktopById(desktopId);
-            if (desktop == null) return false;
+            if (desktop == null) 
+            {
+                Logger.Error($"[VDM] MoveInternal: Deskto ID {desktopId} not found.");
+                return false;
+            }
 
-            int hr = _viewCollection!.GetViewForHwnd(hwnd, out object view);
-            if (hr != 0 || view == null) return false;
+            // Retry loop for GetViewForHwnd: the Shell often takes a moment to "see" 
+            // a window in its view collection, especially if it was just hidden/shown or created.
+            int attempts = 10;
+            object? view = null;
+            int hr = -1;
+
+            while (attempts > 0)
+            {
+                hr = _viewCollection!.GetViewForHwnd(hwnd, out view);
+                if (hr == 0 && view != null) break;
+                
+                attempts--;
+                if (attempts > 0)
+                {
+                    System.Threading.Thread.Sleep(15);
+                }
+            }
+
+            if (view == null)
+            {
+                Logger.Warn($"[VDM] MoveInternal: Failed to get IApplicationView for HWND {hwnd} after retries (hr=0x{hr:X})");
+                return false;
+            }
 
             if (_variant == BuildVariant.Modern)
                 hr = ((IVirtualDesktopManagerInternal_Modern)_manager!).MoveViewToDesktop(view, (IVirtualDesktop_Modern)desktop);
@@ -349,15 +372,15 @@ public sealed class VirtualDesktopManager : IDisposable
 
             if (hr == 0)
             {
-                Logger.Success($"[VirtualDesktopManager] MoveWindowToDesktopInternal: Ventana {hwnd} movida a {desktopId}");
+                Logger.Success($"[VirtualDesktopManager] MoveWindowToDesktopInternal: Window {hwnd} moved to {desktopId}");
                 return true;
             }
 
-            Logger.Warn($"[VirtualDesktopManager] MoveInternal falló con HR: 0x{hr:X}");
+            Logger.Warn($"[VirtualDesktopManager] MoveInternal COM call failed with HR: 0x{hr:X}");
         }
         catch (Exception ex)
         {
-            Logger.Error($"[VirtualDesktopManager] MoveInternal Exception: {ex.Message}");
+            Logger.Error($"[VirtualDesktopManager] MoveInternal Global Exception: {ex.Message}");
         }
         return false;
     }
@@ -986,3 +1009,5 @@ public sealed class VirtualDesktopManager : IDisposable
         [PreserveSig] int UnpinApp([MarshalAs(UnmanagedType.LPWStr)] string appId);
     }
 }
+
+

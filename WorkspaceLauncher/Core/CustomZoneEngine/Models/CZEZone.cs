@@ -22,3 +22,5 @@ public class CZEZone
         Bottom = workArea.Top  + (int)Math.Round((double)(Y + H) * workArea.Height / 10000),
     };
 }
+
+

@@ -205,3 +205,5 @@ public sealed class GlobalHookManager : IDisposable
         _disposed = true;
     }
 }
+
+

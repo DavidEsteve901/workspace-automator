@@ -1,17 +1,32 @@
 import { useState, useEffect, useRef } from 'react';
-import { bridge, onEvent, offEvent } from '../../api/bridge';
+import { bridge, onEvent, offEvent } from '../../api/bridge.js';
+import PremiumSelect from '../PremiumSelect.jsx';
+import ConfirmModal from '../AppList/ConfirmModal.jsx';
+import { ErrorBoundary } from '../ErrorBoundary.jsx';
+import '../../App.css';
 import { useZoneEditor, gridToZones } from './ZoneEditorHooks';
 import { ZoneCanvas } from './ZoneCanvas';
 import { ZoneToolbar } from './ZoneToolbar';
 import { 
   Info, Save, Trash2, Plus, Monitor, Layout, X, 
   Settings, Edit3, Trash, Copy, MoreVertical, ChevronRight,
-  Maximize2, MousePointer2, Keyboard, Layers
+  Maximize2, MousePointer2, Keyboard, Layers, Crown
 } from 'lucide-react';
 
-export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = false, controlOnly = false, canvasMode = 'edit', initialMonitorId = null, initialLayoutId = null }) {
+export function ZoneEditorModal(props) {
+  return (
+    <ErrorBoundary>
+      <ZoneEditorModalInner {...props} />
+    </ErrorBoundary>
+  );
+}
+
+function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false, controlOnly = false, canvasMode = 'edit', initialMonitorId = null, initialLayoutId = null }) {
   const [monitors, setMonitors] = useState([]);
   const [layouts, setLayouts] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [layoutToDelete, setLayoutToDelete] = useState(null);
   const [activeLayouts, setActiveLayouts] = useState([]);
   const [currentDesktopId, setCurrentDesktopId] = useState(null);
   const [desktops, setDesktops] = useState([]);
@@ -149,7 +164,11 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
       if (!activeMonitorId) setActiveMonitorId(monitorId);
 
       const activeMon = mRes.find(m => m.hardwareId === monitorId);
-      const activeEntry = aRes?.entries?.find(a => a.monitorPtInstance === activeMon?.ptInstance && a.desktopId === (selectedDesktopId || aRes?.currentDesktopId));
+      const targetDkId = String(selectedDesktopId || aRes?.currentDesktopId || "").toLowerCase();
+      const activeEntry = aRes?.entries?.find(a => 
+        a.monitorPtInstance === activeMon?.ptInstance && 
+        String(a.desktopId).toLowerCase() === targetDkId
+      );
       if (activeEntry?.layoutId) setSelectedLayoutId(activeEntry.layoutId);
 
       if ((canvasOnly || controlOnly) && monitorId) {
@@ -262,22 +281,29 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
   }
 
   async function createNewLayout() {
-    const newId = ``; // Let saveLayoutProperties generate it or use a temp one
-    const newLayout = { id: '', name: `Nuevo diseño ${layouts.length + 1}`, spacing: 8, zones: [{ id: 1, x: 0, y: 0, w: 1, h: 1 }] };
-    // DO NOT SAVE YET
+    const newLayout = { id: '', name: `Nuevo diseño ${layouts.length + 1}`, spacing: 8, zones: [{ id: 0, x: 0, y: 0, w: 1, h: 1 }] };
     setEditingLayout(newLayout);
-    setGridFromZones(newLayout.zones, newLayout.spacing);
+    resetToFull(); // Force 1x1 grid state
     openCanvasEditor(activeMonitorId, '', true);
   }
 
-  async function deleteLayout(id) {
-    if (confirm('¿Eliminar este diseño de forma permanente?')) {
-      const res = await bridge.czeDeleteLayout(id);
-      if (res?.ok) {
+  function deleteLayout(layout) {
+    setLayoutToDelete(layout);
+    setShowDeleteConfirm(true);
+  }
+
+  async function handleConfirmDelete() {
+    if (!layoutToDelete) return;
+    
+    const res = await bridge.czeDeleteLayout(layoutToDelete.id);
+    if (res?.ok) {
+      if (editingLayout?.id === layoutToDelete.id) {
         setEditingLayout(null);
-        await loadAll();
       }
+      await loadAll();
     }
+    setShowDeleteConfirm(false);
+    setLayoutToDelete(null);
   }
 
   const activeMonitor = monitors.find(m => m.hardwareId === activeMonitorId);
@@ -293,13 +319,15 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
   const customLayouts = layouts.filter(l => !l.isTemplate);
 
   const modalStyle = standalone ? {
-    position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--fz-bg)', color: 'var(--fz-text)', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+    position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--fz-bg)', color: 'var(--fz-text)', fontFamily: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
   } : {
     position: 'fixed', inset: 0, zIndex: 1000,
-    background: 'rgba(0,0,0,0.85)',
-    backdropFilter: 'blur(12px)',
+    background: 'rgba(0,0,0,0.88)',
+    backdropFilter: 'blur(20px) saturate(140%)',
+    WebkitBackdropFilter: 'blur(20px) saturate(140%)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+    fontFamily: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    animation: 'fzOverlayIn 0.22s ease'
   };
 
   if (controlOnly) {
@@ -444,28 +472,18 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
               <Layers size={14} />
               <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Escritorio</span>
             </div>
-            <select 
-              value={selectedDesktopId || ''} 
-              onChange={(e) => handleSwitchDesktop(e.target.value)}
-              style={{
-                background: 'rgba(255,255,255,0.05)',
-                color: 'white',
-                border: '1px solid var(--fz-border)',
-                borderRadius: 8,
-                padding: '4px 12px',
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-                outline: 'none',
-                minWidth: 140
-              }}
-            >
-              {desktops.map(d => (
-                <option key={d.id} value={d.id}>
-                  {d.name} {d.id === currentDesktopId ? '(Actual)' : ''}
-                </option>
-              ))}
-            </select>
+            <div className="fz-toolbar-select-wrapper" style={{ minWidth: 150 }}>
+              <PremiumSelect 
+                value={selectedDesktopId || ''} 
+                options={desktops.map(d => ({ 
+                  id: d.id, 
+                  name: `${d.name} ${d.id === currentDesktopId ? '(Actual)' : ''}` 
+                }))}
+                onChange={val => handleSwitchDesktop(val)}
+                valueKey="id"
+                labelKey="name"
+              />
+            </div>
           </div>
 
           {/* Centered Monitors */}
@@ -504,6 +522,21 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
                   <div style={{ fontSize: 10, fontWeight: 700, textAlign: 'center', color: isActiveMon ? 'var(--fz-accent)' : 'var(--fz-text-muted)', letterSpacing: '0.02em', marginTop: 12, transition: 'color 0.25s ease' }}>
                     {mon.bounds.width}×{mon.bounds.height}
                   </div>
+                  
+                  {mon.isPrimary && (
+                    <div 
+                      title="Monitor Principal"
+                      style={{ 
+                        display: 'flex', 
+                        justifyContent: 'center', 
+                        marginTop: 6, 
+                        color: 'var(--fz-accent)',
+                        animation: 'fzFadeIn 0.3s ease-out'
+                      }}
+                    >
+                      <Crown size={12} fill="currentColor" fillOpacity={0.2} />
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -514,10 +547,11 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
           <div className="fz-section-title">Plantillas del Sistema</div>
           <div className="fz-grid">
             {templates.map((t, idx) => {
+              const targetDkId = String(selectedDesktopId || "").toLowerCase();
               const isActiveForSelected = activeLayouts.find(a => 
                 a.monitorPtInstance === activeMonitor?.ptInstance && 
-                a.desktopId === selectedDesktopId &&
-                a.layoutId === t.id
+                String(a.desktopId).toLowerCase() === targetDkId &&
+                String(a.layoutId).toLowerCase() === String(t.id).toLowerCase()
               );
 
               return (
@@ -554,10 +588,11 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
           {customLayouts.length > 0 ? (
             <div className="fz-grid">
               {customLayouts.map((l, idx) => {
+                const targetDkId = String(selectedDesktopId || "").toLowerCase();
                 const isActiveForSelected = activeLayouts.find(a => 
                   a.monitorPtInstance === activeMonitor?.ptInstance && 
-                  a.desktopId === selectedDesktopId &&
-                  a.layoutId === l.id
+                  String(a.desktopId).toLowerCase() === targetDkId &&
+                  String(a.layoutId).toLowerCase() === String(l.id).toLowerCase()
                 );
 
                 return (
@@ -598,56 +633,134 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
         </div>
 
         {editingLayout && (
-          <div className="fz-dialog-overlay">
-            <div className="fz-dialog">
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 32 }}>
-                <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em' }}>Personalizar Diseño</span>
-                {!editingLayout.isTemplate && (
-                  <button 
-                    onClick={() => deleteLayout(editingLayout.id)}
-                    style={{ background: 'var(--danger-dim)', color: 'var(--danger)', border: 'none', padding: 8, borderRadius: 10, cursor: 'pointer' }}
-                  >
-                    <Trash2 size={20} />
-                  </button>
-                )}
+          <div className="fz-dialog-overlay" style={{ animation: 'fzOverlayIn 0.2s ease' }}>
+            <div className="fz-dialog" style={{ animation: 'fzDialogIn 0.32s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{
+                    width: 38, height: 38, borderRadius: 11,
+                    background: 'rgba(var(--accent-rgb, 0, 210, 255), 0.1)',
+                    border: '1px solid rgba(var(--accent-rgb, 0, 210, 255), 0.2)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }}>
+                    <Layout size={18} color="var(--fz-accent)" />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em', color: '#fff' }}>Personalizar Diseño</div>
+                    <div style={{ fontSize: 11, color: 'var(--fz-text-muted)', marginTop: 2, letterSpacing: '0.02em' }}>Nombre y espaciado de zonas</div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {!editingLayout.isTemplate && (
+                    <button 
+                      onClick={() => deleteLayout(editingLayout.id)}
+                      style={{ 
+                        background: 'rgba(255,23,68,0.08)', color: 'var(--danger)', 
+                        border: '1px solid rgba(255,23,68,0.2)', padding: '8px 10px', 
+                        borderRadius: 10, cursor: 'pointer',
+                        transition: 'all 0.18s ease',
+                        display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,23,68,0.15)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,23,68,0.08)'; e.currentTarget.style.transform = 'translateY(0)'; }}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
+                </div>
               </div>
 
-              <div style={{ marginBottom: 24 }}>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--fz-text-muted)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nombre del diseño</label>
+              {/* Name field */}
+              <div style={{ marginBottom: 22 }}>
+                <label style={{ 
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.3)', 
+                  marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.1em' 
+                }}>
+                  <div style={{ width: 3, height: 10, background: 'var(--fz-accent)', borderRadius: 2 }} />
+                  Nombre del diseño
+                </label>
                 <div style={{ position: 'relative' }}>
-                  <Edit3 size={18} style={{ position: 'absolute', left: 14, top: 13, opacity: 0.4 }} />
+                  <Edit3 size={16} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', opacity: 0.35, pointerEvents: 'none' }} />
                   <input 
                     value={editingLayout.name} 
                     onChange={e => setEditingLayout({...editingLayout, name: e.target.value})}
                     placeholder="Ej: Multitarea, Gaming..."
-                    style={{ width: '100%', background: 'rgba(128,128,128,0.08)', border: '1px solid var(--fz-border)', color: 'var(--fz-text)', padding: '12px 16px 12px 42px', borderRadius: 12, fontSize: 14, fontWeight: 500, outline: 'none', transition: 'border-color 0.2s' }}
-                    onFocus={e => e.target.style.borderColor = 'var(--fz-accent)'}
-                    onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
+                    style={{ 
+                      width: '100%', 
+                      background: 'rgba(255,255,255,0.04)', 
+                      border: '1px solid rgba(255,255,255,0.08)', 
+                      color: 'var(--fz-text)', 
+                      padding: '13px 16px 13px 40px', 
+                      borderRadius: 13, 
+                      fontSize: 14, 
+                      fontWeight: 600, 
+                      outline: 'none', 
+                      transition: 'all 0.2s ease',
+                      boxSizing: 'border-box'
+                    }}
+                    onFocus={e => { e.target.style.borderColor = 'rgba(var(--accent-rgb, 0, 210, 255), 0.45)'; e.target.style.boxShadow = '0 0 0 3px rgba(var(--accent-rgb, 0, 210, 255), 0.10)'; e.target.style.background = 'rgba(var(--accent-rgb, 0, 210, 255), 0.04)'; }}
+                    onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.08)'; e.target.style.boxShadow = 'none'; e.target.style.background = 'rgba(255,255,255,0.04)'; }}
                   />
                 </div>
               </div>
 
+              {/* Spacing field */}
               <div style={{ marginBottom: 32 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <Settings size={18} style={{ opacity: 0.5 }} />
-                      <span style={{ fontSize: 14, fontWeight: 600 }}>Espaciado entre zonas</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 3, height: 10, background: 'var(--fz-accent)', borderRadius: 2, opacity: 0.6 }} />
+                      <span style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Espaciado entre zonas</span>
                    </div>
-                   <div style={{ background: 'var(--accent-low)', color: 'var(--fz-accent)', padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 700 }}>
+                   <div style={{ 
+                     background: 'rgba(var(--accent-rgb, 0, 210, 255), 0.1)', 
+                     color: 'var(--fz-accent)', 
+                     padding: '2px 8px',
+                     borderRadius: 4,
+                     border: '1px solid rgba(var(--accent-rgb, 0, 210, 255), 0.2)',
+                     fontFamily: 'monospace'
+                   }}>
                     {spacing}px
                    </div>
                 </div>
-                <input 
-                  type="range" min="0" max="64" step="2"
-                  value={spacing} 
-                  onChange={e => setSpacing(parseInt(e.target.value))} 
-                  style={{ width: '100%', accentColor: 'var(--fz-accent)', cursor: 'pointer' }} 
-                />
+                <div style={{ 
+                  background: 'rgba(255,255,255,0.03)', 
+                  border: '1px solid rgba(255,255,255,0.06)', 
+                  borderRadius: 12, 
+                  padding: '14px 16px'
+                }}>
+                  <input 
+                    type="range" min="0" max="64" step="2"
+                    value={spacing} 
+                    onChange={e => setSpacing(parseInt(e.target.value))} 
+                    style={{ width: '100%', accentColor: 'var(--fz-accent)', cursor: 'pointer' }} 
+                  />
+                </div>
               </div>
 
-              <div style={{ display: 'flex', gap: 12 }}>
-                <button onClick={saveLayoutProperties} className="fz-btn-primary" style={{ flex: 1.5, height: 48 }}>Guardar Configuración</button>
-                <button onClick={() => setEditingLayout(null)} className="fz-btn-secondary" style={{ flex: 1, height: 48 }}>Cancelar</button>
+              {/* Buttons */}
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button 
+                  onClick={saveLayoutProperties} 
+                  className="fz-btn-primary" 
+                  style={{ 
+                    flex: 1.5, 
+                    height: 48,
+                    borderRadius: 13,
+                    fontSize: 13,
+                    letterSpacing: '0.04em'
+                  }}
+                >
+                  {saving ? 'Guardando...' : 'Guardar Configuración'}
+                </button>
+                <button 
+                  onClick={() => setEditingLayout(null)} 
+                  className="fz-btn-secondary" 
+                  style={{ flex: 1, height: 48, borderRadius: 13 }}
+                >
+                  Cancelar
+                </button>
               </div>
             </div>
           </div>
@@ -667,27 +780,74 @@ export function ZoneEditorModal({ onClose, standalone = false, canvasOnly = fals
           0%, 100% { box-shadow: 0 0 0 2px var(--fz-accent-dim), 0 0 8px var(--fz-accent-glow); }
           50%       { box-shadow: 0 0 0 4px var(--fz-accent-low), 0 0 16px var(--fz-accent); }
         }
+        @keyframes fzOverlayIn {
+          from { opacity: 0; backdrop-filter: blur(0px); }
+          to   { opacity: 1; backdrop-filter: blur(20px); }
+        }
+        @keyframes fzDialogIn {
+          from { opacity: 0; transform: scale(0.88) translateY(20px); filter: blur(5px); }
+          to   { opacity: 1; transform: scale(1)    translateY(0);    filter: blur(0); }
+        }
+        .fz-dialog {
+          background: rgba(16, 16, 18, 0.98) !important;
+          border: 1px solid rgba(255,255,255,0.09) !important;
+          border-radius: 22px !important;
+          padding: 30px !important;
+          box-shadow: 0 50px 100px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.04) inset, 0 1px 0 rgba(255,255,255,0.06) inset !important;
+          position: relative;
+          overflow: hidden;
+        }
+        .fz-dialog::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 40px;
+          right: 40px;
+          height: 1px;
+          background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb, 0, 210, 255), 0.3) 50%, transparent);
+          pointer-events: none;
+        }
         input[type="range"] {
           -webkit-appearance: none;
           height: 5px;
           background: rgba(255,255,255,0.09);
-          border-radius: 3px;
+          border-radius: 99px;
         }
         input[type="range"]::-webkit-slider-thumb {
           -webkit-appearance: none;
-          width: 16px;
-          height: 16px;
+          width: 18px;
+          height: 18px;
           background: #fff;
-          border: 2px solid var(--fz-accent);
+          border: 2.5px solid var(--fz-accent);
           border-radius: 50%;
           cursor: pointer;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.35), 0 0 10px var(--fz-accent-dim);
-          transition: transform 0.15s ease;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 12px var(--fz-accent-dim);
+          transition: transform 0.18s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.18s ease;
         }
         input[type="range"]::-webkit-slider-thumb:hover {
-          transform: scale(1.15);
+          transform: scale(1.2);
+          box-shadow: 0 2px 12px rgba(0,0,0,0.5), 0 0 18px var(--fz-accent-glow);
+        }
+        input[type="range"]::-webkit-slider-runnable-track {
+          height: 5px;
+          border-radius: 99px;
+          background: linear-gradient(to right, var(--fz-accent) 0%, var(--fz-accent) var(--val, 50%), rgba(255,255,255,0.09) var(--val, 50%));
         }
       `}</style>
+      {/* Confirm Deletion Modal */}
+      {showDeleteConfirm && (
+        <ConfirmModal 
+          title="Eliminar diseño"
+          message={`¿Estás seguro de que deseas eliminar permanentemente el diseño "${layoutToDelete?.name}"? Esta acción no se puede deshacer.`}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => {
+            setShowDeleteConfirm(false);
+            setLayoutToDelete(null);
+          }}
+          confirmText="Eliminar permanentemente"
+          isDanger={true}
+        />
+      )}
     </div>
   );
 }
@@ -755,7 +915,7 @@ const LayoutCard = ({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1, paddingRight: 28 }}>
           {isActive && (
-            <div style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--fz-accent)', flexShrink: 0, animation: 'fzActivePing 2.2s ease-in-out infinite' }} />
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--fz-accent)', flexShrink: 0, boxShadow: '0 0 10px var(--fz-accent-glow)' }} />
           )}
           {isAdapted && (
             <span title={`Diseñado para ${layout.refWidth}×${layout.refHeight}, monitor actual ${monW}×${monH}`}
@@ -834,7 +994,7 @@ const LayoutCard = ({
               <button 
                 style={{ width: '100%', padding: '8px 12px', textAlign: 'left', background: 'none', border: 'none', color: '#ff4d4d', fontSize: 13, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', borderRadius: 8, transition: 'all 0.15s' }}
                 className="menu-item-hover"
-                onClick={() => { deleteLayout(layout.id); setMenuOpenId(null); }}
+                onClick={() => { deleteLayout(layout); setMenuOpenId(null); }}
               >
                 <Trash2 size={14} /> Eliminar
               </button>

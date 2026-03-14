@@ -392,24 +392,38 @@ public sealed class WebBridge
                         try
                         {
                             launcher.SetManualSwitchInProgress(true);
-                            
-                            // 1. Sync state so polling timer doesn't think it's a NEW switch later
-                            launcher.SyncDesktopState(dkGuid);
+                            if (await launcher.AcquireSwitchLock(3000))
+                            {
+                                try 
+                                {
+                                    // 1. Sync state so polling timer doesn't think it's a NEW switch later
+                                    launcher.SyncDesktopState(dkGuid);
 
-                            // 2. CLOSE the manager window completely to break the "homing" link
-                            launcher.CloseManagerOnly();
-                            
-                            // 3. Perform the actual desktop switch while no manager window exists
-                            var success = VirtualDesktopManager.Instance.SwitchToDesktop(dkGuid);
-                            
-                            // 4. Wait for Windows 11 desktop transition animation to settle
-                            await Task.Delay(800); 
-                            
-                            // 5. RE-OPEN a fresh manager window on the new desktop
-                            launcher.OpenManager();
+                                    // 2. HIDE windows to break the focal bond (preserving React state)
+                                    await launcher.PrepareForSwitch();
+                                    
+                                    // 3. Perform the actual desktop switch while windows are invisible
+                                    var success = VirtualDesktopManager.Instance.SwitchToDesktop(dkGuid);
+                                    
+                                    // 4. Wait for Windows 11 animation (High Stability Profile - Reverting to proven timing)
+                                    await Task.Delay(250); 
+                                    
+                                    // 5. RESTORE visibility and move to the new desktop
+                                    await launcher.FinishSwitch(dkGuid);
 
-                            Logger.Info($"[Bridge] Switch to desktop {dkGuid} result: {success}. Fresh window opened.");
-                            ReplyInvoke(reqId, new { success });
+                                    Logger.Info($"[Bridge] Switch to desktop {dkGuid} result: {success}. Windows followed via Locked Hide-Show.");
+                                    ReplyInvoke(reqId, new { success });
+                                }
+                                finally
+                                {
+                                    launcher.ReleaseSwitchLock();
+                                }
+                            }
+                            else 
+                            {
+                                Logger.Warn($"[Bridge] Could not acquire switch lock for desktop {dkGuid}. Transition aborted.");
+                                ReplyInvoke(reqId, new { success = false, error = "Switch lock timeout" });
+                            }
                         }
                         finally
                         {
@@ -473,6 +487,7 @@ public sealed class WebBridge
             fzDetectedPath = FancyZonesReader.FzBasePath,
             fzSyncEnabled  = config.FancyZonesSyncEnabled,
             czeActiveLayouts = config.CzeActiveLayouts,
+            currentDesktopId = VirtualDesktopManager.Instance.GetCurrentDesktopId()?.ToString("D").ToLowerInvariant(),
             configPath     = ConfigManager.Instance.ConfigPath,
             themeMode      = config.ThemeMode,
             accentColor    = config.AccentColor,
@@ -1577,17 +1592,41 @@ public sealed class WebBridge
 
     private object HandleCzeGetLayouts()
     {
-        var layouts = ConfigManager.Instance.Config.CzeLayouts.Values
+        var config = ConfigManager.Instance.Config;
+        var layouts = config.CzeLayouts.Values
             .Select(l => new {
                 id        = l.Id,
                 name      = l.Name,
-                zones     = l.Zones,
+                zones     = l.Zones.Select(z => (object)new { id = z.Id, x = z.X, y = z.Y, w = z.W, h = z.H }).ToList(),
                 spacing   = l.Spacing,
-                gridState = l.GridState,
+                gridState = l.GridState ?? "",
                 refWidth  = l.RefWidth,
                 refHeight = l.RefHeight,
+                isTemplate = false
             })
             .ToList();
+
+        // Add virtual templates
+        string[] templateIds = { "foco", "columnas", "filas", "cuadricula" };
+        foreach (var tid in templateIds)
+        {
+            var template = CZETemplateHelper.GetVirtualTemplate(tid);
+            if (template != null)
+            {
+                layouts.Add(new
+                {
+                    id = template.Id,
+                    name = template.Name,
+                    zones = template.Zones.Select(z => (object)new { id = z.Id, x = z.X, y = z.Y, w = z.W, h = z.H }).ToList(),
+                    spacing = template.Spacing,
+                    gridState = "",
+                    refWidth = 10000,
+                    refHeight = 10000,
+                    isTemplate = true
+                });
+            }
+        }
+
         return new { layouts };
     }
 
@@ -1721,7 +1760,7 @@ public sealed class WebBridge
                 {
                     monitorPtInstance = monitor.PtInstance,
                     monitorName       = monitor.PtName,
-                    desktopId         = desktopId.ToString("D"),
+                    desktopId         = desktopId.ToString("D").ToLowerInvariant(),
                     desktopName       = $"Escritorio {d + 1}",
                     isCurrentDesktop  = (desktopId == currentDesktopId),
                     layoutId          = layoutId ?? "",
@@ -1730,7 +1769,7 @@ public sealed class WebBridge
         }
         return new { 
             entries,
-            currentDesktopId = currentDesktopId?.ToString("D")
+            currentDesktopId = currentDesktopId?.ToString("D").ToLowerInvariant()
         };
     }
 
@@ -1795,3 +1834,5 @@ public sealed class WebBridge
         }
     }
 }
+
+

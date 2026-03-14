@@ -50,3 +50,5 @@ public partial class OsdWindow : Window
         Top  = workArea.Bottom - ActualHeight - 24;
     }
 }
+
+

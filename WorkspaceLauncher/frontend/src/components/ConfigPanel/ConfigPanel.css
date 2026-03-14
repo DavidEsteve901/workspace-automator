@@ -260,6 +260,28 @@
   border-top: 1px solid var(--border);
 }
 
+.btn-launch {
+  background: linear-gradient(135deg, #00E676 0%, #00C853 100%);
+  color: #000;
+  border: none;
+  padding: 8px 18px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all var(--transition);
+  box-shadow: 0 0 15px rgba(0, 230, 118, 0.2);
+}
+
+.btn-launch:hover:not(:disabled) {
+  background: linear-gradient(135deg, #69F0AE 0%, #00E676 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 0 25px rgba(0, 230, 118, 0.3);
+}
+
 .btn-launch.btn-success {
   background: var(--success);
   border-color: var(--success);

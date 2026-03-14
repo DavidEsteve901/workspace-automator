@@ -9,6 +9,8 @@ public static class ActiveLayoutMap
     public static string MakeKey(string ptInstance, Guid desktopId)
     {
         string normalizedPt = (ptInstance ?? "").Trim('{', '}').ToLowerInvariant();
-        return $"{normalizedPt}|{desktopId:D}";
+        return $"{normalizedPt}|{desktopId.ToString("D").ToLowerInvariant()}";
     }
 }
+
+

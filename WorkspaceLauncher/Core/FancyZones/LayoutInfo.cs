@@ -32,3 +32,5 @@ public class CanvasZoneInfo
     [JsonPropertyName("height")]
     public int Height { get; set; }
 }
+
+

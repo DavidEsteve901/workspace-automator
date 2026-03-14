@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { X, RefreshCcw, AlertCircle, Monitor, Layout, CheckCircle2, ChevronDown, ChevronRight, Share2 } from 'lucide-react'
 import { bridge } from '../../api/bridge.js'
 import { renderZones } from '../../utils/fzUtils.jsx'
+import PremiumSelect from '../PremiumSelect.jsx'
 import './SyncModal.css'
 
 export default function SyncModal({ category, validation, onClose, onSynced, fzSyncEnabled }) {
@@ -215,32 +216,24 @@ export default function SyncModal({ category, validation, onClose, onSynced, fzS
                           <span>{solution}</span>
                           {w.type === 'monitor_missing' && (
                             <div style={{ marginTop: '6px' }}>
-                              <select 
+                              <PremiumSelect 
                                 value={resolutions[w.itemIndex] || w.proposedMonitor}
-                                onChange={(e) => handleMonitorSelect(w.itemIndex, e.target.value)}
-                                className="sync-monitor-select"
-                              >
-                                {validation.activeMonitors?.map(mon => (
-                                  <option key={mon} value={mon}>{mon}</option>
-                                ))}
-                              </select>
+                                options={validation.activeMonitors?.map(mon => ({ value: mon, label: mon }))}
+                                onChange={(val) => handleMonitorSelect(w.itemIndex, val)}
+                              />
                             </div>
                           )}
 
                           {w.type === 'layout_mismatch' && (
                             <div style={{ marginTop: '6px' }}>
-                              <select 
+                              <PremiumSelect 
                                 value={layoutResolutions[i] || w.layoutUuid}
-                                onChange={(e) => handleLayoutSelect(i, e.target.value)}
-                                className="sync-monitor-select"
-                              >
-                                {(validation.availableLayouts || []).map(layout => (
-                                  <option key={layout.uuid} value={layout.uuid}>
-                                    {layout.name}
-                                  </option>
-                                ))}
-                                <option value="">Ninguno / Libre</option>
-                              </select>
+                                options={[
+                                  ...(validation.availableLayouts || []).map(layout => ({ value: layout.uuid, label: layout.name })),
+                                  { value: '', label: 'Ninguno / Libre' }
+                                ]}
+                                onChange={(val) => handleLayoutSelect(i, val)}
+                              />
                             </div>
                           )}
                         </div>

@@ -142,3 +142,5 @@ public sealed class FancyZonesAdapter : IZoneEngine
         return rects;
     }
 }
+
+

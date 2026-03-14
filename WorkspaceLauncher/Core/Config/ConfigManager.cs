@@ -46,11 +46,27 @@ public sealed class ConfigManager
         }
         else if (string.IsNullOrEmpty(_configPath))
         {
-            _configPath = Path.Combine(AppContext.BaseDirectory, ConfigFileName);
+            // First check local directory
+            string localPath = Path.Combine(AppContext.BaseDirectory, ConfigFileName);
+            if (File.Exists(localPath))
+            {
+                _configPath = localPath;
+            }
+            else
+            {
+                // Fallback to AppData for a cleaner distribution
+                string appDataFolder = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "WorkspaceLauncher"
+                );
+                Directory.CreateDirectory(appDataFolder);
+                _configPath = Path.Combine(appDataFolder, ConfigFileName);
+            }
         }
 
         if (!File.Exists(_configPath))
         {
+            Console.WriteLine($"[Config] Creating new config at: {_configPath}");
             _config = new AppConfig();
             Save();
             return;
@@ -61,7 +77,7 @@ public sealed class ConfigManager
             string json = File.ReadAllText(_configPath);
             _config     = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions) ?? new AppConfig();
             
-            // Sincronizar categorías por si faltan en el JSON (retrocompatibilidad)
+            // Sync categories for missing ones in JSON (backward compatibility)
             SyncCategoryOrder();
             
             Console.WriteLine($"[Config] Loaded from: {_configPath}");
@@ -132,3 +148,5 @@ public sealed class ConfigManager
         }
     }
 }
+
+

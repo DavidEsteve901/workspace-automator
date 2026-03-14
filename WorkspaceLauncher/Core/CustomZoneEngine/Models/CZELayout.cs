@@ -7,3 +7,5 @@ public class CZELayout
     public List<CZEZone>  Zones   { get; set; } = [];
     public int            Spacing { get; set; } = 0;
 }
+
+

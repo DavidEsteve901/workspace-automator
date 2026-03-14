@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Settings, Keyboard, Monitor, Save, Check, Folder, LayoutGrid, ChevronRight, X, ArrowRightToLine, ArrowLeftToLine, ArrowRightSquare, ArrowLeftSquare, RefreshCcw, RotateCw, Palette, Sun, Moon } from 'lucide-react'
 import { bridge, onEvent, offEvent } from '../../api/bridge.js'
+import PremiumSelect from '../PremiumSelect.jsx'
 import './ConfigPanel.css'
 
 const ACCENT_PALETTES = [
@@ -464,18 +465,18 @@ function FzStatusModal({ onClose }) {
                             )}
                           </span>
                         </div>
-                        <select
-                          className="fz-modal-layout-select"
-                          value={entry.activeLayoutUuid || ''}
-                          onChange={e => handleChangeLayout(entry, e.target.value)}
-                          disabled={changingEntry === entry}
-                          onClick={e => e.stopPropagation()}
-                        >
-                          <option value="">Sin layout</option>
-                          {(fzStatus?.layouts || []).map(l => (
-                            <option key={l.uuid} value={l.uuid}>{l.name}</option>
-                          ))}
-                        </select>
+                        <div className="fz-modal-layout-select-wrapper">
+                          <PremiumSelect
+                            value={entry.activeLayoutUuid || ''}
+                            options={[
+                              { uuid: '', name: 'Sin layout' },
+                              ...(fzStatus?.layouts || [])
+                            ]}
+                            onChange={val => handleChangeLayout(entry, val)}
+                            valueKey="uuid"
+                            labelKey="name"
+                          />
+                        </div>
                       </div>
                     ))}
                   </div>

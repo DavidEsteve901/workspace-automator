@@ -391,3 +391,5 @@ public sealed class HotkeyProcessor
         return ZoneCycler.DetectZoneByPosition(hwnd);
     }
 }
+
+

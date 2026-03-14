@@ -190,3 +190,5 @@ public static class MonitorManager
     [DllImport("shcore.dll")]
     private static extern int GetDpiForMonitor(nint hMonitor, int dpiType, out uint dpiX, out uint dpiY);
 }
+
+

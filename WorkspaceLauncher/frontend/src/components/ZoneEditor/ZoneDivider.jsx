@@ -1,11 +1,9 @@
 import { useRef } from 'react';
 
 const HANDLE_SIZE = 16;
-const MIN_ZONE_FRAC = 500 / 10000;
+const MIN_ZONE_FRAC = 1 / 100;
 
 export function ZoneDivider({ divider, canvasW, canvasH, onMove, onCommit, isHovered, onHover, onDraggingChange }) {
-  const dragStart = useRef(null);
-  const posRef = useRef(divider.position);
   const dragging = useRef(false);
   const isV = divider.axis === 'v';
 
@@ -14,31 +12,21 @@ export function ZoneDivider({ divider, canvasW, canvasH, onMove, onCommit, isHov
     e.stopPropagation();
     dragging.current = true;
     onDraggingChange?.(true);
-    posRef.current = divider.position;
-    dragStart.current = { x: e.clientX, y: e.clientY };
+
+    const canvasRect = e.currentTarget.parentElement.getBoundingClientRect();
 
     const onMouseMove = (me) => {
-      if (!dragStart.current) return;
-      const dx = (me.clientX - dragStart.current.x) / canvasW;
-      const dy = (me.clientY - dragStart.current.y) / canvasH;
-      dragStart.current = { x: me.clientX, y: me.clientY };
-
-      const rawDelta = isV ? dx : dy;
-      const proposed = posRef.current + rawDelta;
-
-      const lo = MIN_ZONE_FRAC;
-      const hi = 1 - MIN_ZONE_FRAC;
-      const clamped = Math.max(lo, Math.min(hi, proposed));
-      const delta = clamped - posRef.current;
-      posRef.current = clamped;
-
-      if (Math.abs(delta) > 1e-6) onMove(divider, delta);
+      // Direct absolute coordinate mapping for 100% precision
+      const posPx = isV ? (me.clientX - canvasRect.left) : (me.clientY - canvasRect.top);
+      const canvasSize = isV ? canvasRect.width : canvasRect.height;
+      const targetPos = posPx / canvasSize;
+      
+      onMove(divider, targetPos);
     };
 
     const onMouseUp = () => {
       dragging.current = false;
       onDraggingChange?.(false);
-      dragStart.current = null;
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       onCommit?.();
@@ -49,7 +37,7 @@ export function ZoneDivider({ divider, canvasW, canvasH, onMove, onCommit, isHov
   };
 
   const handleMouseEnter = () => onHover(divider);
-  const handleMouseLeave = () => { if (!dragging.current) onHover(null); };
+  const handleMouseLeave = () => onHover(null); 
 
   const hitStyle = isV
     ? {

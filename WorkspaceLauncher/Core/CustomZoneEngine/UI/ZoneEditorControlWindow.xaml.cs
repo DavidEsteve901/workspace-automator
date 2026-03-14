@@ -8,7 +8,7 @@ using System.Text.Json;
 
 namespace WorkspaceLauncher.Core.CustomZoneEngine.UI;
 
-public partial class ZoneEditorControlWindow : Window
+public partial class ZoneEditorControlWindow : System.Windows.Window
 {
     private readonly string _monitorHardwareId;
     private readonly string _layoutId;
@@ -117,3 +117,11 @@ public partial class ZoneEditorControlWindow : Window
         }
     }
 }
+
+
+
+
+
+
+
+

@@ -128,7 +128,6 @@ input, select, textarea {
 input:hover, select:hover, textarea:hover {
   border-color: var(--border-accent);
   background-color: var(--bg-hover);
-  transform: scale(1.005); /* Extremely subtle increase in size */
 }
 
 input:focus, select:focus, textarea:focus {
@@ -141,21 +140,39 @@ input:focus, select:focus, textarea:focus {
 select {
   cursor: pointer;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2300D2FF' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  -webkit-appearance: none;
+  background-image: var(--fz-select-arrow, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2300D2FF' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"));
   background-repeat: no-repeat;
   background-position: right 14px center;
-  padding-right: 38px;
+  padding-right: 40px;
+  /* Smooth open arrow indicator */
+  transition: all var(--transition-fast);
 }
 
-/* Explicitly keep background image on hover to prevent flickering/disappearing */
-select:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2300D2FF' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+/* Preserve background image on all interactive states */
+select:hover,
+select:focus {
+  background-image: var(--fz-select-arrow, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2300D2FF' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"));
+  background-repeat: no-repeat;
+  background-position: right 14px center;
 }
 
 select option {
-  background-color: #1A1A1A;
+  background-color: #18181a;
   color: #E0E0E0;
-  padding: 12px;
+  padding: 10px 14px;
+  font-weight: 500;
+}
+
+select optgroup {
+  background-color: #111113;
+  color: rgba(255,255,255,0.35);
+  font-style: normal;
+  font-weight: 800;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 6px 10px;
 }
 
 /* ── Scrollbar ────────────────────────────────────────────────────────── */

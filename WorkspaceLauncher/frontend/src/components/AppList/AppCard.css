@@ -138,3 +138,23 @@
   background: var(--danger-dim);
   color: var(--danger);
 }
+
+/* ── Disabled State ──────────────────────────────────────────────────── */
+.app-card.disabled {
+  opacity: 0.6;
+  background: rgba(255, 255, 255, 0.02);
+  border-style: dashed;
+}
+
+.app-card.disabled .app-card-avatar {
+  filter: grayscale(1) opacity(0.5);
+}
+
+.app-card.disabled .app-card-name {
+  color: var(--text-muted);
+}
+
+.app-card.disabled .app-type-badge {
+  filter: grayscale(1);
+  opacity: 0.5;
+}

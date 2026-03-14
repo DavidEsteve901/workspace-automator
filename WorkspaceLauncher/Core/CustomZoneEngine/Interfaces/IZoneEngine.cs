@@ -24,3 +24,5 @@ public interface IZoneEngine
     /// <summary>All zone rects for a layout (for overlay rendering).</summary>
     IReadOnlyList<RECT> GetAllZoneRects(string layoutId, RECT workArea);
 }
+
+

@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { FolderOpen, X, Globe, Terminal, Code2, FileCode, MonitorSmartphone, Cog, ArrowLeft, RotateCw, AlertCircle, CheckCircle2, Plus, Trash2, GripVertical } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { FolderOpen, X, Globe, Terminal, Code2, FileCode, MonitorSmartphone, Cog, ArrowLeft, RotateCw, AlertCircle, CheckCircle2, Plus, Trash2, GripVertical, ChevronDown } from 'lucide-react'
 import { bridge } from '../../api/bridge.js'
 import { renderZones } from '../../utils/fzUtils.jsx'
+import { ErrorBoundary } from '../ErrorBoundary.jsx'
+import PremiumSelect from '../PremiumSelect.jsx'
 import './ItemDialog.css'
 
 const ITEM_TYPES = [
@@ -28,22 +30,25 @@ const DEFAULT_ITEM = {
   ide_cmd: '',
   browser: 'default',
   browser_display: 'Por defecto del sistema',
-  monitor: 'Por defecto',
-  desktop: 'Por defecto',
+  monitor: '',
+  desktop: '',
   fancyzone: 'Ninguna',
   fancyzone_uuid: '',
-  delay: '0'
+  cze_layout_id: '',
+  cze_zone_index: null,
+  delay: '0',
+  is_enabled: true
 }
 
-export default function ItemDialog({ category, index, item, validation, fzSyncEnabled, czeActiveLayouts, onSave, onClose }) {
+export default function ItemDialog({ category, index, item, validation, fzSyncEnabled, czeActiveLayouts, currentDesktopId, hotkeys, categories, onSave, onClose }) {
   // Wizard state: 1 = Type selection, 2 = Form details
   const [step, setStep] = useState(item ? 2 : 1)
   // Ensure we don't pick up null values from item that might break the state
   const [form, setForm] = useState({ 
     ...DEFAULT_ITEM, 
     ...(item || {}),
-    desktop: item?.desktop || 'Por defecto',
-    monitor: item?.monitor || 'Por defecto'
+    desktop: item?.desktop || '',
+    monitor: item?.monitor || ''
   })
 
   // Data states
@@ -52,6 +57,8 @@ export default function ItemDialog({ category, index, item, validation, fzSyncEn
   const [czeLayouts, setCzeLayouts] = useState([])  // CZE layout list — always loaded
   const [rawMonitors, setRawMonitors] = useState([]) // Monitors — always loaded
   const [rawDesktops, setRawDesktops] = useState([]) // Desktops — always loaded
+  const monitors = useMemo(() => rawMonitors, [rawMonitors])
+  const desktops = useMemo(() => rawDesktops, [rawDesktops])
   const [syncState, setSyncState] = useState('idle') // 'idle' | 'syncing' | 'synced' | 'error'
   const [detectedLayout, setDetectedLayout] = useState(null)
 
@@ -116,6 +123,25 @@ export default function ItemDialog({ category, index, item, validation, fzSyncEn
     else setFzStatus(null) // Clear stale active-layout data when sync is disabled
   }, [fzSyncEnabled, loadFzStatus, loadCzeLayouts, loadRawEnv, loadFzLayouts])
 
+  // Default assignments for NEW items
+  useEffect(() => {
+    if (index === -1) {
+      setForm(f => {
+        let changed = false;
+        const updates = { ...f };
+        if (!f.monitor && monitors.length > 0) {
+          const primary = monitors.find(m => m.isPrimary) || monitors[0];
+          if (primary) { updates.monitor = primary.ptName || primary.name; changed = true; }
+        }
+        if (!f.desktop && desktops.length > 0) {
+          const current = desktops.find(d => d.isCurrent) || desktops[0];
+          if (current) { updates.desktop = current.name; changed = true; }
+        }
+        return changed ? updates : f;
+      });
+    }
+  }, [index, monitors, desktops])
+
   // Background polling: refresh active-layout status + env periodically
   useEffect(() => {
     const timer = setInterval(() => {
@@ -126,21 +152,28 @@ export default function ItemDialog({ category, index, item, validation, fzSyncEn
     return () => clearInterval(timer)
   }, [loadRawEnv, loadFzLayouts, loadFzStatus])
 
-  // Monitors and desktops always from independent sources (rawMonitors/rawDesktops).
-  // fzStatus.monitors is redundant now — rawMonitors comes from the same underlying data.
-  const monitors = useMemo(() => rawMonitors, [rawMonitors])
-  const desktops = useMemo(() => rawDesktops, [rawDesktops])
+
 
   // Layouts: always expose BOTH CZE (native) and FZ layouts regardless of fzSyncEnabled.
-  // fzSyncEnabled only controls whether the app WRITES to PowerToys files at launch —
-  // it should never hide layouts from the editor.
   const availableLayouts = useMemo(() => ({
     native: czeLayouts.map(l => ({
       uuid: l.id,
       name: l.name,
-      isCustom: true,
+      isCustom: !l.isTemplate,
       isNative: true,
-      info: { zones: l.zones, spacing: l.spacing }
+      isTemplate: l.isTemplate,
+      info: { 
+        type: 'canvas', 
+        zones: (l.zones || l.Zones || []).map(z => ({
+          x: z.x ?? z.X ?? 0,
+          y: z.y ?? z.Y ?? 0,
+          w: z.w ?? z.W ?? 10000,
+          h: z.h ?? z.H ?? 10000
+        })),
+        spacing: l.spacing || 0, 
+        refWidth: 10000, 
+        refHeight: 10000 
+      }
     })),
     // Filter out FZ layouts if sync is disabled — show only native CZE layouts
     custom: fzSyncEnabled ? fzLayouts.filter(l => l.isCustom).map(l => ({ ...l })) : [],
@@ -160,7 +193,7 @@ export default function ItemDialog({ category, index, item, validation, fzSyncEn
 
   // ── Auto-detect active layout when monitor/desktop changes ──────────
   useEffect(() => {
-    if (form.monitor === 'Por defecto') {
+    if (!form.monitor || form.monitor === 'Por defecto') {
       setDetectedLayout(null)
       return
     }
@@ -170,9 +203,9 @@ export default function ItemDialog({ category, index, item, validation, fzSyncEn
       (m.name && m.name === form.monitor) ||
       (m.label && m.label === form.monitor) ||
       String(m.id) === String(form.monitor) ||
-      (m.displayLabel && (m.displayLabel === form.monitor || m.displayLabel.replace(' ★', '').trim() === form.monitor)) ||
-      (m.name && m.name.includes(form.monitor)) ||
-      (m.label && m.label.includes(form.monitor))
+      (typeof m.displayLabel === 'string' && (m.displayLabel === form.monitor || m.displayLabel.replace(' ★', '').trim() === form.monitor)) ||
+      (m.name && typeof form.monitor === 'string' && m.name.includes(form.monitor)) ||
+      (m.label && typeof form.monitor === 'string' && m.label.includes(form.monitor))
     )
     if (!monitor) {
       setDetectedLayout(null)
@@ -208,6 +241,7 @@ export default function ItemDialog({ category, index, item, validation, fzSyncEn
           uuid: layoutInfo.uuid,
           name: layoutInfo.name,
           isCustom: layoutInfo.isCustom,
+          info: layoutInfo.info || layoutInfo, // Capturamos la info para la previsualización
           monitorLabel: match.monitorLabel,
           desktopName: match.desktopName
         })
@@ -221,18 +255,28 @@ export default function ItemDialog({ category, index, item, validation, fzSyncEn
 
     // ── PATH B: CustomZoneEngine (Fallback/Sync Disabled) ──
     if (!fzSyncEnabled && czeActiveLayouts && monitor.ptInstance) {
-      const dId = desktopId || "00000000-0000-0000-0000-000000000000"
-      const key = `${monitor.ptInstance}:${dId.toLowerCase()}`
+      // Si el escritorio es "Por defecto", usamos el ID del escritorio actual detectado por el bridge
+      const dId = desktopId || currentDesktopId || "00000000-0000-0000-0000-000000000000"
+      
+      // Normalized as per ActiveLayoutMap.cs: normalizedPt|desktopId (lowercase)
+      const normPt = (monitor.ptInstance || "").trim().replace(/^\{|\}$/g, '').toLowerCase()
+      if (!normPt) {
+        setDetectedLayout(null)
+        return
+      }
+      const key = `${normPt}|${dId.toLowerCase()}`
       const activeLayoutId = czeActiveLayouts[key]
 
       if (activeLayoutId) {
-        const layout = availableLayouts.native.find(l => l.uuid === activeLayoutId)
+        const layout = availableLayouts.native.find(l => String(l.uuid).toLowerCase() === String(activeLayoutId).toLowerCase())
         if (layout) {
           setDetectedLayout({
             uuid: layout.uuid,
             name: layout.name,
-            isCustom: true,
+            isCustom: layout.isCustom,
             isNative: true,
+            isTemplate: layout.isTemplate,
+            info: layout.info, // Añadido para que renderZones funcione
             monitorLabel: monitor.displayLabel || monitor.name,
             desktopName: form.desktop
           })
@@ -244,7 +288,7 @@ export default function ItemDialog({ category, index, item, validation, fzSyncEn
     }
 
     setDetectedLayout(null)
-  }, [form.monitor, form.desktop, fzSyncEnabled, fzStatus, czeActiveLayouts, monitors, desktops, availableLayouts.native])
+  }, [form.monitor, form.desktop, fzSyncEnabled, fzStatus, czeActiveLayouts, currentDesktopId, monitors, desktops, availableLayouts.native])
 
   // Trigger refresh when monitor/desktop changes
   const handleEnvChange = (key, val) => {
@@ -354,43 +398,41 @@ export default function ItemDialog({ category, index, item, validation, fzSyncEn
           {/* URL: browser */}
           {form.type === 'url' && (
             <Field label="Navegador preferido">
-              <select value={form.browser || 'default'} onChange={e => {
-                const b = BROWSERS.find(br => br.value === e.target.value)
-                set('browser', e.target.value); set('browser_display', b?.label || e.target.value)
-              }}>
-                {BROWSERS.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
-              </select>
+              <PremiumSelect 
+                value={form.browser || 'default'} 
+                options={BROWSERS}
+                onChange={val => {
+                  const b = BROWSERS.find(br => br.value === val)
+                  set('browser', val); set('browser_display', b?.label || val)
+                }}
+              />
             </Field>
           )}
 
           {/* Monitor & Desktop */}
           <div className="field-row">
             <Field label="Monitor">
-              <select value={form.monitor} onChange={e => handleEnvChange('monitor', e.target.value)}>
-                <option value="Por defecto">Por defecto</option>
-                {monitors.map(m => (
-                  <option key={m.id} value={m.ptName || m.name}>{m.displayLabel || m.label || m.name}</option>
-                ))}
-                {/* Fallback option if the saved monitor is completely missing from the active list */}
-                {form.monitor !== 'Por defecto' && !monitors.find(m => m.ptName === form.monitor || m.name === form.monitor) && (
-                  <option value={form.monitor}>{form.monitor} (Desconectado/No encontrado)</option>
-                )}
-              </select>
+              <PremiumSelect 
+                value={form.monitor} 
+                options={[
+                  ...monitors.map(m => ({ value: m.ptName || m.name, label: m.displayLabel || m.label || m.name })),
+                  ...(form.monitor && !monitors.find(m => m.ptName === form.monitor || m.name === form.monitor || m.displayLabel === form.monitor || m.label === form.monitor) 
+                    ? [{ value: form.monitor, label: `${form.monitor} (Desconectado)` }] : [])
+                ]}
+                onChange={val => handleEnvChange('monitor', val)}
+              />
             </Field>
             <Field label="Escritorio Virtual">
-              <select value={form.desktop} onChange={e => handleEnvChange('desktop', e.target.value)}>
-                <option value="Por defecto">Por defecto</option>
-                {desktops.map((dk, i) => (
-                  <option key={dk.id || i} value={dk.name}>
-                    {dk.name} {dk.isCurrent ? ' (Actual)' : ''}
-                  </option>
-                ))}
-              </select>
+              <PremiumSelect 
+                value={form.desktop} 
+                options={desktops.map(dk => ({ value: dk.name, label: `${dk.name}${dk.isCurrent ? ' (Actual)' : ''}` }))}
+                onChange={val => handleEnvChange('desktop', val)}
+              />
             </Field>
           </div>
 
           {/* Active layout detection indicator */}
-          {form.monitor !== 'Por defecto' && (
+          {form.monitor && (
             <ActiveLayoutIndicator
               fzStatus={fzStatus}
               syncState={syncState}
@@ -399,22 +441,92 @@ export default function ItemDialog({ category, index, item, validation, fzSyncEn
             />
           )}
 
-          {/* FancyZones Interactive Render */}
-          <FancyZonesVisualizer
-            form={form}
-            set={set}
-            availableLayouts={availableLayouts}
-            flatLayouts={flatLayouts}
-            fzSyncEnabled={fzSyncEnabled}
-            detectedLayout={detectedLayout}
-            onRefresh={loadFzStatus}
-            validation={validation}
-          />
+          {/* Layout Interaction - Conditional Component */}
+          <ErrorBoundary>
+            {fzSyncEnabled ? (
+              <FancyZonesVisualizer
+                form={form}
+                set={set}
+                availableLayouts={availableLayouts}
+                flatLayouts={flatLayouts}
+                detectedLayout={detectedLayout}
+                onRefresh={loadFzStatus}
+                validation={validation}
+                categories={categories}
+                currentCategory={category}
+                currentIndex={index}
+              />
+            ) : (
+              <CzeActiveVisualizer
+                form={form}
+                set={set}
+                detectedLayout={detectedLayout}
+                hotkeys={hotkeys}
+                categories={categories}
+                currentCategory={category}
+                currentIndex={index}
+                validation={validation}
+                onRefresh={loadFzStatus}
+              />
+            )}
+          </ErrorBoundary>
 
           {/* Delay */}
           <Field label="Retardo antes de lanzar (Milisegundos)">
             <input type="number" min="0" value={form.delay} onChange={e => set('delay', e.target.value)} style={{ maxWidth: 150 }} />
           </Field>
+
+          {/* Status Toggle */}
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center', 
+            padding: '12px 14px',
+            background: form.is_enabled ? 'rgba(0, 230, 118, 0.05)' : 'rgba(255, 255, 255, 0.03)',
+            borderRadius: '12px',
+            marginTop: '24px',
+            border: form.is_enabled ? '1px solid rgba(0, 230, 118, 0.2)' : '1px solid rgba(255, 255, 255, 0.08)',
+            transition: 'all 0.2s ease'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ 
+                width: '8px', 
+                height: '8px', 
+                borderRadius: '50%', 
+                background: form.is_enabled ? '#00e676' : '#9e9e9e',
+                boxShadow: form.is_enabled ? '0 0 8px #00e676' : 'none'
+              }} />
+              <span style={{ fontSize: '14px', fontWeight: 700, color: form.is_enabled ? 'white' : 'var(--fz-text-muted)' }}>
+                {form.is_enabled ? 'Ventana Habilitada' : 'Ventana Deshabilitada'}
+              </span>
+            </div>
+            <button 
+              type="button"
+              onClick={() => set('is_enabled', !form.is_enabled)}
+              style={{
+                background: form.is_enabled ? '#00e676' : 'rgba(255, 255, 255, 0.1)',
+                border: 'none',
+                width: '40px',
+                height: '22px',
+                borderRadius: '11px',
+                position: 'relative',
+                cursor: 'pointer',
+                transition: 'background 0.2s ease'
+              }}
+            >
+              <div style={{
+                position: 'absolute',
+                top: '2px',
+                left: form.is_enabled ? '20px' : '2px',
+                width: '18px',
+                height: '18px',
+                background: 'white',
+                borderRadius: '50%',
+                transition: 'left 0.2s ease',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
+              }} />
+            </button>
+          </div>
         </div>
 
         <div className="dialog-footer">
@@ -500,31 +612,73 @@ function ActiveLayoutIndicator({ fzStatus, syncState, onRefresh, fzSyncEnabled }
   )
 }
 
-// ── Mini-Motor Renderizador de FancyZones ──────────────────────────────────
-function FancyZonesVisualizer({ form, set, availableLayouts, flatLayouts, fzSyncEnabled, detectedLayout, onRefresh, validation }) {
-  // Obtener el layout actual
+// ── Componente A: Sincronización con FancyZones ACTIVADA ───────────────────
+// Permite elegir layouts, sincronizar si hay desajuste, etc.
+function FancyZonesVisualizer({ 
+  form, set, availableLayouts, flatLayouts, detectedLayout, 
+  onRefresh, validation, categories, currentCategory, currentIndex 
+}) {
   const currentLayout = flatLayouts.find(l => l.uuid === form.fancyzone_uuid) || null
+
+  const occupancyMap = useMemo(() => {
+    if (!form.monitor || !currentLayout) return {};
+    const map = {};
+    const apps = categories[currentCategory] || [];
+    apps.forEach((app, idx) => {
+      if (!app) return;
+      if (idx === currentIndex) return;
+      if (app.monitor === form.monitor && app.desktop === form.desktop && app.fancyzone_uuid === form.fancyzone_uuid && app.is_enabled !== false) {
+        const zoneMatch = String(app.fancyzone || "").match(/Zona (\d+)/);
+        if (zoneMatch) {
+          const zIdx = parseInt(zoneMatch[1]) - 1;
+          const appPath = String(app.path || "");
+          const appName = appPath ? appPath.split(/[\\/]/).pop().replace('.exe', '') : 'App';
+          if (!map[zIdx]) map[zIdx] = appName;
+          else map[zIdx] += `, ${appName}`;
+        }
+      }
+    });
+    return map;
+  }, [form.monitor, form.desktop, form.fancyzone_uuid, currentLayout, categories, currentCategory, currentIndex])
 
   const handleZoneClick = (idx) => {
     if (!currentLayout) return;
     set('fancyzone', `${currentLayout.name} - Zona ${idx + 1}`);
     set('fancyzone_uuid', currentLayout.uuid);
+    
+    // Sync CZE specific fields if it's a native layout
+    if (currentLayout.isNative) {
+      set('cze_layout_id', currentLayout.uuid);
+      set('cze_zone_index', idx);
+    } else {
+      set('cze_layout_id', '');
+      set('cze_zone_index', null);
+    }
   }
 
   const handleLayoutChange = (uuid) => {
     if (uuid === "Ninguna") {
       set('fancyzone', "Ninguna");
       set('fancyzone_uuid', "");
+      set('cze_layout_id', "");
+      set('cze_zone_index', null);
       return;
     }
     const layout = flatLayouts.find(l => l.uuid === uuid);
     if (layout) {
       set('fancyzone_uuid', layout.uuid);
       set('fancyzone', `${layout.name} - Zona 1`);
+      
+      if (layout.isNative) {
+        set('cze_layout_id', layout.uuid);
+        set('cze_zone_index', 0);
+      } else {
+        set('cze_layout_id', "");
+        set('cze_zone_index', null);
+      }
     }
   }
 
-  // Parsear el número de zona actual del string "Nombre Layout - Zona X"
   const activeZoneIdx = useMemo(() => {
     if (form.fancyzone === "Ninguna" || !form.fancyzone) return -1;
     const parts = form.fancyzone.split("Zona ");
@@ -532,7 +686,6 @@ function FancyZonesVisualizer({ form, set, availableLayouts, flatLayouts, fzSync
     return -1;
   }, [form.fancyzone])
 
-  // Check if current selection matches the detected (active) layout
   const isActiveLayout = detectedLayout && form.fancyzone_uuid === detectedLayout.uuid
 
   return (
@@ -546,72 +699,44 @@ function FancyZonesVisualizer({ form, set, availableLayouts, flatLayouts, fzSync
               className={isActiveLayout ? 'fz-select-active' : ''}
             >
               <option value="Ninguna">Ninguno / Libre</option>
-
               {availableLayouts.native.length > 0 && (
                 <optgroup label="Diseños Propios (CZE)">
                   {availableLayouts.native.map(l => (
-                    <option key={l.uuid} value={l.uuid}>
-                      {l.name}
-                    </option>
+                    <option key={l.uuid} value={l.uuid}>{l.name}</option>
                   ))}
                 </optgroup>
               )}
-
               {availableLayouts.custom.length > 0 && (
                 <optgroup label="Diseños Personalizados FancyZones">
                   {availableLayouts.custom.map(l => (
-                    <option key={l.uuid} value={l.uuid}>
-                      {l.name} {detectedLayout?.uuid === l.uuid ? '✓ ACTIVO' : ''}
-                    </option>
+                    <option key={l.uuid} value={l.uuid}>{l.name} {detectedLayout?.uuid === l.uuid ? '✓ ACTIVO' : ''}</option>
                   ))}
                 </optgroup>
               )}
-
               {availableLayouts.templates.length > 0 && (
                 <optgroup label="Plantillas de FancyZones">
                   {availableLayouts.templates.map(l => (
-                    <option key={l.uuid} value={l.uuid}>
-                      {l.name} (Plantilla) {detectedLayout?.uuid === l.uuid ? '✓ ACTIVO' : ''}
-                    </option>
+                    <option key={l.uuid} value={l.uuid}>{l.name} (Plantilla) {detectedLayout?.uuid === l.uuid ? '✓ ACTIVO' : ''}</option>
                   ))}
                 </optgroup>
               )}
             </select>
-            {isActiveLayout && (
-              <span className="fz-active-badge">ACTIVO</span>
-            )}
+            {isActiveLayout && <span className="fz-active-badge">✓ DISEÑO ACTIVO</span>}
           </div>
         </Field>
-
-        {form.fancyzone && form.fancyzone !== "Ninguna" && (
-          <span className="fz-status-text">
-            📍 {form.fancyzone}
-          </span>
-        )}
       </div>
 
       {currentLayout && form.fancyzone_uuid && (
         <div className="fz-render-container" style={{
-          width: '100%',
-          height: '180px',
-          background: 'rgba(0,0,0,0.45)',
-          borderRadius: '12px',
+          width: '100%', height: '180px', background: 'rgba(0,0,0,0.45)', borderRadius: '12px',
           border: isActiveLayout ? '1px solid rgba(0, 230, 118, 0.3)' : '1px solid rgba(255,255,255,0.08)',
-          overflow: 'hidden',
-          position: 'relative',
-          padding: '12px',
-          boxShadow: isActiveLayout
-            ? 'inset 0 0 30px rgba(0,0,0,0.6), 0 0 15px rgba(0, 230, 118, 0.1)'
-            : 'inset 0 0 30px rgba(0,0,0,0.6)',
-          boxSizing: 'border-box'
+          overflow: 'hidden', position: 'relative', padding: '12px', boxSizing: 'border-box',
+          boxShadow: isActiveLayout ? 'inset 0 0 30px rgba(0,0,0,0.6), 0 0 15px rgba(0, 230, 118, 0.1)' : 'inset 0 0 30px rgba(0,0,0,0.6)'
         }}>
-          {currentLayout.info ? (
-            renderZones(currentLayout.info, activeZoneIdx, handleZoneClick)
-          ) : (
+          {currentLayout.info ? renderZones(currentLayout.info, activeZoneIdx, handleZoneClick, occupancyMap) : (
             <div className="fz-no-preview">
               <AlertCircle size={24} />
               <p>Previsualización no disponible para plantillas estándar</p>
-              <span>El anclaje funcionará, pero no podemos dibujar las zonas</span>
             </div>
           )}
         </div>
@@ -620,16 +745,115 @@ function FancyZonesVisualizer({ form, set, availableLayouts, flatLayouts, fzSync
       {!isActiveLayout && form.fancyzone_uuid && detectedLayout && (
         <div className="fz-warning-bar">
           <AlertCircle size={14} />
-          <span>
-            Este layout <strong>no</strong> es el activo en FancyZones para esta posición.
-            El activo es: <strong>{detectedLayout.name}</strong>
-          </span>
-          <button
-            className="fz-warning-btn"
-            onClick={() => handleLayoutChange(detectedLayout.uuid)}
-          >
-            Usar activo
-          </button>
+          <span>Este activo en {detectedLayout.isNative ? 'CZE' : 'FancyZones'} es: <strong>{detectedLayout.name}</strong></span>
+          <button className="fz-warning-btn" onClick={() => handleLayoutChange(detectedLayout.uuid)}>Usar activo</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Componente B: Modo Nativo (Sincronización DESACTIVADA) ───────────────────
+// Fijado al layout activo del monitor. Solo permite elegir zona.
+function CzeActiveVisualizer({ 
+  form, set, detectedLayout, hotkeys, categories, 
+  currentCategory, currentIndex, validation, onRefresh 
+}) {
+  const currentLayout = detectedLayout;
+
+  // Actualizar automáticamente si el layout configurado no es el detectado
+  useEffect(() => {
+    if (detectedLayout && form.fancyzone_uuid !== detectedLayout.uuid) {
+      set('fancyzone_uuid', detectedLayout.uuid);
+      set('cze_layout_id', detectedLayout.uuid);
+      
+      // No reseteamos la zona forzadamente para no molestar si el usuario está eligiendo,
+      // pero si no hay nada configurado, ponemos Zona 1
+      if (!form.fancyzone || form.fancyzone === "Ninguna") {
+        set('fancyzone', `${detectedLayout.name} - Zona 1`);
+        set('cze_zone_index', 0);
+      }
+    }
+  }, [detectedLayout, form.fancyzone_uuid, form.fancyzone, set])
+
+  const occupancyMap = useMemo(() => {
+    if (!form.monitor || !currentLayout) return {};
+    const map = {};
+    const apps = categories[currentCategory] || [];
+    apps.forEach((app, idx) => {
+      if (!app) return;
+      if (idx === currentIndex) return;
+      if (app.monitor === form.monitor && app.desktop === form.desktop && app.fancyzone_uuid === currentLayout.uuid && app.is_enabled !== false) {
+        const zoneMatch = String(app.fancyzone || "").match(/Zona (\d+)/);
+        if (zoneMatch) {
+          const zIdx = parseInt(zoneMatch[1]) - 1;
+          const appPath = String(app.path || "");
+          const appName = appPath ? appPath.split(/[\\/]/).pop().replace('.exe', '') : 'App';
+          if (!map[zIdx]) map[zIdx] = appName;
+          else map[zIdx] += `, ${appName}`;
+        }
+      }
+    });
+    return map;
+  }, [form.monitor, form.desktop, currentLayout, categories, currentCategory, currentIndex])
+
+  const handleZoneClick = (idx) => {
+    if (!currentLayout) return;
+    set('fancyzone', `${currentLayout.name} - Zona ${idx + 1}`);
+    set('fancyzone_uuid', currentLayout.uuid);
+    set('cze_layout_id', currentLayout.uuid);
+    set('cze_zone_index', idx);
+  }
+
+  const activeZoneIdx = useMemo(() => {
+    if (form.fancyzone === "Ninguna" || !form.fancyzone) return -1;
+    const parts = form.fancyzone.split("Zona ");
+    if (parts.length > 1) return parseInt(parts[1]) - 1;
+    return -1;
+  }, [form.fancyzone])
+
+  return (
+    <div className="fz-visualizer cze-native-mode">
+      <div className="fz-header">
+        <Field label="Layout Activo (Lectura)">
+          <div className="fz-select-row">
+            {detectedLayout ? (
+               <div className="fz-layout-badge active">
+                 <CheckCircle2 size={14} />
+                 <span><strong>{detectedLayout.name}</strong></span>
+               </div>
+            ) : (
+              <div className="fz-layout-badge missing">
+                <AlertCircle size={14} />
+                <span>Sin diseño activo</span>
+              </div>
+            )}
+          </div>
+        </Field>
+      </div>
+
+      {currentLayout ? (
+        <div className="fz-render-container" style={{
+          width: '100%', height: '180px', background: 'rgba(0,0,0,0.5)', borderRadius: '12px',
+          border: '1px solid var(--accent-low)', overflow: 'hidden', position: 'relative',
+          padding: '12px', boxSizing: 'border-box', boxShadow: 'inset 0 0 30px rgba(0,0,0,0.7)'
+        }}>
+          {currentLayout.info ? renderZones(currentLayout.info, activeZoneIdx, handleZoneClick, occupancyMap) : (
+            <div className="fz-no-preview">
+              <AlertCircle size={24} />
+              <p>Previsualización no disponible</p>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="fz-warning-bar critical">
+          <AlertCircle size={20} />
+          <div style={{ flex: 1 }}>
+            <span>No hay un diseño activo para este monitor y escritorio.</span>
+            <div style={{ fontSize: '11px', marginTop: '4px', opacity: 0.9 }}>
+              Usa <strong>{hotkeys?.open_zone_editor || 'Ctrl + Espacio'}</strong> para abrir el Gestor y asignar uno.
+            </div>
+          </div>
         </div>
       )}
 
@@ -645,8 +869,8 @@ function FancyZonesVisualizer({ form, set, availableLayouts, flatLayouts, fzSync
             onClick={async () => {
               const res = await bridge.syncWorkspaceLayouts([form.fancyzone_uuid]);
               if (res?.success) {
-                // Background poll will catch it up
-                loadFzStatus();
+                // El polling de fondo lo actualizará, pero forzamos uno ahora
+                onRefresh?.();
               }
             }}
           >
@@ -677,7 +901,7 @@ function TabManager({ type, value, onChange }) {
 
   const tabs = useMemo(() => {
     if (value === null || value === undefined) return []
-    return value.split(TAB_SEPARATOR).map(t => t.trim())
+    return String(value).split(TAB_SEPARATOR).map(t => t.trim())
   }, [value])
 
   const updateTabs = (newTabs) => {

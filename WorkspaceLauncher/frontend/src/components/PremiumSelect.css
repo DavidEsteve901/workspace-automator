@@ -1,0 +1,99 @@
+/* ── PremiumSelect ─────────────────────────────────────────────────── */
+.premium-select-container {
+  position: relative;
+  width: 100%;
+  z-index: 100;
+}
+
+.premium-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  color: var(--text-primary);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.2);
+}
+
+.premium-select-container.is-open .premium-select-trigger {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.trigger-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.trigger-text {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trigger-arrow {
+  color: var(--accent);
+  transition: transform 0.2s ease;
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+
+.trigger-arrow.rotated {
+  transform: rotate(180deg);
+}
+
+.premium-select-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: #18181b;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05) inset;
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 1000;
+  padding: 6px;
+  animation: selectFadeIn 0.2s ease-out;
+}
+
+.premium-select-option {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: all 0.15s ease;
+}
+
+.premium-select-option:hover {
+  background: rgba(255,255,255,0.05);
+  color: var(--text-primary);
+}
+
+.premium-select-option.selected {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.premium-select-option.empty {
+  color: var(--text-muted);
+  cursor: default;
+  font-style: italic;
+  text-align: center;
+}
+
+@keyframes selectFadeIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}

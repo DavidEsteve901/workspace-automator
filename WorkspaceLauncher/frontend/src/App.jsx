@@ -11,6 +11,7 @@ import TitleBar from './components/TitleBar/TitleBar.jsx'
 import LogConsole from './components/LogConsole/LogConsole.jsx'
 import ConfirmModal from './components/AppList/ConfirmModal.jsx'
 import { ZoneEditorModal } from './components/ZoneEditor/ZoneEditorModal.jsx'
+import { ErrorBoundary } from './components/ErrorBoundary.jsx'
 import './App.css'
 
 export default function App() {
@@ -222,6 +223,7 @@ export default function App() {
       root.style.setProperty('--accent-light',  toHex(lighten(r,.40), lighten(g,.40), lighten(b,.40)))
       root.style.setProperty('--accent-dim',    `rgba(${r},${g},${b},0.12)`)
       root.style.setProperty('--accent-glow',   `rgba(${r},${g},${b},0.25)`)
+      root.style.setProperty('--accent-rgb',    `${r},${g},${b}`)
       root.style.setProperty('--border-accent', `rgba(${r},${g},${b},0.30)`)
       root.style.setProperty('--shadow-accent', `0 0 20px rgba(${r},${g},${b},0.15)`)
       root.style.setProperty('--shadow-glow',   `0 0 40px rgba(${r},${g},${b},0.08)`)
@@ -231,10 +233,16 @@ export default function App() {
       root.style.setProperty('--fz-accent-dim',  `rgba(${r},${g},${b},0.15)`)
       root.style.setProperty('--fz-accent-glow', `rgba(${r},${g},${b},0.35)`)
       root.style.setProperty('--fz-accent-low',  `rgba(${r},${g},${b},0.05)`)
+
+      // Dynamic SVG Select Arrow with the current accent color
+      const svgArrow = `<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgb(${r},${g},${b})' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E`;
+      const arrowDataUri = `url("data:image/svg+xml,${svgArrow.replace(/#/g, '%23').replace(/</g, '%3C').replace(/>/g, '%3E')}")`;
+      root.style.setProperty('--fz-select-arrow', arrowDataUri)
     } else {
       ;['--accent','--accent-hover','--accent-light','--accent-dim','--accent-glow',
         '--border-accent','--shadow-accent','--shadow-glow',
-        '--fz-accent','--fz-accent-hover','--fz-accent-dim','--fz-accent-glow','--fz-accent-low'
+        '--fz-accent','--fz-accent-hover','--fz-accent-dim','--fz-accent-glow','--fz-accent-low',
+        '--fz-select-arrow'
       ].forEach(v => root.style.removeProperty(v))
     }
   }, [])
@@ -265,15 +273,7 @@ export default function App() {
     setCleanModal(activeCategory)
   }, [activeCategory])
 
-  if (!state) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--fz-bg)' }}>
-        <div style={{ color: 'var(--fz-text-muted)' }}>Cargando...</div>
-      </div>
-    )
-  }
-
-  // Standalone Routing (Now after state is loaded so theme/accent colors are available)
+  // Standalone Routing (Handled before state block to preserve transparency of modals and canvas)
   if (route === 'zone-editor') {
     return <ZoneEditorModal standalone onClose={() => window.close()} />
   }
@@ -303,6 +303,14 @@ export default function App() {
           html, body, #root { background: transparent !important; }
         `}</style>
         <ZoneEditorModal standalone controlOnly initialMonitorId={monitorId} initialLayoutId={layoutId} onClose={() => window.close()} />
+      </div>
+    )
+  }
+
+  if (!state) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--fz-bg, #0A0A0A)' }}>
+        <div style={{ color: 'var(--fz-text-muted)' }}>Cargando...</div>
       </div>
     )
   }
@@ -378,16 +386,21 @@ export default function App() {
         </div>
 
         {itemDialog && (
-          <ItemDialog
-            category={itemDialog.category}
-            index={itemDialog.index}
-            item={itemDialog.item}
-            validation={validation}
-            fzSyncEnabled={state.fzSyncEnabled}
-            czeActiveLayouts={state.czeActiveLayouts}
-            onSave={(item) => handleSaveItem(itemDialog.category, itemDialog.index, item)}
-            onClose={() => setItemDialog(null)}
-          />
+          <ErrorBoundary>
+            <ItemDialog
+              category={itemDialog.category}
+              index={itemDialog.index}
+              item={itemDialog.item}
+              validation={validation}
+              fzSyncEnabled={state.fzSyncEnabled}
+              czeActiveLayouts={state.czeActiveLayouts}
+              currentDesktopId={state.currentDesktopId}
+              hotkeys={state.hotkeys}
+              categories={state.categories}
+              onSave={(item) => handleSaveItem(itemDialog.category, itemDialog.index, item)}
+              onClose={() => setItemDialog(null)}
+            />
+          </ErrorBoundary>
         )}
 
         {cleanModal && (

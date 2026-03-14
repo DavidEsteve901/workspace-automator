@@ -28,3 +28,5 @@ public static class ZoneEngineManager
     /// </summary>
     public static bool IsCzeActive => !IsFancyZonesActive;
 }
+
+

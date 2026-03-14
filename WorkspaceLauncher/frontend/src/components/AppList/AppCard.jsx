@@ -45,7 +45,7 @@ export default function AppCard({ item, index, total, onEdit, onDelete, onMoveUp
 
   return (
     <div 
-      className={`app-card ${dragging ? 'dragging' : ''}`}
+      className={`app-card ${dragging ? 'dragging' : ''} ${item.is_enabled === false ? 'disabled' : ''}`}
       draggable
       onDragStart={onDragStart}
       onDragOver={onDragOver}
@@ -70,7 +70,11 @@ export default function AppCard({ item, index, total, onEdit, onDelete, onMoveUp
       </div>
 
       {/* Type badge */}
-      <span className="app-type-badge" style={{ '--badge-color': cfg.color }}>{cfg.label}</span>
+      {item.is_enabled !== false ? (
+        <span className="app-type-badge" style={{ '--badge-color': cfg.color }}>{cfg.label}</span>
+      ) : (
+        <span className="app-type-badge" style={{ '--badge-color': '#9e9e9e' }}>DESHABILITADA</span>
+      )}
 
       {/* Actions — visible only on hover */}
       <div className="app-card-actions">

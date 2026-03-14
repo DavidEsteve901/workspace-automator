@@ -98,6 +98,9 @@ public class AppItem
     [JsonPropertyName("cze_zone_index")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? CzeZoneIndex { get; set; }
+
+    [JsonPropertyName("is_enabled")]
+    public bool IsEnabled { get; set; } = true;
 }
 
 public class HotkeyConfig
@@ -188,3 +191,5 @@ public class CzeZoneEntry
     [JsonPropertyName("h")]
     public int H { get; set; }  // 0–10000 units
 }
+
+

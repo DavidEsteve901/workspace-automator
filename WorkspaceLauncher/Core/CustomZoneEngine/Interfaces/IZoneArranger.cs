@@ -12,3 +12,5 @@ public interface IZoneArranger
     /// </summary>
     bool SnapWindow(nint hwnd, RECT rect);
 }
+
+

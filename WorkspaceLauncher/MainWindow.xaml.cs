@@ -160,48 +160,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private string GetFrontendPath()
-    {
-        // Check for dist folder next to the exe
-        string baseDir  = AppContext.BaseDirectory;
-        string distPath = Path.Combine(baseDir, "frontend", "dist");
-        if (Directory.Exists(distPath))
-            return distPath;
 
-        // Extract embedded resources to temp dir
-        string tempPath = Path.Combine(Path.GetTempPath(), "WorkspaceLauncher_frontend");
-        ExtractEmbeddedFrontend(tempPath);
-        return tempPath;
-    }
-
-    private void ExtractEmbeddedFrontend(string targetPath)
-    {
-        Directory.CreateDirectory(targetPath);
-        var assembly = Assembly.GetExecutingAssembly();
-        foreach (var name in assembly.GetManifestResourceNames())
-        {
-            if (!name.Contains("frontend") || !name.Contains("dist")) continue;
-            string relativePath = name
-                .Replace("WorkspaceLauncher.frontend.dist.", "")
-                .Replace('.', Path.DirectorySeparatorChar);
-            foreach (var ext in new[] { "html", "js", "css", "json", "ico", "png", "svg", "woff", "woff2", "ttf" })
-            {
-                if (relativePath.EndsWith("." + ext)) break;
-                if (name.EndsWith("." + ext))
-                {
-                    int lastDot = relativePath.LastIndexOf('.');
-                    if (lastDot >= 0)
-                        relativePath = relativePath[..lastDot] + "." + ext;
-                    break;
-                }
-            }
-            string fullPath = Path.Combine(targetPath, relativePath);
-            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-            using var stream = assembly.GetManifestResourceStream(name)!;
-            using var file = File.Create(fullPath);
-            stream.CopyTo(file);
-        }
-    }
 
     private void InitializeTray()
     {
@@ -251,3 +210,5 @@ public partial class MainWindow : Window
         Close();
     }
 }
+
+

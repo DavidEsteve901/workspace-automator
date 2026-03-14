@@ -105,3 +105,5 @@ public sealed class TrayManager : IDisposable
         _disposed = true;
     }
 }
+
+

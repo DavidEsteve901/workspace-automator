@@ -1,13 +1,15 @@
 using System.Windows;
+using System.Windows.Media.Animation;
 using Microsoft.Web.WebView2.Core;
 using WorkspaceLauncher.Bridge;
 using WorkspaceLauncher.Core.NativeInterop;
 using System.Linq;
+using WorkspaceLauncher.Core.Config;
 using WorkspaceLauncher.Core.Utils;
 
 namespace WorkspaceLauncher.Core.CustomZoneEngine.UI;
 
-public partial class ZoneCanvasEditorWindow : Window
+public partial class ZoneCanvasEditorWindow : System.Windows.Window
 {
     private WebBridge? _bridge;
     private string _monitorHardwareId = "";
@@ -17,12 +19,19 @@ public partial class ZoneCanvasEditorWindow : Window
     public ZoneCanvasEditorWindow(string monitorHardwareId, string layoutId = "", string mode = "preview")
     {
         _monitorHardwareId = monitorHardwareId;
-        _layoutId = layoutId;
-        _mode = mode;
+        _layoutId          = layoutId;
+        _mode              = mode;
+
+        // Force transparent WPF-WebView2 Airspace hack before InitializeComponent
+        Environment.SetEnvironmentVariable("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
         InitializeComponent();
 
-        Loaded += ZoneCanvasEditorWindow_Loaded;
-        KeyDown += (s, e) => { if (e.Key == System.Windows.Input.Key.Escape) ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: true); };
+        Loaded  += ZoneCanvasEditorWindow_Loaded;
+        KeyDown += (s, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Escape)
+                ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: true);
+        };
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -47,21 +56,29 @@ public partial class ZoneCanvasEditorWindow : Window
             var env = await CoreWebView2Environment.CreateAsync();
             await webView.EnsureCoreWebView2Async(env);
 
-            // Standardized setup
+            // Standardised setup
             WebView2Helper.ApplySettings(webView.CoreWebView2);
             WebView2Helper.SetMapping(webView.CoreWebView2);
 
-            // Transparent background for canvas overlay
+            // ── Transparent background & theme ────────────────────────────────
             webView.DefaultBackgroundColor = System.Drawing.Color.Transparent;
+
+            // Apply theme/dark mode consistent with user config
+            string themeMode = ConfigManager.Instance.Config.ThemeMode ?? "dark";
+            bool isDark = themeMode != "light";
+            DwmHelper.UseImmersiveDarkMode(
+                new System.Windows.Interop.WindowInteropHelper(this).Handle, isDark);
 
             _bridge = new WebBridge(webView.CoreWebView2, this);
             _bridge.Initialize();
 
+            // Navigate to the canvas editor route
             string? devUrl = Environment.GetEnvironmentVariable("WL_DEV_URL");
             string url = string.IsNullOrEmpty(devUrl) ? "https://launcher.local/index.html" : devUrl;
-            string escapedId = Uri.EscapeDataString(_monitorHardwareId);
+            string escapedId     = Uri.EscapeDataString(_monitorHardwareId);
             string escapedLayout = Uri.EscapeDataString(_layoutId);
-            webView.CoreWebView2.Navigate($"{url}#/zone-canvas?monitor={escapedId}&layout={escapedLayout}&mode={_mode}");
+            webView.CoreWebView2.Navigate(
+                $"{url}#/zone-canvas?monitor={escapedId}&layout={escapedLayout}&mode={_mode}");
         }
         catch (Exception ex)
         {
@@ -71,6 +88,15 @@ public partial class ZoneCanvasEditorWindow : Window
 
     public void ExecuteRemoteAction(string action)
     {
-        webView.CoreWebView2.PostWebMessageAsJson($"{{\"event\":\"cze_remote_action\",\"data\":{{\"action\":\"{action}\"}}}}");
+        webView.CoreWebView2.PostWebMessageAsJson(
+            $"{{\"event\":\"cze_remote_action\",\"data\":{{\"action\":\"{action}\"}}}}");
     }
 }
+
+
+
+
+
+
+
+

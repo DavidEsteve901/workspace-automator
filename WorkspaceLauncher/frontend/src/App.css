@@ -342,20 +342,29 @@
   100% { box-shadow: 0 6px 20px var(--fz-accent-low); border-color: var(--fz-accent); }
 }
 
-@keyframes fzGlowPulse {
-  0%   { box-shadow: 0 14px 38px var(--fz-accent-dim), 0 0 0 1px var(--fz-accent-dim) inset; }
-  50%  { box-shadow: 0 20px 52px var(--fz-accent-glow), 0 0 0 1px var(--fz-accent-glow) inset; }
-  100% { box-shadow: 0 14px 38px var(--fz-accent-dim), 0 0 0 1px var(--fz-accent-dim) inset; }
+@keyframes fzLuxuryRipple {
+  0% {
+    box-shadow: 0 0 0 0 rgba(var(--accent-rgb, 0, 210, 255), 0.5),
+                0 0 0 0 rgba(var(--accent-rgb, 0, 210, 255), 0.3),
+                0 0 0 0 rgba(var(--accent-rgb, 0, 210, 255), 0.1);
+    transform: translateY(-4px) scale(1.01);
+  }
+  100% {
+    box-shadow: 0 0 0 8px rgba(var(--accent-rgb, 0, 210, 255), 0),
+                0 0 0 16px rgba(var(--accent-rgb, 0, 210, 255), 0),
+                0 0 0 24px rgba(var(--accent-rgb, 0, 210, 255), 0);
+    transform: translateY(-4px) scale(1.012);
+  }
+}
+
+@keyframes fzFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes fzShimmer {
   0%   { transform: translateX(-120%) skewX(-12deg); }
   100% { transform: translateX(280%) skewX(-12deg); }
-}
-
-@keyframes fzActivePing {
-  0%, 100% { box-shadow: 0 0 0 2px var(--fz-accent-dim), 0 0 8px var(--fz-accent-glow); }
-  50%       { box-shadow: 0 0 0 4px var(--fz-accent-low), 0 0 16px var(--fz-accent); }
 }
 
 .fz-layout-card {
@@ -423,10 +432,11 @@
   border-color: var(--fz-accent);
   transform: translateY(-4px) scale(1.015);
   z-index: 5;
-  animation: fzGlowPulse 2.6s ease-in-out infinite alternate;
+  animation: fzLuxuryRipple 3s cubic-bezier(0.23, 1, 0.32, 1) infinite;
   transition: transform 0.44s cubic-bezier(0.175, 0.885, 0.32, 1.4),
               background 0.3s ease,
               border-color 0.3s ease;
+  overflow: visible !important;
 }
 
 .fz-layout-card.menu-open {
