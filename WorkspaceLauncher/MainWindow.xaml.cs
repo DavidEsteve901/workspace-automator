@@ -113,7 +113,15 @@ public partial class MainWindow : Window
 
     private async Task InitializeWebView()
     {
-        var env = await CoreWebView2Environment.CreateAsync();
+        // Redirect WebView2 data folder to AppData/Local to avoid cluttering the app directory
+        string userDataFolder = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "WorkspaceLauncher",
+            "WebView2Cache"
+        );
+        Directory.CreateDirectory(userDataFolder);
+
+        var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
         await webView.EnsureCoreWebView2Async(env);
         
         webView.CoreWebView2.ProcessFailed += OnWebViewProcessFailed;

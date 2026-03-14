@@ -21,7 +21,16 @@ Si deseas generar el ejecutable manualmente en tu máquina:
     ```powershell
     .\build.ps1 -Publish
     ```
-3.  El resultado estará en `publish/WorkspaceLauncher.exe`. **Este es el único archivo que necesitas distribuir.**
+3.  El resultado estará en `publish/WorkspaceLauncher.exe`. **Este es el único archivo que necesitas distribuir.** Se han eliminado archivos `.pdb`, `.xml` y otros elementos innecesarios para una apariencia 100% profesional.
+
+---
+
+## 🧼 Experiencia de Usuario "Limpia"
+
+Hemos configurado la aplicación para que sea lo más discreta posible:
+- **Sin carpetas de caché visibles:** La carpeta de datos de WebView2 (`.WebView2`) ahora se guarda en `%LocalAppData%\WorkspaceLauncher\WebView2Cache`, evitando "ensuciar" el escritorio o la carpeta de descarga del usuario.
+- **Sin archivos de depuración:** La compilación de publicación (`-Publish`) no genera archivos `.pdb` ni documentación XML de dependencias.
+- **Resiliencia en AppData:** Si el usuario mueve el `.exe` a `C:\Program Files`, la aplicación seguirá funcionando correctamente ya que escribe sus datos temporales y de configuración en sus carpetas de usuario correspondientes.
 
 ---
 

@@ -10,26 +10,12 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# ── Build output / Binaries ──────────────────────────────────────────
-dist/
-dist-exe/
-dist-builder/
-build/
-out/
-*.asar
-
-# ── Vite ─────────────────────────────────────────────────────────────
-frontend/dist/
-
-# ── Electron Packager / Builder ──────────────────────────────────────
-release/
-*.blockmap
-*.exe
-!WorkspaceLauncher.bat
-
-# ── .NET / C# (legacy WPF code) ─────────────────────────────────────
-bin/
-obj/
+# ── C# / .NET (Workspace Launcher) ──────────────────────────────────
+WorkspaceLauncher/bin/
+WorkspaceLauncher/obj/
+WorkspaceLauncher/publish/
+WorkspaceLauncher/frontend/dist/
+WorkspaceLauncher/frontend/node_modules/
 *.dll
 *.pdb
 *.user
@@ -37,6 +23,10 @@ obj/
 *.cache
 *.nupkg
 *.snupkg
+*.WebView2/
+debug.log
+publish/
+
 
 # ── Python (legacy script) ──────────────────────────────────────────
 __pycache__/

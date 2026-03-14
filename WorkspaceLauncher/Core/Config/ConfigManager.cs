@@ -46,27 +46,36 @@ public sealed class ConfigManager
         }
         else if (string.IsNullOrEmpty(_configPath))
         {
-            // First check local directory
+            // --- SMART-PORTABLE LOGIC ---
+            
+            // PRIORITY 1: Local directory (Portable Mode)
             string localPath = Path.Combine(AppContext.BaseDirectory, ConfigFileName);
+            
+            // PRIORITY 2: AppData directory (Installed Mode)
+            string appDataFolder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "WorkspaceLauncher"
+            );
+            string appDataPath = Path.Combine(appDataFolder, ConfigFileName);
+
             if (File.Exists(localPath))
             {
+                // We are in Portable Mode
                 _configPath = localPath;
+                Console.WriteLine($"[Config] Portable Mode detected. Using: {_configPath}");
             }
             else
             {
-                // Fallback to AppData for a cleaner distribution
-                string appDataFolder = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    "WorkspaceLauncher"
-                );
+                // We are in Installed Mode (or first run fallback)
                 Directory.CreateDirectory(appDataFolder);
-                _configPath = Path.Combine(appDataFolder, ConfigFileName);
+                _configPath = appDataPath;
+                Console.WriteLine($"[Config] Installed Mode. Using: {_configPath}");
             }
         }
 
         if (!File.Exists(_configPath))
         {
-            Console.WriteLine($"[Config] Creating new config at: {_configPath}");
+            Console.WriteLine($"[Config] Creating new default config at: {_configPath}");
             _config = new AppConfig();
             Save();
             return;
@@ -79,8 +88,6 @@ public sealed class ConfigManager
             
             // Sync categories for missing ones in JSON (backward compatibility)
             SyncCategoryOrder();
-            
-            Console.WriteLine($"[Config] Loaded from: {_configPath}");
         }
         catch (Exception ex)
         {

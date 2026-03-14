@@ -16,6 +16,13 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    
+    <!-- Professional Build Settings -->
+    <CopyDocumentationFilesToPublishDirectory>false</CopyDocumentationFilesToPublishDirectory>
+    <CopyInternalSymbolFilesToPublishDirectory>false</CopyInternalSymbolFilesToPublishDirectory>
+    <DebugType>none</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages> <!-- Reduce footprint -->
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
