@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { RotateCw, AlertTriangle } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { bridge, onEvent, offEvent } from './api/bridge.js'
 import Sidebar from './components/Sidebar/Sidebar.jsx'
 import AppList from './components/AppList/AppList.jsx'
@@ -21,8 +22,20 @@ export default function App() {
     const base = hash.split('?')[0].replace(/^#\/?/, '')
     return base || 'main'
   }
+  const { t, i18n } = useTranslation()
   const [route, setRoute] = useState(getRoute())
   const [state, setState] = useState(null)
+
+  // Sync i18n with state language
+  useEffect(() => {
+    if (state?.language) {
+      if (state.language === 'auto') {
+        i18n.changeLanguage(i18n.language) // Keep detected
+      } else if (i18n.language !== state.language) {
+        i18n.changeLanguage(state.language)
+      }
+    }
+  }, [state?.language, i18n])
   const [activeCategory, setActiveCategory] = useState(null)
   const [view, setView] = useState('main') // 'main' | 'config'
   const [itemDialog, setItemDialog] = useState(null)   // { category, index, item } | null
@@ -96,7 +109,7 @@ export default function App() {
       setSyncModal({ category: activeCategory, validation })
       return
     }
-    setLaunchStatus({ message: 'Iniciando...', progress: 0 })
+    setLaunchStatus({ message: t('app_list.launching'), progress: 0 })
     bridge.launchWorkspace(activeCategory)
   }, [activeCategory, validation])
 
@@ -120,8 +133,8 @@ export default function App() {
     const name = item?.path?.split(/[/\\]/).pop() || 'esta aplicación'
     
     setConfirmAction({
-      title: 'Eliminar Aplicación',
-      message: `¿Estás seguro de que quieres eliminar "${name}" del workspace?`,
+      title: t('modals.confirm_delete_app_title'),
+      message: t('modals.confirm_delete_app_msg', { name }),
       onConfirm: () => {
         bridge.deleteItem(category, index)
         setState(prev => {
@@ -158,8 +171,8 @@ export default function App() {
 
   const handleDeleteCategory = useCallback(async (name) => {
     setConfirmAction({
-      title: 'Eliminar Workspace',
-      message: `¿Estás seguro de que quieres eliminar el workspace "${name}"? Esta acción no se puede deshacer.`,
+      title: t('modals.confirm_delete_ws_title'),
+      message: t('modals.confirm_delete_ws_msg', { name }),
       onConfirm: async () => {
         await bridge.deleteCategory(name)
         setState(prev => {
@@ -239,7 +252,7 @@ export default function App() {
       const arrowDataUri = `url("data:image/svg+xml,${svgArrow.replace(/#/g, '%23').replace(/</g, '%3C').replace(/>/g, '%3E')}")`;
       root.style.setProperty('--fz-select-arrow', arrowDataUri)
     } else {
-      ;['--accent','--accent-hover','--accent-light','--accent-dim','--accent-glow',
+      ;['--accent','--accent-hover','--accent-light','--accent-dim','--accent-glow','--accent-rgb',
         '--border-accent','--shadow-accent','--shadow-glow',
         '--fz-accent','--fz-accent-hover','--fz-accent-dim','--fz-accent-glow','--fz-accent-low',
         '--fz-select-arrow'
@@ -283,12 +296,13 @@ export default function App() {
     const monitorId = params.get('monitor');
     const layoutId = params.get('layout');
     const canvasMode = params.get('mode') || 'preview';
+    const isNew = params.get('isNew') === 'true';
     return (
       <div style={{ background: 'transparent', width: '100vw', height: '100vh', overflow: 'hidden' }}>
         <style>{`
           html, body, #root { background: transparent !important; }
         `}</style>
-        <ZoneEditorModal standalone canvasOnly canvasMode={canvasMode} initialMonitorId={monitorId} initialLayoutId={layoutId} onClose={() => window.close()} />
+        <ZoneEditorModal standalone canvasOnly canvasMode={canvasMode} initialMonitorId={monitorId} initialLayoutId={layoutId} isNew={isNew} onClose={() => window.close()} />
       </div>
     )
   }
@@ -297,20 +311,30 @@ export default function App() {
     const params = new URLSearchParams(window.location.hash.split('?')[1]);
     const monitorId = params.get('monitor');
     const layoutId = params.get('layout');
+    const isNew = params.get('isNew') === 'true';
     return (
       <div style={{ background: 'transparent', width: '100vw', height: '100vh', overflow: 'hidden' }}>
         <style>{`
           html, body, #root { background: transparent !important; }
         `}</style>
-        <ZoneEditorModal standalone controlOnly initialMonitorId={monitorId} initialLayoutId={layoutId} onClose={() => window.close()} />
+        <ZoneEditorModal standalone controlOnly initialMonitorId={monitorId} initialLayoutId={layoutId} isNew={isNew} onClose={() => window.close()} />
       </div>
     )
   }
 
+  const handleToggleConfig = useCallback(() => {
+    if (view === 'config' && state) {
+      applyTheme(state.themeMode, state.accentColor)
+      setView('main')
+    } else {
+      setView('config')
+    }
+  }, [view, state?.themeMode, state?.accentColor, applyTheme])
+
   if (!state) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--fz-bg, #0A0A0A)' }}>
-        <div style={{ color: 'var(--fz-text-muted)' }}>Cargando...</div>
+        <div style={{ color: 'var(--fz-text-muted)' }}>{t('common.loading')}</div>
       </div>
     )
   }
@@ -330,7 +354,7 @@ export default function App() {
           onDeleteCategory={handleDeleteCategory}
           onMoveCategory={handleMoveCategory}
           onRenameCategory={handleRenameCategory}
-          onOpenConfig={() => setView(v => v === 'config' ? 'main' : 'config')}
+          onOpenConfig={handleToggleConfig}
           configActive={view === 'config'}
           disabled={view === 'config'}
         />
@@ -347,8 +371,11 @@ export default function App() {
               themeMode={state.themeMode}
               accentColor={state.accentColor}
               desktopAnimationsEnabled={state.desktopAnimationsEnabled}
+              runAtStartup={state.runAtStartup}
+              language={state.language}
+              onPreview={applyTheme}
               onSave={handleSaveConfig}
-              onClose={() => setView('main')}
+              onClose={handleToggleConfig}
             />
           ) : (
             <>
@@ -369,12 +396,12 @@ export default function App() {
                 <div
                   className="sync-alert"
                   onClick={() => setSyncModal({ category: activeCategory, validation })}
-                  title="Ver conflictos y soluciones"
+                  title={t('app_list.conflicts_desc')}
                 >
                   <AlertTriangle size={18} />
                   <div className="sync-alert-text">
-                    <strong>Conflictos detectados</strong>
-                    <span>Configuración no coincide con el equipo</span>
+                    <strong>{t('app_list.conflicts')}</strong>
+                    <span>{t('app_list.conflicts_desc')}</span>
                   </div>
                   <div className="sync-alert-badge">!</div>
                 </div>

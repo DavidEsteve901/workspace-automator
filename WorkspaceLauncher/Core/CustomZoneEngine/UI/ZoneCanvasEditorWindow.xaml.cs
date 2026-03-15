@@ -15,12 +15,14 @@ public partial class ZoneCanvasEditorWindow : System.Windows.Window
     private string _monitorHardwareId = "";
     private string _layoutId = "";
     private string _mode = "preview"; // "preview" | "edit"
+    private bool _isNew = false;
 
-    public ZoneCanvasEditorWindow(string monitorHardwareId, string layoutId = "", string mode = "preview")
+    public ZoneCanvasEditorWindow(string monitorHardwareId, string layoutId = "", string mode = "preview", bool isNew = false)
     {
         _monitorHardwareId = monitorHardwareId;
         _layoutId          = layoutId;
         _mode              = mode;
+        _isNew             = isNew;
 
         // Force transparent WPF-WebView2 Airspace hack before InitializeComponent
         Environment.SetEnvironmentVariable("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
@@ -78,7 +80,7 @@ public partial class ZoneCanvasEditorWindow : System.Windows.Window
             string escapedId     = Uri.EscapeDataString(_monitorHardwareId);
             string escapedLayout = Uri.EscapeDataString(_layoutId);
             webView.CoreWebView2.Navigate(
-                $"{url}#/zone-canvas?monitor={escapedId}&layout={escapedLayout}&mode={_mode}");
+                $"{url}#/zone-canvas?monitor={escapedId}&layout={escapedLayout}&mode={_mode}&isNew={(_isNew ? "true" : "false")}");
         }
         catch (Exception ex)
         {

@@ -135,20 +135,20 @@ export function ZoneCanvas({ grid, zones, spacing, selectedIds, onSelectZone, on
           display: 'flex',
           alignItems: 'center',
           gap: 8,
-          background: 'rgba(0,0,0,0.6)',
+          background: 'var(--fz-bg-soft)',
           backdropFilter: 'blur(10px)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--fz-border)',
           borderRadius: 99,
           padding: '5px 14px',
           pointerEvents: 'none',
           zIndex: 100,
-          opacity: 0.65,
+          opacity: 0.9,
         }}>
           <div style={{
             width: 18,
             height: 14,
             borderRadius: 3,
-            border: '1.5px solid rgba(255,255,255,0.3)',
+            border: '1.5px solid var(--fz-text-muted)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -162,7 +162,7 @@ export function ZoneCanvas({ grid, zones, spacing, selectedIds, onSelectZone, on
                 : { top: '50%', left: 0, right: 0, height: 1.5, background: 'var(--accent, #00D2FF)' }),
             }} />
           </div>
-          <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.5)', letterSpacing: '0.04em' }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--fz-text-muted)', letterSpacing: '0.04em' }}>
             {splitMode === 'v' ? 'VERTICAL' : 'HORIZONTAL'} · Tab para cambiar
           </span>
         </div>

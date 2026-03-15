@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using WorkspaceLauncher.Core.Utils;
 
 namespace WorkspaceLauncher.Core.Config;
 
@@ -88,6 +89,9 @@ public sealed class ConfigManager
             
             // Sync categories for missing ones in JSON (backward compatibility)
             SyncCategoryOrder();
+
+            // Sync startup registry
+            StartupManager.Sync(_config.RunAtStartup);
         }
         catch (Exception ex)
         {

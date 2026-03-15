@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { bridge, onEvent, offEvent } from '../../api/bridge.js';
 import PremiumSelect from '../PremiumSelect.jsx';
 import ConfirmModal from '../AppList/ConfirmModal.jsx';
@@ -21,7 +22,8 @@ export function ZoneEditorModal(props) {
   );
 }
 
-function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false, controlOnly = false, canvasMode = 'edit', initialMonitorId = null, initialLayoutId = null }) {
+function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false, controlOnly = false, canvasMode = 'edit', initialMonitorId = null, initialLayoutId = null, isNew = false }) {
+  const { t } = useTranslation();
   const [monitors, setMonitors] = useState([]);
   const [layouts, setLayouts] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -111,9 +113,35 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
       }
     };
 
+    const handleCancelled = () => {
+      console.log("[CZE] Edit session cancelled, clearing modal");
+      setEditingLayout(null);
+    };
+
+    const handleFinished = (data) => {
+      console.log("[CZE] Edit session finished, focusing layout:", data.layoutId);
+      if (data.layoutId && !canvasOnly) {
+         // Find the saved layout in the current list (refreshed by loadAll)
+         bridge.czeGetLayouts().then(res => {
+            const layouts = res?.layouts || [];
+            const saved = layouts.find(l => l.id === data.layoutId);
+            if (saved) {
+               setEditingLayout(saved);
+               if (saved.gridState) {
+                  setGridFromGridState(saved.gridState, saved.spacing || 0);
+               } else {
+                  setGridFromZones(saved.zones || [], saved.spacing || 0);
+               }
+            }
+         });
+      }
+    };
+
     onEvent('state_update', handleRefresh);
     onEvent('cze_state_changed', handleRefresh);
     onEvent('desktop_switched', handleDesktopSwitched);
+    onEvent('cze_operation_cancelled', handleCancelled);
+    onEvent('cze_editor_finished', handleFinished);
 
     // Close menu when clicking outside
     const handleClick = () => setMenuOpenId(null);
@@ -123,6 +151,8 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
       offEvent('state_update', handleRefresh);
       offEvent('cze_state_changed', handleRefresh);
       offEvent('desktop_switched', handleDesktopSwitched);
+      offEvent('cze_operation_cancelled', handleCancelled);
+      offEvent('cze_editor_finished', handleFinished);
       window.removeEventListener('click', handleClick);
     };
   }, []);
@@ -166,8 +196,8 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
       const activeMon = mRes.find(m => m.hardwareId === monitorId);
       const targetDkId = String(selectedDesktopId || aRes?.currentDesktopId || "").toLowerCase();
       const activeEntry = aRes?.entries?.find(a => 
-        a.monitorPtInstance === activeMon?.ptInstance && 
-        String(a.desktopId).toLowerCase() === targetDkId
+                a.monitorPtInstance === activeMon?.ptInstance && 
+                String(a.desktopId).toLowerCase() === targetDkId
       );
       if (activeEntry?.layoutId) setSelectedLayoutId(activeEntry.layoutId);
 
@@ -178,7 +208,7 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
           targetLayout = normalizedLayouts.find(l => l.id === initialLayoutId);
         }
 
-        if (!targetLayout) {
+        if (!targetLayout && !isNew) {
           const mon = mRes.find(m => m.hardwareId === monitorId);
           const activeEntryFiltered = aRes?.entries?.find(a => a.monitorPtInstance === mon?.ptInstance);
           targetLayout = normalizedLayouts.find(l => l.id === activeEntryFiltered?.layoutId);
@@ -191,6 +221,11 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
           } else {
             setGridFromZones(targetLayout.zones || [], targetLayout.spacing || 0);
           }
+        } else if (isNew) {
+          // Initialize for new layout: 1x1 full screen
+          const newLayout = { id: '', name: `${t('zone_editor.new_layout')} ${normalizedLayouts.filter(l => !l.isTemplate).length + 1}`, spacing: 8, zones: [{ id: 0, x: 0, y: 0, w: 1, h: 1 }] };
+          setEditingLayout(newLayout);
+          resetToFull();
         }
       }
     } catch (err) {
@@ -247,7 +282,7 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
 
       if (!layoutToSave.id) {
           layoutToSave.id = `layout_${Date.now()}`;
-          if (!layoutToSave.name) layoutToSave.name = `Nuevo diseño ${layouts.length + 1}`;
+          if (!layoutToSave.name) layoutToSave.name = `${t('zone_editor.new_layout')} ${layouts.length + 1}`;
       }
 
       const res = await bridge.czeSaveLayout(layoutToSave);
@@ -256,7 +291,7 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
         if (closeAfterSave) {
           setEditingLayout(null);
           if (canvasOnly) {
-            window.chrome.webview.postMessage({ action: 'cze_canvas_saved' });
+            window.chrome.webview.postMessage({ action: 'cze_canvas_saved', layoutId: res.id });
           }
         }
         
@@ -272,7 +307,7 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
   async function duplicateLayout(layout) {
     setSaving(true);
     try {
-      const newLayout = { ...layout, id: `layout_${Date.now()}`, name: `${layout.name} (Copia)`, isTemplate: false };
+      const newLayout = { ...layout, id: `layout_${Date.now()}`, name: `${layout.name} (${t('common.copy')})`, isTemplate: false };
       const res = await bridge.czeSaveLayout(newLayout);
       if (res?.ok) await loadAll();
     } finally {
@@ -281,9 +316,6 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
   }
 
   async function createNewLayout() {
-    const newLayout = { id: '', name: `Nuevo diseño ${layouts.length + 1}`, spacing: 8, zones: [{ id: 0, x: 0, y: 0, w: 1, h: 1 }] };
-    setEditingLayout(newLayout);
-    resetToFull(); // Force 1x1 grid state
     openCanvasEditor(activeMonitorId, '', true);
   }
 
@@ -309,11 +341,11 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
   const activeMonitor = monitors.find(m => m.hardwareId === activeMonitorId);
 
   const templates = [
-    { id: 'sin', name: 'Sin diseño', zones: [], isTemplate: true },
-    { id: 'foco', name: 'Foco', zones: [{ id: 1, x: 0.1, y: 0.1, w: 0.8, h: 0.8 }], isTemplate: true },
-    { id: 'columnas', name: 'Columnas', zones: [{ x: 0, y: 0, w: 0.33, h: 1 }, { x: 0.33, y: 0, w: 0.34, h: 1 }, { x: 0.67, y: 0, w: 0.33, h: 1 }], isTemplate: true },
-    { id: 'filas', name: 'Filas', zones: [{ x: 0, y: 0, w: 1, h: 0.33 }, { x: 0, y: 0.33, w: 1, h: 0.34 }, { x: 0, y: 0.67, w: 1, h: 0.33 }], isTemplate: true },
-    { id: 'cuadricula', name: 'Cuadrícula', zones: [{ x: 0, y: 0, w: 0.5, h: 0.5 }, { x: 0.5, y: 0, w: 0.5, h: 0.5 }, { x: 0, y: 0.5, w: 0.5, h: 0.5 }, { x: 0.5, y: 0.5, w: 0.5, h: 0.5 }], isTemplate: true }
+    { id: 'sin', name: t('common.none'), zones: [], isTemplate: true },
+    { id: 'foco', name: t('item_dialog.presets.foco'), zones: [{ id: 1, x: 0.1, y: 0.1, w: 0.8, h: 0.8 }], isTemplate: true },
+    { id: 'columnas', name: t('item_dialog.presets.3col'), zones: [{ x: 0, y: 0, w: 0.33, h: 1 }, { x: 0.33, y: 0, w: 0.34, h: 1 }, { x: 0.67, y: 0, w: 0.33, h: 1 }], isTemplate: true },
+    { id: 'filas', name: t('item_dialog.presets.2row'), zones: [{ x: 0, y: 0, w: 1, h: 0.33 }, { x: 0, y: 0.33, w: 1, h: 0.34 }, { x: 0, y: 0.67, w: 1, h: 0.33 }], isTemplate: true },
+    { id: 'cuadricula', name: t('item_dialog.presets.grid'), zones: [{ x: 0, y: 0, w: 0.5, h: 0.5 }, { x: 0.5, y: 0, w: 0.5, h: 0.5 }, { x: 0, y: 0.5, w: 0.5, h: 0.5 }, { x: 0.5, y: 0.5, w: 0.5, h: 0.5 }], isTemplate: true }
   ];
 
   const customLayouts = layouts.filter(l => !l.isTemplate);
@@ -342,30 +374,30 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
           <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.01em' }}>
-            {editingLayout?.name || 'Diseño Pro'}
+            {editingLayout?.name || t('item_dialog.new_layout')}
           </span>
           <div style={{ background: 'var(--fz-accent)', color: '#000', padding: '4px 10px', borderRadius: 6, fontSize: 10, fontWeight: 900 }}>
-            EDITOR ACTIVO
+            {t('zone_editor.editor_active')}
           </div>
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <div style={{ marginBottom: 12, fontSize: 11, fontWeight: 700, color: 'var(--fz-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-             Atajos Rápidos
+             {t('zone_editor.shortcuts_title')}
           </div>
           <div style={{ marginBottom: 32, fontSize: 13, lineHeight: '2' }}>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
               <li style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
                 <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
-                <span><strong>Doble Clic</strong> — dividir zona</span>
+                <span dangerouslySetInnerHTML={{ __html: t('zone_editor.shortcut_split') }} />
               </li>
               <li style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
                 <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
-                <span><strong>Suprimir</strong> — eliminar línea resaltada (al pasar el ratón)</span>
+                <span dangerouslySetInnerHTML={{ __html: t('zone_editor.shortcut_delete') }} />
               </li>
               <li style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
                 <span style={{ color: 'var(--fz-accent)', fontWeight: 700, minWidth: 20 }}>•</span>
-                <span><strong>Tab</strong> — cambiar dirección (V/H)</span>
+                <span dangerouslySetInnerHTML={{ __html: t('zone_editor.shortcut_tab') }} />
               </li>
             </ul>
           </div>
@@ -378,14 +410,14 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
             className="fz-btn-primary"
             style={{ flex: 1.5, height: 48, borderRadius: 12 }}
           >
-            {saving ? 'Guardando...' : 'Guardar Diseño'}
+            {saving ? t('common.loading') : t('zone_editor.save_config')}
           </button>
           <button
             onClick={() => window.chrome.webview.postMessage({ type: 'cze_canvas_discard' })}
             className="fz-btn-secondary"
             style={{ flex: 1, height: 48, borderRadius: 12 }}
           >
-            Cancelar
+            {t('common.cancel')}
           </button>
         </div>
       </div>
@@ -417,11 +449,11 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
       <div style={modalStyle}>
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 14 }}>
           <div style={{ position: 'relative', width: 42, height: 42 }}>
-            <div style={{ position: 'absolute', inset: 0, border: '2px solid rgba(255,255,255,0.05)', borderRadius: '50%' }} />
+            <div style={{ position: 'absolute', inset: 0, border: '2px solid var(--fz-border)', borderRadius: '50%' }} />
             <div style={{ position: 'absolute', inset: 0, border: '2px solid transparent', borderTopColor: 'var(--fz-accent)', borderRadius: '50%', animation: 'fzSpin 0.75s linear infinite' }} />
             <div style={{ position: 'absolute', inset: 7, border: '1.5px solid transparent', borderTopColor: 'var(--fz-accent-dim)', borderRadius: '50%', animation: 'fzSpin 1.3s linear infinite reverse' }} />
           </div>
-          <div style={{ color: 'rgba(255,255,255,0.2)', fontSize: 9, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' }}>Preparando</div>
+          <div style={{ color: 'var(--fz-text-muted)', fontSize: 9, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' }}>{t('common.loading')}</div>
         </div>
         <style>{`@keyframes fzSpin { to { transform: rotate(360deg); } }`}</style>
       </div>
@@ -463,21 +495,21 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
             alignItems: 'center', 
             gap: 12, 
             padding: '8px 16px',
-            background: 'rgba(255,255,255,0.03)',
+            background: 'var(--fz-bg-alt)',
             borderRadius: 12,
             border: '1px solid var(--fz-border)',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
+            boxShadow: 'var(--fz-shadow)'
           }}>
             <div style={{ color: 'var(--fz-text-muted)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <Layers size={14} />
-              <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Escritorio</span>
+              <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{t('zone_editor.desktop')}</span>
             </div>
             <div className="fz-toolbar-select-wrapper" style={{ minWidth: 150 }}>
               <PremiumSelect 
                 value={selectedDesktopId || ''} 
                 options={desktops.map(d => ({ 
                   id: d.id, 
-                  name: `${d.name} ${d.id === currentDesktopId ? '(Actual)' : ''}` 
+                  name: `${d.name} ${d.id === currentDesktopId ? `(${t('common.actual')})` : ''}` 
                 }))}
                 onChange={val => handleSwitchDesktop(val)}
                 valueKey="id"
@@ -500,11 +532,11 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
                   <div style={{ position: 'relative', width: 60, height: 40, margin: '0 auto' }}>
                     <div style={{
                       width: '100%', height: '100%',
-                      border: `2px solid ${isActiveMon ? 'var(--fz-accent)' : 'var(--fz-border)'}`,
+                       border: `2px solid ${isActiveMon ? 'var(--fz-accent)' : 'var(--fz-border)'}`,
                       borderRadius: 6,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       transition: 'all 0.25s ease',
-                      background: isActiveMon ? 'var(--fz-accent-low)' : 'rgba(255,255,255,0.02)',
+                      background: isActiveMon ? 'var(--fz-accent-low)' : 'var(--fz-bg-alt)',
                       boxShadow: isActiveMon ? '0 0 15px var(--fz-accent-dim)' : 'none'
                     }}>
                       <span style={{ fontSize: 14, fontWeight: 900, color: isActiveMon ? 'var(--fz-accent)' : 'var(--fz-text-muted)', transition: 'color 0.25s ease' }}>
@@ -525,7 +557,7 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
                   
                   {mon.isPrimary && (
                     <div 
-                      title="Monitor Principal"
+                      title={t('zone_editor.main_monitor')}
                       style={{ 
                         display: 'flex', 
                         justifyContent: 'center', 
@@ -544,7 +576,7 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '0 60px 60px' }}>
-          <div className="fz-section-title">Plantillas del Sistema</div>
+          <div className="fz-section-title">{t('zone_editor.system_templates')}</div>
           <div className="fz-grid">
             {templates.map((t, idx) => {
               const targetDkId = String(selectedDesktopId || "").toLowerCase();
@@ -579,9 +611,9 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 48, marginBottom: 14 }}>
-            <div className="fz-section-title" style={{ margin: 0, flex: 1, marginRight: 16 }}>Mis Diseños Personalizados</div>
+            <div className="fz-section-title" style={{ margin: 0, flex: 1, marginRight: 16 }}>{t('zone_editor.my_layouts')}</div>
             <button className="fz-btn-primary" onClick={createNewLayout} style={{ padding: '7px 14px', borderRadius: 9, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, flexShrink: 0 }}>
-              <Plus size={13} /> Nuevo
+              <Plus size={13} /> {t('zone_editor.new_layout')}
             </button>
           </div>
           
@@ -619,14 +651,14 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
               })}
             </div>
           ) : (
-            <div style={{ padding: '52px 28px', textAlign: 'center', background: 'rgba(255,255,255,0.018)', borderRadius: 18, border: '1px dashed rgba(255,255,255,0.07)', position: 'relative', overflow: 'hidden' }}>
+            <div style={{ padding: '52px 28px', textAlign: 'center', background: 'var(--fz-bg-alt)', borderRadius: 18, border: '1px dashed var(--fz-border)', position: 'relative', overflow: 'hidden' }}>
               <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at 50% 100%, var(--fz-accent-low) 0%, transparent 65%)', pointerEvents: 'none' }} />
               <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 14, opacity: 0.14 }}>
                 <Layout size={42} />
               </div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fz-text-muted)', marginBottom: 6 }}>Sin diseños personalizados</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fz-text-muted)', marginBottom: 6 }}>{t('zone_editor.no_custom_layouts')}</div>
               <div style={{ fontSize: 11.5, color: 'var(--fz-text-muted)', opacity: 0.6, lineHeight: 1.65 }}>
-                Crea uno nuevo o duplica una plantilla<br/>para empezar
+                {t('zone_editor.no_custom_layouts_hint')}
               </div>
             </div>
           )}
@@ -640,15 +672,15 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <div style={{
                     width: 38, height: 38, borderRadius: 11,
-                    background: 'rgba(var(--accent-rgb, 0, 210, 255), 0.1)',
-                    border: '1px solid rgba(var(--accent-rgb, 0, 210, 255), 0.2)',
+                    background: 'var(--fz-accent-low)',
+                    border: '1px solid var(--fz-accent-dim)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center'
                   }}>
                     <Layout size={18} color="var(--fz-accent)" />
                   </div>
                   <div>
-                    <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em', color: '#fff' }}>Personalizar Diseño</div>
-                    <div style={{ fontSize: 11, color: 'var(--fz-text-muted)', marginTop: 2, letterSpacing: '0.02em' }}>Nombre y espaciado de zonas</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em', color: 'var(--fz-text)' }}>{t('zone_editor.customize_title')}</div>
+                    <div style={{ fontSize: 11, color: 'var(--fz-text-muted)', marginTop: 2, letterSpacing: '0.02em' }}>{t('zone_editor.customize_subtitle')}</div>
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
@@ -675,22 +707,22 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
               <div style={{ marginBottom: 22 }}>
                 <label style={{ 
                   display: 'flex', alignItems: 'center', gap: 6,
-                  fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.3)', 
+                  fontSize: 10, fontWeight: 800, color: 'var(--fz-text-muted)', 
                   marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.1em' 
                 }}>
                   <div style={{ width: 3, height: 10, background: 'var(--fz-accent)', borderRadius: 2 }} />
-                  Nombre del diseño
+                  {t('zone_editor.layout_name')}
                 </label>
                 <div style={{ position: 'relative' }}>
                   <Edit3 size={16} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', opacity: 0.35, pointerEvents: 'none' }} />
                   <input 
                     value={editingLayout.name} 
                     onChange={e => setEditingLayout({...editingLayout, name: e.target.value})}
-                    placeholder="Ej: Multitarea, Gaming..."
+                    placeholder={t('zone_editor.layout_name_placeholder')}
                     style={{ 
                       width: '100%', 
-                      background: 'rgba(255,255,255,0.04)', 
-                      border: '1px solid rgba(255,255,255,0.08)', 
+                      background: 'var(--fz-bg-alt)', 
+                      border: '1px solid var(--fz-border)', 
                       color: 'var(--fz-text)', 
                       padding: '13px 16px 13px 40px', 
                       borderRadius: 13, 
@@ -700,8 +732,8 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
                       transition: 'all 0.2s ease',
                       boxSizing: 'border-box'
                     }}
-                    onFocus={e => { e.target.style.borderColor = 'rgba(var(--accent-rgb, 0, 210, 255), 0.45)'; e.target.style.boxShadow = '0 0 0 3px rgba(var(--accent-rgb, 0, 210, 255), 0.10)'; e.target.style.background = 'rgba(var(--accent-rgb, 0, 210, 255), 0.04)'; }}
-                    onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.08)'; e.target.style.boxShadow = 'none'; e.target.style.background = 'rgba(255,255,255,0.04)'; }}
+                     onFocus={e => { e.target.style.borderColor = 'var(--fz-accent)'; e.target.style.boxShadow = '0 0 0 3px var(--fz-accent-dim)'; e.target.style.background = 'var(--fz-accent-low)'; }}
+                    onBlur={e => { e.target.style.borderColor = 'var(--fz-border)'; e.target.style.boxShadow = 'none'; e.target.style.background = 'var(--fz-bg-alt)'; }}
                   />
                 </div>
               </div>
@@ -711,7 +743,7 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <div style={{ width: 3, height: 10, background: 'var(--fz-accent)', borderRadius: 2, opacity: 0.6 }} />
-                      <span style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Espaciado entre zonas</span>
+                      <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--fz-text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{t('zone_editor.spacing_label')}</span>
                    </div>
                    <div style={{ 
                      background: 'rgba(var(--accent-rgb, 0, 210, 255), 0.1)', 
@@ -724,9 +756,9 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
                     {spacing}px
                    </div>
                 </div>
-                <div style={{ 
-                  background: 'rgba(255,255,255,0.03)', 
-                  border: '1px solid rgba(255,255,255,0.06)', 
+                 <div style={{ 
+                  background: 'var(--fz-bg-alt)', 
+                  border: '1px solid var(--fz-border)', 
                   borderRadius: 12, 
                   padding: '14px 16px'
                 }}>
@@ -734,7 +766,12 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
                     type="range" min="0" max="64" step="2"
                     value={spacing} 
                     onChange={e => setSpacing(parseInt(e.target.value))} 
-                    style={{ width: '100%', accentColor: 'var(--fz-accent)', cursor: 'pointer' }} 
+                    style={{ 
+                      width: '100%', 
+                      accentColor: 'var(--fz-accent)', 
+                      cursor: 'pointer',
+                      '--val': `${(spacing / 64) * 100}%`
+                    }} 
                   />
                 </div>
               </div>
@@ -752,14 +789,14 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
                     letterSpacing: '0.04em'
                   }}
                 >
-                  {saving ? 'Guardando...' : 'Guardar Configuración'}
+                  {saving ? t('common.loading') : t('zone_editor.save_config')}
                 </button>
                 <button 
                   onClick={() => setEditingLayout(null)} 
                   className="fz-btn-secondary" 
                   style={{ flex: 1, height: 48, borderRadius: 13 }}
                 >
-                  Cancelar
+                  {t('common.cancel')}
                 </button>
               </div>
             </div>
@@ -789,13 +826,14 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
           to   { opacity: 1; transform: scale(1)    translateY(0);    filter: blur(0); }
         }
         .fz-dialog {
-          background: rgba(16, 16, 18, 0.98) !important;
-          border: 1px solid rgba(255,255,255,0.09) !important;
+          background: var(--fz-card) !important;
+          border: 1px solid var(--fz-border) !important;
           border-radius: 22px !important;
           padding: 30px !important;
-          box-shadow: 0 50px 100px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.04) inset, 0 1px 0 rgba(255,255,255,0.06) inset !important;
+          box-shadow: var(--fz-shadow), 0 0 0 1px rgba(255,255,255,0.04) inset, 0 1px 0 rgba(255,255,255,0.06) inset !important;
           position: relative;
           overflow: hidden;
+          color: var(--fz-text) !important;
         }
         .fz-dialog::before {
           content: '';
@@ -821,6 +859,7 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
           border: 2.5px solid var(--fz-accent);
           border-radius: 50%;
           cursor: pointer;
+          margin-top: -7px; /* Centers the thumb vertically on a 5px track */
           box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 12px var(--fz-accent-dim);
           transition: transform 0.18s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.18s ease;
         }
@@ -837,14 +876,14 @@ function ZoneEditorModalInner({ onClose, standalone = false, canvasOnly = false,
       {/* Confirm Deletion Modal */}
       {showDeleteConfirm && (
         <ConfirmModal 
-          title="Eliminar diseño"
-          message={`¿Estás seguro de que deseas eliminar permanentemente el diseño "${layoutToDelete?.name}"? Esta acción no se puede deshacer.`}
+          title={t('modals.delete_layout_title')}
+          message={t('modals.delete_layout_msg', { name: layoutToDelete?.name })}
           onConfirm={handleConfirmDelete}
           onCancel={() => {
             setShowDeleteConfirm(false);
             setLayoutToDelete(null);
           }}
-          confirmText="Eliminar permanentemente"
+          confirmText={t('common.delete_permanently')}
           isDanger={true}
         />
       )}
@@ -862,6 +901,7 @@ const LayoutCard = ({
   setGridFromGridState, setGridFromZones,
   openCanvasEditor, duplicateLayout, deleteLayout
 }) => {
+  const { t } = useTranslation();
   const [preselectAnim, setPreselectAnim] = useState(false);
   const [activateAnim, setActivateAnim] = useState(false);
   const prevIsSelected = useRef(isSelected);
@@ -918,7 +958,7 @@ const LayoutCard = ({
             <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--fz-accent)', flexShrink: 0, boxShadow: '0 0 10px var(--fz-accent-glow)' }} />
           )}
           {isAdapted && (
-            <span title={`Diseñado para ${layout.refWidth}×${layout.refHeight}, monitor actual ${monW}×${monH}`}
+            <span title={t('modals.sync_portability_details_short', { refW: layout.refWidth, refH: layout.refHeight, monW, monH })}
               style={{ fontSize: 9, background: 'rgba(255,200,0,0.12)', color: 'rgba(255,215,0,0.75)', padding: '1px 5px', borderRadius: 3, fontWeight: 700, flexShrink: 0, letterSpacing: '0.02em' }}>
               ∝
             </span>
@@ -968,7 +1008,7 @@ const LayoutCard = ({
                 setMenuOpenId(null);
               }}
             >
-              <Edit3 size={14} style={{ opacity: 0.7, color: 'var(--fz-accent)' }} /> Editar Propiedades
+              <Edit3 size={14} style={{ opacity: 0.7, color: 'var(--fz-accent)' }} /> {t('zone_editor.edit_props')}
             </button>
             {!layout.isTemplate && (
               <button 
@@ -979,7 +1019,7 @@ const LayoutCard = ({
                   openCanvasEditor(activeMonitorId, layout.id);
                 }}
               >
-                <Maximize2 size={14} style={{ opacity: 0.7, color: 'var(--fz-accent)' }} /> Editor Interactivo
+                <Maximize2 size={14} style={{ opacity: 0.7, color: 'var(--fz-accent)' }} /> {t('zone_editor.interactive_editor')}
               </button>
             )}
             <div style={{ height: 1, background: 'rgba(255,255,255,0.08)', margin: '4px 8px' }} />
@@ -988,7 +1028,7 @@ const LayoutCard = ({
               className="menu-item-hover"
               onClick={() => { duplicateLayout(layout); setMenuOpenId(null); }}
             >
-              <Copy size={14} style={{ opacity: 0.7 }} /> Duplicar
+              <Copy size={14} style={{ opacity: 0.7 }} /> {t('common.duplicate')}
             </button>
             {!layout.isTemplate && (
               <button 
@@ -996,7 +1036,7 @@ const LayoutCard = ({
                 className="menu-item-hover"
                 onClick={() => { deleteLayout(layout); setMenuOpenId(null); }}
               >
-                <Trash2 size={14} /> Eliminar
+                <Trash2 size={14} /> {t('common.delete')}
               </button>
             )}
           </div>

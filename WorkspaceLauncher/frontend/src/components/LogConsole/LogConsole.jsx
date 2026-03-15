@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { Terminal, Copy, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { onEvent, offEvent } from '../../api/bridge.js'
 import './LogConsole.css'
 
 export default function LogConsole() {
+  const { t } = useTranslation()
   const [logs, setLogs] = useState([])
   const [expanded, setExpanded] = useState(false)
   const bottomRef = useRef(null)
@@ -48,14 +50,14 @@ export default function LogConsole() {
       <div className="log-header" onClick={() => setExpanded(!expanded)}>
         <div className="log-title">
           <Terminal size={14} />
-          <span>Consola del Sistema</span>
+          <span>{t('log_console.title')}</span>
           <span className="log-badge">{logs.length}</span>
         </div>
         <div className="log-actions">
           {expanded && (
             <>
-              <button onClick={e => { e.stopPropagation(); copyToClipboard(); }} title="Copiar historial"><Copy size={14} /></button>
-              <button onClick={e => { e.stopPropagation(); clearLogs(); }} title="Limpiar"><Trash2 size={14} /></button>
+              <button onClick={e => { e.stopPropagation(); copyToClipboard(); }} title={t('log_console.copy')}><Copy size={14} /></button>
+              <button onClick={e => { e.stopPropagation(); clearLogs(); }} title={t('log_console.clear')}><Trash2 size={14} /></button>
             </>
           )}
           {expanded ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
@@ -65,7 +67,7 @@ export default function LogConsole() {
       {expanded && (
         <div className="log-body">
           {logs.length === 0 ? (
-            <div className="log-empty">No hay actividad registrada.</div>
+            <div className="log-empty">{t('log_console.empty')}</div>
           ) : (
             logs.map((l, i) => (
               <div key={i} className={`log-line ${l.level}`}>

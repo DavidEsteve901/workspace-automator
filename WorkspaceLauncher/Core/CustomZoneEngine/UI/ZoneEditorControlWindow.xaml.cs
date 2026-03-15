@@ -12,12 +12,14 @@ public partial class ZoneEditorControlWindow : System.Windows.Window
 {
     private readonly string _monitorHardwareId;
     private readonly string _layoutId;
+    private readonly bool _isNew;
 
-    public ZoneEditorControlWindow(string monitorHardwareId, string layoutId)
+    public ZoneEditorControlWindow(string monitorHardwareId, string layoutId, bool isNew = false)
     {
         InitializeComponent();
         _monitorHardwareId = monitorHardwareId;
         _layoutId = layoutId;
+        _isNew = isNew;
         
         Loaded += ZoneEditorControlWindow_Loaded;
         KeyDown += (s, e) => { if (e.Key == System.Windows.Input.Key.Escape) ZoneEditorLauncher.Instance.ToggleManager(); };
@@ -61,7 +63,7 @@ public partial class ZoneEditorControlWindow : System.Windows.Window
 
             string? devUrl = Environment.GetEnvironmentVariable("WL_DEV_URL");
             string baseUrl = !string.IsNullOrEmpty(devUrl) ? devUrl : "https://launcher.local/index.html";
-            string url = $"{baseUrl}#/zone-control?monitor={_monitorHardwareId}&layout={_layoutId}";
+            string url = $"{baseUrl}#/zone-control?monitor={_monitorHardwareId}&layout={_layoutId}&isNew={(_isNew ? "true" : "false")}";
             webView.Source = new Uri(url);
 
             webView.CoreWebView2.WebMessageReceived += (s, args) =>

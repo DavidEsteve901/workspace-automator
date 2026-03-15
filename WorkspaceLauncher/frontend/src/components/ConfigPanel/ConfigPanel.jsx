@@ -1,30 +1,32 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Settings, Keyboard, Monitor, Save, Check, Folder, LayoutGrid, ChevronRight, X, ArrowRightToLine, ArrowLeftToLine, ArrowRightSquare, ArrowLeftSquare, RefreshCcw, RotateCw, Palette, Sun, Moon } from 'lucide-react'
+import { Settings, Keyboard, Monitor, Save, Check, Folder, LayoutGrid, ChevronRight, X, ArrowRightToLine, ArrowLeftToLine, ArrowRightSquare, ArrowLeftSquare, RefreshCcw, RotateCw, Palette, Sun, Moon, Languages } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { bridge, onEvent, offEvent } from '../../api/bridge.js'
 import PremiumSelect from '../PremiumSelect.jsx'
 import './ConfigPanel.css'
 
 const ACCENT_PALETTES = [
-  { name: 'Cyan',    color: '#00D2FF' },
-  { name: 'Azul',    color: '#2979FF' },
-  { name: 'Verde',   color: '#00E676' },
-  { name: 'Violeta', color: '#D500F9' },
-  { name: 'Naranja', color: '#FF6D00' },
-  { name: 'Rosa',    color: '#FF4081' },
-  { name: 'Rojo',    color: '#FF1744' },
-  { name: 'Oro',     color: '#FFD600' },
+  { name: 'config.accents.cyan',    color: '#00D2FF' },
+  { name: 'config.accents.blue',    color: '#2979FF' },
+  { name: 'config.accents.green',   color: '#00E676' },
+  { name: 'config.accents.purple',  color: '#D500F9' },
+  { name: 'config.accents.orange',  color: '#FF6D00' },
+  { name: 'config.accents.pink',    color: '#FF4081' },
+  { name: 'config.accents.red',     color: '#FF1744' },
+  { name: 'config.accents.gold',    color: '#FFD600' },
 ]
 
 const HOTKEY_LABELS = {
-  cycle_forward: { label: 'Ciclar zona →', icon: ArrowRightToLine },
-  cycle_backward: { label: 'Ciclar zona ←', icon: ArrowLeftToLine },
-  desktop_cycle_fwd: { label: 'Cambiar escritorio →', icon: ArrowRightSquare },
-  desktop_cycle_bwd: { label: 'Cambiar escritorio ←', icon: ArrowLeftSquare },
-  util_reload_layouts: { label: 'Recargar layouts', icon: RefreshCcw },
-  open_zone_editor: { label: 'Abrir Editor de Zonas', icon: LayoutGrid },
+  cycle_forward: { label: 'config.hotkey_labels.cycle_forward', icon: ArrowRightToLine },
+  cycle_backward: { label: 'config.hotkey_labels.cycle_backward', icon: ArrowLeftToLine },
+  desktop_cycle_fwd: { label: 'config.hotkey_labels.desktop_cycle_fwd', icon: ArrowRightSquare },
+  desktop_cycle_bwd: { label: 'config.hotkey_labels.desktop_cycle_bwd', icon: ArrowLeftSquare },
+  util_reload_layouts: { label: 'config.hotkey_labels.util_reload_layouts', icon: RefreshCcw },
+  open_zone_editor: { label: 'config.hotkey_labels.open_zone_editor', icon: LayoutGrid },
 }
 
-export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetectedPath, fzSyncEnabled, configPath, themeMode, accentColor, desktopAnimationsEnabled, onSave, onClose }) {
+export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetectedPath, fzSyncEnabled, configPath, themeMode, accentColor, desktopAnimationsEnabled, runAtStartup, language, onPreview, onSave, onClose }) {
+  const { t, i18n } = useTranslation()
   const [hk, setHk] = useState({ ...hotkeys })
   const [pip, setPip] = useState(pipWatcher)
   const [fzPath, setFzPath] = useState(fzCustomPath || '')
@@ -38,6 +40,15 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
   const [accent, setAccent] = useState(accentColor || '')
   const [winAccent, setWinAccent] = useState('')
   const [desktopAnims, setDesktopAnims] = useState(desktopAnimationsEnabled ?? true)
+  const [runStartup, setRunStartup] = useState(runAtStartup ?? false)
+  const [configLang, setConfigLang] = useState(language || 'auto')
+
+  // Live preview effect
+  useEffect(() => {
+    if (onPreview) {
+      onPreview(theme, accent)
+    }
+  }, [theme, accent, onPreview])
 
   useEffect(() => {
     async function loadEngine() {
@@ -62,9 +73,19 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
       fzSyncEnabled: fzSync, 
       themeMode: theme, 
       accentColor: accent,
-      desktopAnimationsEnabled: desktopAnims
+      desktopAnimationsEnabled: desktopAnims,
+      runAtStartup: runStartup,
+      language: configLang
     })
     await bridge.czeSetZoneEngine(engine)
+
+    // Apply language change locally
+    if (configLang === 'auto') {
+      const detected = i18n.services.languageDetector.detect()
+      i18n.changeLanguage(detected)
+    } else {
+      i18n.changeLanguage(configLang)
+    }
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
@@ -96,15 +117,15 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
       <div className="config-header">
         <div className="config-header-left">
           <Settings size={20} className="config-header-icon" />
-          <h2>Configuración</h2>
+          <h2>{t('config.title')}</h2>
         </div>
-        <button className="config-close-btn" onClick={onClose} title="Cerrar configuración">
+        <button className="config-close-btn" onClick={onClose} title={t('common.close')}>
           <X size={20} />
         </button>
       </div>
 
       <div className="config-body">
-        <Section title="Motor de Zonas (Engine)" icon={<LayoutGrid size={14} />}>
+        <Section title={t('config.engine_title')} icon={<LayoutGrid size={14} />}>
           <div className="engine-toggle-group">
             <button 
               className={`engine-btn ${engine === 'FancyZones' ? 'active' : ''}`}
@@ -121,13 +142,13 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
           </div>
           <p className="fz-path-help">
             {engine === 'CustomZoneEngine' 
-              ? "Usa el motor integrado. Permite edición visual avanzada y es independiente de PowerToys."
-              : "Usa el motor oficial de Microsoft PowerToys (requiere tenerlo instalado)."}
+              ? t('config.engine_cze_desc')
+              : t('config.engine_fz_desc')}
           </p>
           
           <div style={{ marginTop: '12px' }}>
             <Toggle
-              label="Sincronización y Compatibilidad con FancyZones"
+              label={t('config.engine_sync')}
               value={fzSync}
               onChange={setFzSync}
             />
@@ -137,7 +158,7 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
         {/* Grouped FancyZones options (Collapsible) */}
         {fzSync && (
           <Section 
-            title="FancyZones — Configuración Adicional" 
+            title={t('config.fz_additional')} 
             icon={<LayoutGrid size={14} />}
             collapsible
             isOpen={fzSectionOpen}
@@ -148,15 +169,15 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
                 <div className="fz-status-btn-content">
                   <LayoutGrid size={16} />
                   <div>
-                    <span className="fz-status-btn-title">Gestionar Layouts por Monitor</span>
-                    <span className="fz-status-btn-desc">Ver y cambiar qué layout está activo en cada monitor</span>
+                    <span className="fz-status-btn-title">{t('config.fz_manage_layouts')}</span>
+                    <span className="fz-status-btn-desc">{t('config.fz_manage_desc')}</span>
                   </div>
                 </div>
                 <ChevronRight size={16} className="fz-status-btn-arrow" />
               </button>
 
               <div className="fz-path-section" style={{ marginTop: '12px' }}>
-                <span className="config-sub-label">Ruta de PowerToys / FancyZones:</span>
+                <span className="config-sub-label">{t('config.fz_path_label')}</span>
                 <div className="fz-path-row">
                   <input
                     className="fz-path-input"
@@ -165,13 +186,13 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
                     value={fzPath}
                     onChange={e => setFzPath(e.target.value)}
                   />
-                  <button className="fz-path-btn" onClick={handlePickPath} title="Seleccionar">
+                  <button className="fz-path-btn" onClick={handlePickPath} title={t('item_dialog.browse')}>
                     <Folder size={14} />
                   </button>
                 </div>
                 {fzDetectedPath && (
                   <div className="fz-detected-path">
-                    <span>Detectado:</span> <code>{fzDetectedPath}</code>
+                    <span>{t('config.fz_detected')}</span> <code>{fzDetectedPath}</code>
                   </div>
                 )}
               </div>
@@ -180,36 +201,41 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
         )}
 
         {/* System & Global Toggles */}
-        <Section title="Sistema y Opciones Globales" icon={<Monitor size={14} />}>
+        <Section title={t('config.global_options_title')} icon={<Monitor size={14} />}>
           <Toggle
-            label="Anclar ventanas Picture-in-Picture a todos los escritorios"
+            label={t('config.pip_label')}
             value={pip}
             onChange={setPip}
           />
           <Toggle
-            label="Habilitar cycling de zonas"
+            label={t('config.cycle_zones_label')}
             value={hk._zone_cycle_enabled}
             onChange={v => setHotkey('_zone_cycle_enabled', v)}
           />
           <Toggle
-            label="Habilitar cycling de escritorios virtuales"
+            label={t('config.cycle_desktops_label')}
             value={hk._desktop_cycle_enabled}
             onChange={v => setHotkey('_desktop_cycle_enabled', v)}
           />
           <Toggle
-            label="Mostrar consola de depuración"
+            label={t('config.show_console_label')}
             value={hk.show_system_console}
             onChange={v => setHotkey('show_system_console', v)}
           />
           <Toggle
-            label="Animaciones de transición de escritorio"
+            label={t('config.desktop_anims_label')}
             value={desktopAnims}
             onChange={setDesktopAnims}
+          />
+          <Toggle
+            label={t('config.run_startup_label')}
+            value={runStartup}
+            onChange={setRunStartup}
           />
         </Section>
 
         {/* Config file location */}
-        <Section title="Ubicación de Configuración (JSON)" icon={<Folder size={14} />}>
+        <Section title={t('config.config_location')} icon={<Folder size={14} />}>
           <div className="fz-path-row">
             <input
               className="fz-path-input"
@@ -217,40 +243,40 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
               readOnly
               value={configPath || ''}
             />
-            <button className="fz-path-btn" onClick={handlePickConfigPath} title="Seleccionar nueva carpeta de configuración">
+            <button className="fz-path-btn" onClick={handlePickConfigPath} title={t('config.pick_config_title', 'Seleccionar nueva carpeta de configuración')}>
               <Folder size={14} />
             </button>
-            <button className="fz-path-btn" onClick={handleOpenConfigFolder} title="Abrir carpeta actual en el Explorador">
+            <button className="fz-path-btn" onClick={handleOpenConfigFolder} title={t('config.open_config_folder', 'Abrir carpeta actual en el Explorador')}>
               <ChevronRight size={14} />
             </button>
           </div>
           <p className="fz-path-help">
-            Ruta actual del archivo <code>mis_apps_config_v2.json</code>. Puedes cambiarla para sincronizar entre equipos.
+            {t('config.config_path_help')}
           </p>
         </Section>
 
         {/* Apariencia */}
-        <Section title="Apariencia" icon={<Palette size={14} />}>
+        <Section title={t('config.appearance_title')} icon={<Palette size={14} />}>
           <div className="appearance-theme-row">
-            <span className="config-sub-label">Tema de la interfaz</span>
+            <span className="config-sub-label">{t('config.theme_label')}</span>
             <div className="theme-toggle-group">
               <button
                 className={`theme-mode-btn ${theme === 'dark' ? 'active' : ''}`}
                 onClick={() => setTheme('dark')}
               >
-                <Moon size={13} /> Oscuro
+                <Moon size={13} /> {t('config.theme_dark')}
               </button>
               <button
                 className={`theme-mode-btn ${theme === 'light' ? 'active' : ''}`}
                 onClick={() => setTheme('light')}
               >
-                <Sun size={13} /> Claro
+                <Sun size={13} /> {t('config.theme_light')}
               </button>
             </div>
           </div>
 
           <div style={{ marginTop: '14px' }}>
-            <span className="config-sub-label">Color de acento</span>
+            <span className="config-sub-label">{t('config.accent_label')}</span>
             <div className="accent-palette">
               {ACCENT_PALETTES.map(p => (
                 <button
@@ -258,7 +284,7 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
                   className={`accent-swatch ${accent === p.color ? 'active' : ''}`}
                   style={{ '--swatch-color': p.color }}
                   onClick={() => setAccent(p.color)}
-                  title={p.name}
+                  title={t(p.name)}
                 />
               ))}
               {winAccent && (
@@ -266,7 +292,7 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
                   className={`accent-swatch accent-swatch-win ${accent === winAccent ? 'active' : ''}`}
                   style={{ '--swatch-color': winAccent }}
                   onClick={() => setAccent(winAccent)}
-                  title={`Color de Windows (${winAccent})`}
+                  title={`${t('config.accent_win')} (${winAccent})`}
                 >
                   <span className="accent-swatch-win-label">W</span>
                 </button>
@@ -274,7 +300,7 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
               <button
                 className={`accent-swatch accent-swatch-reset ${!accent ? 'active' : ''}`}
                 onClick={() => setAccent('')}
-                title="Cyan por defecto"
+                title={t('config.accent_def')}
               >
                 <span style={{ fontSize: '9px', fontWeight: 700 }}>DEF</span>
               </button>
@@ -284,19 +310,34 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
                 className="accent-preview-dot"
                 style={{ background: accent || '#00D2FF' }}
               />
-              <code className="accent-preview-hex">{accent || '#00D2FF (por defecto)'}</code>
+              <code className="accent-preview-hex">{accent || `#00D2FF (${t('common.default').toLowerCase()})`}</code>
+            </div>
+          </div>
+
+          <div className="appearance-theme-row" style={{ marginTop: '14px' }}>
+            <span className="config-sub-label">{t('config.language_label')}</span>
+            <div style={{ width: '180px' }}>
+                <PremiumSelect
+                    value={configLang}
+                    options={[
+                        { value: 'auto', label: t('config.lang_auto') },
+                        { value: 'es', label: t('config.lang_es') },
+                        { value: 'en', label: t('config.lang_en') }
+                    ]}
+                    onChange={setConfigLang}
+                />
             </div>
           </div>
         </Section>
 
         {/* Hotkeys — keybinding recorder */}
-        <Section title="Atajos de teclado / ratón" icon={<Keyboard size={14} />}>
+        <Section title={t('config.hotkeys_title')} icon={<Keyboard size={14} />}>
           <div className="hotkey-table">
             {Object.entries(HOTKEY_LABELS).map(([key, data]) => {
               const Icon = data.icon;
               return (
               <div key={key} className="hotkey-row">
-                <span className="hotkey-label"><Icon size={14} className="hotkey-icon" /> {data.label}</span>
+                <span className="hotkey-label"><Icon size={14} className="hotkey-icon" /> {t(data.label)}</span>
                 <KeybindRecorder
                   value={hk[key] || ''}
                   isRecording={activeRecordingKey === key}
@@ -318,11 +359,11 @@ export default function ConfigPanel({ hotkeys, pipWatcher, fzCustomPath, fzDetec
         >
           {saved ? (
             <>
-              <Check size={14} /> Aplicado correctamente
+              <Check size={14} /> {t('config.saved_success')}
             </>
           ) : (
             <>
-              <Save size={14} /> Guardar configuración
+              <Save size={14} /> {t('config.save_config')}
             </>
           )}
         </button>
@@ -639,7 +680,7 @@ function KeybindRecorder({ value, isRecording, onStartRecording, onStopRecording
       onKeyDown={isRecording ? handleKeyDown : undefined}
     >
       {isRecording ? (
-        <span className="keybind-recording">Presiona atajo (Esc cancelar)...</span>
+        <span className="keybind-recording">{t('config.hotkeys_press_esc', 'Presiona atajo (Esc cancelar)...')}</span>
       ) : (
         <span className="keybind-value">{display || '—'}</span>
       )}

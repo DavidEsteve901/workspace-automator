@@ -17,8 +17,12 @@
 .confirm-modal .btn-danger {
   background: var(--danger);
   color: #fff;
+  box-shadow: 0 4px 12px var(--danger-glow);
 }
 
-.confirm-modal .btn-danger:hover {
+.confirm-modal .btn-danger:hover:not(:disabled) {
   background: var(--danger-hover);
+  /* Disable the move animation and use red shadow */
+  transform: none; 
+  box-shadow: 0 6px 20px var(--danger-glow);
 }

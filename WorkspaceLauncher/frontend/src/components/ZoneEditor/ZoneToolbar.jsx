@@ -1,13 +1,16 @@
+import { useTranslation } from 'react-i18next';
+
 const PRESETS = [
-  { key: '1col',       label: '1 col' },
-  { key: '2col',       label: '2 col' },
-  { key: '3col',       label: '3 col' },
-  { key: '2row',       label: '2 filas' },
-  { key: 'main-right', label: 'Prin+Dch' },
-  { key: 'main-left',  label: 'Izq+Prin' },
+  { key: '1col',       labelKey: '1col' },
+  { key: '2col',       labelKey: '2col' },
+  { key: '3col',       labelKey: '3col' },
+  { key: '2row',       labelKey: '2row' },
+  { key: 'main-right', labelKey: 'main-right' },
+  { key: 'main-left',  labelKey: 'main-left' },
 ];
 
 export function ZoneToolbar({ selectedCount, spacing, onSpacingChange, onPreset, onMerge, onReset }) {
+  const { t } = useTranslation();
   return (
     <div style={{
       display: 'flex',
@@ -16,20 +19,20 @@ export function ZoneToolbar({ selectedCount, spacing, onSpacingChange, onPreset,
       alignItems: 'center',
       marginBottom: 8,
       padding: '6px 10px',
-      background: 'rgba(0,0,0,0.4)',
+      background: 'var(--fz-bg-soft)',
       backdropFilter: 'blur(12px)',
       borderRadius: 10,
-      border: '1px solid rgba(255,255,255,0.06)',
+      border: '1px solid var(--fz-border)',
     }}>
       <span style={{
         fontSize: 9,
         fontWeight: 800,
-        color: 'rgba(255,255,255,0.3)',
+        color: 'var(--fz-text-muted)',
         textTransform: 'uppercase',
         letterSpacing: '0.1em',
         marginRight: 2,
         flexShrink: 0,
-      }}>Presets</span>
+      }}>{t('zone_editor.presets')}</span>
 
       {PRESETS.map(p => (
         <button
@@ -48,19 +51,19 @@ export function ZoneToolbar({ selectedCount, spacing, onSpacingChange, onPreset,
             letterSpacing: '0.02em',
           }}
           onMouseEnter={e => {
-            e.currentTarget.style.background = 'rgba(var(--accent-rgb, 0, 210, 255), 0.12)';
-            e.currentTarget.style.borderColor = 'rgba(var(--accent-rgb, 0, 210, 255), 0.3)';
-            e.currentTarget.style.color = 'var(--accent, #00D2FF)';
+            e.currentTarget.style.background = 'var(--fz-accent-low)';
+            e.currentTarget.style.borderColor = 'var(--fz-accent)';
+            e.currentTarget.style.color = 'var(--fz-accent)';
             e.currentTarget.style.transform = 'translateY(-1px)';
           }}
           onMouseLeave={e => {
-            e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
-            e.currentTarget.style.color = 'rgba(255,255,255,0.6)';
+            e.currentTarget.style.background = 'var(--fz-bg-alt)';
+            e.currentTarget.style.borderColor = 'var(--fz-border)';
+            e.currentTarget.style.color = 'var(--fz-text-muted)';
             e.currentTarget.style.transform = 'translateY(0)';
           }}
         >
-          {p.label}
+          {t(`item_dialog.presets.${p.key}`)}
         </button>
       ))}
 
@@ -84,7 +87,7 @@ export function ZoneToolbar({ selectedCount, spacing, onSpacingChange, onPreset,
           onMouseEnter={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.2)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
           onMouseLeave={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.1)'; e.currentTarget.style.transform = 'translateY(0)'; }}
         >
-          Fusionar ({selectedCount})
+          {t('zone_editor.merge', { count: selectedCount })}
         </button>
       )}
 
@@ -93,9 +96,9 @@ export function ZoneToolbar({ selectedCount, spacing, onSpacingChange, onPreset,
         style={{
           padding: '4px 12px',
           borderRadius: 7,
-          border: '1px solid rgba(255,255,255,0.07)',
-          background: 'rgba(255,255,255,0.03)',
-          color: 'rgba(255,255,255,0.45)',
+          border: '1px solid var(--fz-border)',
+          background: 'var(--fz-bg-alt)',
+          color: 'var(--fz-text-muted)',
           fontSize: 11,
           fontWeight: 600,
           cursor: 'pointer',
@@ -104,7 +107,7 @@ export function ZoneToolbar({ selectedCount, spacing, onSpacingChange, onPreset,
         onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,59,48,0.1)'; e.currentTarget.style.borderColor = 'rgba(255,59,48,0.25)'; e.currentTarget.style.color = '#ff3b30'; }}
         onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.45)'; }}
       >
-        Resetear
+        {t('zone_editor.reset')}
       </button>
 
       <div style={{
@@ -112,12 +115,12 @@ export function ZoneToolbar({ selectedCount, spacing, onSpacingChange, onPreset,
         alignItems: 'center',
         gap: 8,
         marginLeft: 6,
-        background: 'rgba(255,255,255,0.04)',
+        background: 'var(--fz-bg-alt)',
         padding: '4px 12px',
         borderRadius: 8,
-        border: '1px solid rgba(255,255,255,0.06)',
+        border: '1px solid var(--fz-border)',
       }}>
-        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Gap</span>
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{t('zone_editor.gap')}</span>
         <input
           type="range" min="0" max="40" value={spacing}
           onChange={e => onSpacingChange(parseInt(e.target.value))}
@@ -127,7 +130,7 @@ export function ZoneToolbar({ selectedCount, spacing, onSpacingChange, onPreset,
       </div>
 
       <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', marginLeft: 2, letterSpacing: '0.01em' }}>
-        2×Clic dividir · Shift+drag multi
+        {t('zone_editor.help_text')}
       </span>
     </div>
   );

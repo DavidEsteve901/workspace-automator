@@ -4,6 +4,7 @@ using WorkspaceLauncher.Core.Utils;
 using WorkspaceLauncher.Core.Config;
 using WorkspaceLauncher.Core.FancyZones;
 using WorkspaceLauncher.Core.Launcher;
+using WorkspaceLauncher.Bridge;
 
 namespace WorkspaceLauncher.Core.CustomZoneEngine.UI;
 
@@ -180,7 +181,7 @@ public sealed class ZoneEditorLauncher
             if (!_overlaysByHandle.TryGetValue(targetMon.Handle, out var targetOverlay)) targetOverlay = _overlaysByHandle.Values.FirstOrDefault();
             if (targetOverlay == null) return;
 
-            _editCanvas = new ZoneCanvasEditorWindow(targetMon.HardwareId, layoutId, "edit") { Owner = targetOverlay };
+            _editCanvas = new ZoneCanvasEditorWindow(targetMon.HardwareId, layoutId, "edit", isNew) { Owner = targetOverlay };
             double scale = targetMon.Scale / 100.0;
             _editCanvas.Left = targetMon.WorkArea.Left / scale;
             _editCanvas.Top = targetMon.WorkArea.Top / scale;
@@ -190,7 +191,7 @@ public sealed class ZoneEditorLauncher
             _editCanvas.Show();
             _editCanvas.Activate();
 
-            _controlDialog = new ZoneEditorControlWindow(targetMon.HardwareId, layoutId) { Owner = _editCanvas };
+            _controlDialog = new ZoneEditorControlWindow(targetMon.HardwareId, layoutId, isNew) { Owner = _editCanvas };
             _controlDialog.Closed += OnEditorWindowClosed;
             _controlDialog.Show();
             _controlDialog.Activate();
@@ -210,8 +211,8 @@ public sealed class ZoneEditorLauncher
 
     private void OnEditorWindowClosed(object? sender, EventArgs e) => ReturnToAdmin();
 
-    public void ReturnToAdmin() => ReturnToAdmin(false);
-    public void ReturnToAdmin(bool isDiscard)
+    public void ReturnToAdmin() => ReturnToAdmin(false, null);
+    public void ReturnToAdmin(bool isDiscard, string? savedId = null)
     {
         System.Windows.Application.Current.Dispatcher.Invoke(async () =>
         {
@@ -220,6 +221,15 @@ public sealed class ZoneEditorLauncher
             {
                 ConfigManager.Instance.Config.CzeLayouts.Remove(_lastDraftLayoutId);
                 await ConfigManager.Instance.SaveAsync();
+            }
+
+            if (isDiscard)
+            {
+                WebBridge.Broadcast("cze_operation_cancelled", new { });
+            }
+            else if (!string.IsNullOrEmpty(savedId))
+            {
+                WebBridge.Broadcast("cze_editor_finished", new { layoutId = savedId });
             }
 
             if (_editCanvas != null) _editCanvas.Closed -= OnEditorWindowClosed;

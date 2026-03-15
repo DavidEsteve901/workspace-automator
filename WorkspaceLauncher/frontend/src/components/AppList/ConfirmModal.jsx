@@ -1,7 +1,11 @@
 import { X, AlertTriangle } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import './ConfirmModal.css'
 
-export default function ConfirmModal({ title, message, onConfirm, onCancel, confirmText = "Eliminar", cancelText = "Cancelar", isDanger = true }) {
+export default function ConfirmModal({ title, message, onConfirm, onCancel, confirmText, cancelText, isDanger = true }) {
+  const { t } = useTranslation()
+  const cText = confirmText || t('common.confirm')
+  const lText = cancelText || t('common.cancel')
   return (
     <div className="dialog-overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
       <div className="dialog confirm-modal">
@@ -19,14 +23,14 @@ export default function ConfirmModal({ title, message, onConfirm, onCancel, conf
 
         <div className="dialog-footer">
           <button className="btn-secondary" onClick={onCancel}>
-            {cancelText}
+            {lText}
           </button>
           <button 
             className={`btn-launch ${isDanger ? 'btn-danger' : ''}`} 
             onClick={onConfirm}
             style={{ minWidth: '120px' }}
           >
-            {confirmText}
+            {cText}
           </button>
         </div>
       </div>

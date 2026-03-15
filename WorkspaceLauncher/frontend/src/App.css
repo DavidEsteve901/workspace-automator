@@ -5,18 +5,25 @@
   --fz-accent-dim: rgba(0, 210, 255, 0.15);
   --fz-accent-glow: rgba(0, 210, 255, 0.35);
   --fz-accent-low: rgba(0, 210, 255, 0.05);
+  --accent-rgb: 0, 210, 255;
 
   --fz-glass: rgba(30, 30, 30, 0.6);
   --fz-glass-border: rgba(255, 255, 255, 0.08);
   --fz-bg: #0f0f0f;       
+  --fz-bg-soft: rgba(30, 30, 30, 0.6);
+  --fz-bg-alt: rgba(255, 255, 255, 0.03);
   --fz-card: rgba(43, 43, 43, 0.4);     
   --fz-card-hover: rgba(55, 55, 55, 0.6);
-  --fz-border: rgba(255, 255, 255, 0.06);
+  --fz-border: rgba(255, 255, 255, 0.08);
   --fz-text: #ffffff;
   --fz-text-muted: #a0a0a0;
+  --fz-text-inverse: #000000;
   --radius-fz: 12px;
   --fz-shadow: 0 12px 40px rgba(0,0,0,0.4);
   --fz-blur: blur(20px);
+  --fz-overlay: rgba(0, 0, 0, 0.62);
+  --success-text: #ffffff;
+  --accent-text: #000000;
 
   /* Legacy & Core Theme Aliases */
   --bg-base: var(--fz-bg);
@@ -44,7 +51,9 @@
   --transition: 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   
   --danger: #ff3b30;
+  --danger-hover: #ff453a;
   --danger-dim: rgba(255, 59, 48, 0.1);
+  --danger-glow: rgba(255, 59, 48, 0.35);
   --success: #34c759;
   --success-dim: rgba(52, 199, 89, 0.15);
 }
@@ -52,10 +61,13 @@
 /* ── Light Theme overrides (must come after :root to win) ─────────────── */
 [data-theme="light"] {
   --fz-bg:          #F0F2F5;
+  --fz-bg-soft:     rgba(255, 255, 255, 0.8);
+  --fz-bg-alt:      rgba(0, 0, 0, 0.03);
   --fz-card:        rgba(255, 255, 255, 0.92);
   --fz-card-hover:  rgba(240, 242, 245, 0.95);
   --fz-text:        #111827;
   --fz-text-muted:  #6B7280;
+  --fz-text-inverse: #ffffff;
   --fz-border:      rgba(0, 0, 0, 0.08);
   --fz-glass:       rgba(255, 255, 255, 0.65);
   --fz-glass-border:rgba(0, 0, 0, 0.08);
@@ -68,8 +80,25 @@
   --bg-hover:       rgba(0, 0, 0, 0.04);
   --text-primary:   #111827;
   --text-secondary: #374151;
-  --text-muted:     #6B7280;
+  --text-muted:     #4B5563; /* Darker muted text for light mode */
   --border:         rgba(0, 0, 0, 0.08);
+  --fz-overlay:     rgba(255, 255, 255, 0.45);
+  --success-text:   #065f46; /* High contrast dark green for light bg */
+  --accent-text:    #ffffff; 
+  
+  color-scheme: light;
+}
+
+/* Base scrollbar colors - theme aware */
+::-webkit-scrollbar-thumb {
+  background: var(--fz-text-muted);
+  opacity: 0.2;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fz-text);
+  opacity: 0.4;
 }
 
 .fz-editor {
@@ -197,9 +226,9 @@
 .fz-monitor-item {
   width: 122px;
   padding: 13px 14px;
-  background: rgba(255,255,255,0.025);
+  background: var(--fz-bg-alt);
   backdrop-filter: blur(20px);
-  border: 1px solid rgba(255,255,255,0.06);
+  border: 1px solid var(--fz-border);
   border-radius: 15px;
   display: flex;
   flex-direction: column;
@@ -224,9 +253,9 @@
 }
 .fz-monitor-item:hover {
   transform: translateY(-3px);
-  background: rgba(255,255,255,0.05);
-  border-color: rgba(255,255,255,0.12);
-  box-shadow: 0 10px 28px rgba(0,0,0,0.32), 0 1px 0 rgba(255,255,255,0.06) inset;
+  background: var(--fz-card-hover);
+  border-color: var(--fz-accent);
+  box-shadow: 0 10px 28px rgba(0,0,0,0.12), 0 1px 0 rgba(255,255,255,0.06) inset;
 }
 .fz-monitor-item:hover::before { opacity: 1; }
 
@@ -244,7 +273,7 @@
 .fz-monitor-number {
   font-size: 26px;
   font-weight: 800;
-  color: rgba(255,255,255,0.22);
+  color: var(--fz-text-muted);
   transition: color 0.25s ease, text-shadow 0.25s ease;
   letter-spacing: -0.03em;
   line-height: 1;
@@ -274,12 +303,14 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--fz-text-muted);
+  opacity: 0.2;
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--fz-text);
+  opacity: 0.4;
 }
 
 .fz-section-title {
@@ -312,7 +343,7 @@
 
 .fz-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(218px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   gap: 13px;
   padding: 4px 0;
 }
@@ -368,9 +399,9 @@
 }
 
 .fz-layout-card {
-  background: rgba(38, 38, 40, 0.55);
+  background: var(--fz-card);
   backdrop-filter: blur(22px);
-  border: 1px solid rgba(255,255,255,0.07);
+  border: 1px solid var(--fz-border);
   padding: 13px 13px 11px;
   border-radius: 16px;
   cursor: pointer;
@@ -402,10 +433,10 @@
 }
 .fz-layout-card:hover,
 .fz-layout-card.menu-open {
-  background: rgba(50, 50, 54, 0.68);
-  border-color: rgba(255,255,255,0.12);
+  background: var(--fz-card-hover);
+  border-color: var(--fz-accent);
   transform: translateY(-3px);
-  box-shadow: 0 14px 34px rgba(0,0,0,0.42), 0 1px 0 rgba(255,255,255,0.05) inset;
+  box-shadow: 0 14px 34px rgba(0,0,0,0.15), 0 1px 0 rgba(255,255,255,0.05) inset;
   transition: transform 0.24s cubic-bezier(0.23,1,0.32,1),
               background 0.2s ease,
               border-color 0.2s ease,
@@ -557,7 +588,7 @@
 .fz-dialog-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0,0,0,0.62);
+  background: var(--fz-overlay);
   backdrop-filter: blur(16px);
   display: flex;
   align-items: center;
@@ -568,12 +599,15 @@
 
 .fz-dialog {
   width: 440px;
-  background: rgba(24, 24, 26, 0.98);
-  border: 1px solid rgba(255,255,255,0.09);
+  background: var(--fz-card);
+  backdrop-filter: blur(24px);
+  border: 1px solid var(--fz-border);
   border-radius: 22px;
   padding: 30px;
-  box-shadow: 0 44px 88px rgba(0,0,0,0.72), 0 0 0 1px rgba(255,255,255,0.04) inset;
+  box-shadow: var(--fz-shadow), 0 0 0 1px rgba(255,255,255,0.04) inset;
   animation: scaleUp 0.26s cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: relative;
+  overflow: hidden;
 }
 
 @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }

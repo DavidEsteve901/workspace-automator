@@ -49,6 +49,12 @@ public class AppConfig
 
     [JsonPropertyName("desktop_animations_enabled")]
     public bool DesktopAnimationsEnabled { get; set; } = true;
+
+    [JsonPropertyName("run_at_startup")]
+    public bool RunAtStartup { get; set; } = false;
+
+    [JsonPropertyName("language")]
+    public string Language { get; set; } = "auto";
 }
 
 public class AppItem

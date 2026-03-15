@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { Plus, Play, Inbox, RotateCcw, Trash2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import AppCard from './AppCard.jsx'
 import './AppList.css'
 
 export default function AppList({ category, items, onAddItem, onEditItem, onDeleteItem, onMoveItem, onLaunch, onRestore, onClean, launchStatus }) {
+  const { t } = useTranslation()
   const [draggedIdx, setDraggedIdx] = useState(null)
   const launching = launchStatus && launchStatus.progress < 100
 
@@ -34,29 +36,29 @@ export default function AppList({ category, items, onAddItem, onEditItem, onDele
       {/* Header */}
       <div className="applist-header">
         <div className="applist-title">
-          <span className="applist-category">{category || 'Sin categoría'}</span>
-          <span className="applist-count">{items.length} apps</span>
+          <span className="applist-category">{category || t('app_list.no_category')}</span>
+          <span className="applist-count">{items.length} {t('app_list.apps')}</span>
         </div>
 
         <div className="applist-actions">
           <button className="btn-secondary" onClick={onAddItem}>
-            <Plus size={14} /> Añadir app
+            <Plus size={14} /> {t('app_list.add_app')}
           </button>
           <button
             className="btn-secondary"
             onClick={onRestore}
             disabled={launching || items.length === 0}
-            title="Reposicionar ventanas ya abiertas en sus zonas configuradas"
+            title={t('app_list.restore_desc')}
           >
-            <RotateCcw size={14} /> Restaurar
+            <RotateCcw size={14} /> {t('app_list.restore')}
           </button>
           <button
             className="btn-secondary btn-danger"
             onClick={onClean}
             disabled={launching || items.length === 0}
-            title="Cerrar ventanas del workspace"
+            title={t('app_list.clean_desc')}
           >
-            <Trash2 size={14} /> Limpiar
+            <Trash2 size={14} /> {t('app_list.clean')}
           </button>
           <button
             className="btn-launch"
@@ -64,9 +66,9 @@ export default function AppList({ category, items, onAddItem, onEditItem, onDele
             disabled={launching || items.length === 0}
           >
             {launching ? (
-              <><span className="btn-launch-spinner" /> Lanzando...</>
+              <><span className="btn-launch-spinner" /> {t('app_list.launching')}</>
             ) : (
-              <><Play size={14} /> Lanzar workspace</>
+              <><Play size={14} /> {t('app_list.launch')}</>
             )}
           </button>
         </div>
@@ -85,9 +87,9 @@ export default function AppList({ category, items, onAddItem, onEditItem, onDele
         {items.length === 0 ? (
           <div className="applist-empty">
             <Inbox size={48} strokeWidth={1} className="applist-empty-icon" />
-            <div>Este workspace está vacío</div>
+            <div>{t('app_list.empty')}</div>
             <button className="btn-secondary" onClick={onAddItem} style={{ marginTop: 12 }}>
-              <Plus size={14} /> Añadir primera app
+              <Plus size={14} /> {t('app_list.add_first')}
             </button>
           </div>
         ) : (

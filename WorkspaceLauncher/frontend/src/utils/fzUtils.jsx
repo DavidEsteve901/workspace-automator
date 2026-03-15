@@ -34,10 +34,7 @@ export function renderZones(info, activeIdx, onClick, occupancy = {}) {
           {Object.entries(zones).map(([zId, span]) => {
             const id = parseInt(zId);
             const isSelected = activeIdx === id;
-            const rawOccupant = occupancy[id];
-            const occupants = rawOccupant
-              ? rawOccupant.split(',').map(s => s.trim()).filter(Boolean)
-              : [];
+            const occupants = occupancy[id] || [];
             const hasOccupants = occupants.length > 0;
 
             return (
@@ -74,10 +71,7 @@ export function renderZones(info, activeIdx, onClick, occupancy = {}) {
             const y = (yVal / refH) * 100;
             const w = (wVal / refW) * 100;
             const h = (hVal / refH) * 100;
-            const rawOccupant = occupancy[idx];
-            const occupants = rawOccupant
-              ? rawOccupant.split(',').map(s => s.trim()).filter(Boolean)
-              : [];
+            const occupants = occupancy[idx] || [];
             const hasOccupants = occupants.length > 0;
 
             return (
@@ -106,7 +100,22 @@ export function renderZones(info, activeIdx, onClick, occupancy = {}) {
   return null;
 }
 
-// ── Color palette for occupant chips ─────────────────────────────────────────
+// ── App Type to Color mapping ────────────────────────────────────────────────
+const TYPE_COLORS = {
+  exe: 'var(--cat-exe, #00D2FF)',
+  url: 'var(--cat-web, #00E676)',
+  ide: 'var(--cat-ide, #A78BFA)',
+  vscode: 'var(--cat-ide, #A78BFA)',
+  powershell: 'var(--cat-terminal, #FF9D4D)',
+  obsidian: 'var(--cat-obsidian, #FF6B9D)',
+  default: '#FFEA00'
+};
+
+function getAppColor(type) {
+  return TYPE_COLORS[type] || TYPE_COLORS.default;
+}
+
+// ── Original fallback scale for dot indices if needed ────────────────────────
 const OCCUPANT_COLORS = ['var(--accent, #00D2FF)', '#00E676', '#FFEA00', '#FF6B9D', '#A78BFA', '#FF9D4D'];
 
 // ── Premium Zone Preview Cell ─────────────────────────────────────────────────
@@ -148,6 +157,8 @@ function ZonePreviewCell({ zoneId, isSelected, occupants, hasOccupants, onClick,
     ...(gridRow ? { gridRow, gridColumn } : posStyle),
   };
 
+  const occupantNames = occupants.map(o => o.name).join(', ');
+
   return (
     <>
       <button
@@ -155,7 +166,7 @@ function ZonePreviewCell({ zoneId, isSelected, occupants, hasOccupants, onClick,
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         onClick={onClick ? () => onClick(zoneId) : undefined}
-        title={hasOccupants ? `Ocupada por: ${occupants.join(', ')}` : `Zona ${zoneId + 1}`}
+        title={hasOccupants ? `Ocupada por: ${occupantNames}` : `Zona ${zoneId + 1}`}
       >
         {/* Selection glow */}
         {isSelected && (
@@ -184,62 +195,61 @@ function ZonePreviewCell({ zoneId, isSelected, occupants, hasOccupants, onClick,
           {zoneId + 1}
         </span>
 
-        {/* Expanded occupant chips on hover/select */}
+        {/* Expanded occupant list on hover/select - REFINED DESIGN */}
         {hasOccupants && (hovered || isSelected) && (
           <div style={{
             display: 'flex',
             flexDirection: 'column',
-            gap: 2,
+            gap: 3,
             width: '100%',
-            padding: '0 2px',
+            padding: '2px 4px',
             animation: 'chipFadeIn 0.2s ease-out',
             position: 'relative',
             zIndex: 1,
           }}>
-            {occupants.slice(0, 3).map((app, i) => (
-              <div
-                key={i}
-                style={{
-                  background: `${OCCUPANT_COLORS[i % OCCUPANT_COLORS.length]}1A`,
-                  border: `1px solid ${OCCUPANT_COLORS[i % OCCUPANT_COLORS.length]}44`,
-                  borderRadius: 4,
-                  padding: '1px 6px',
-                  fontSize: 8,
-                  fontWeight: 700,
-                  color: '#fff',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  textAlign: 'center',
-                  animation: `chipSlide ${0.12 + i * 0.05}s ease-out`,
-                  letterSpacing: '0.02em',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 4,
-                  margin: '0 auto',
-                  maxWidth: '92%'
-                }}
-              >
-                <span style={{
-                  width: 4,
-                  height: 4,
-                  borderRadius: '50%',
-                  background: OCCUPANT_COLORS[i % OCCUPANT_COLORS.length],
-                  flexShrink: 0,
-                  boxShadow: `0 0 4px ${OCCUPANT_COLORS[i % OCCUPANT_COLORS.length]}`,
-                }} />
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {app.length > 10 ? app.substring(0, 9) + '…' : app}
-                </span>
-              </div>
-            ))}
+            {occupants.slice(0, 3).map((app, i) => {
+              const appColor = getAppColor(app.type);
+              return (
+                <div
+                  key={i}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 5,
+                    fontSize: 8,
+                    fontWeight: 700,
+                    color: 'var(--fz-text)',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    animation: `chipSlide ${0.12 + i * 0.05}s ease-out`,
+                    letterSpacing: '0.01em',
+                    width: '100%'
+                  }}
+                >
+                  <span style={{
+                    width: 5,
+                    height: 5,
+                    borderRadius: '50%',
+                    background: appColor,
+                    flexShrink: 0,
+                    boxShadow: `0 0 6px ${appColor}aa`,
+                  }} />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {app.name.length > 10 ? app.name.substring(0, 9) + '…' : app.name}
+                  </span>
+                </div>
+              );
+            })}
             {occupants.length > 3 && (
               <div style={{
                 fontSize: 8,
-                color: 'rgba(255,255,255,0.4)',
+                color: 'var(--fz-text-muted)',
                 textAlign: 'center',
-                fontWeight: 700,
+                fontWeight: 800,
+                opacity: 0.6,
+                marginTop: 1
               }}>
                 +{occupants.length - 3}
               </div>
@@ -249,25 +259,29 @@ function ZonePreviewCell({ zoneId, isSelected, occupants, hasOccupants, onClick,
 
         {/* Collapsed dot indicators */}
         {hasOccupants && !hovered && !isSelected && (
-          <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center', position: 'relative', zIndex: 1 }}>
-            {occupants.slice(0, Math.min(4, occupants.length)).map((_, i) => (
-              <div key={i} style={{
-                width: 5,
-                height: 5,
-                borderRadius: '50%',
-                background: OCCUPANT_COLORS[i % OCCUPANT_COLORS.length],
-                opacity: 0.85,
-                boxShadow: `0 0 5px ${OCCUPANT_COLORS[i % OCCUPANT_COLORS.length]}88`,
-                animation: `dotPulse ${1.5 + i * 0.2}s infinite ease-in-out`,
-                transition: 'transform 0.2s ease',
-              }} />
-            ))}
+          <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center', position: 'relative', zIndex: 1, padding: '0 2px' }}>
+            {occupants.slice(0, Math.min(4, occupants.length)).map((app, i) => {
+              const appColor = getAppColor(app.type);
+              return (
+                <div key={i} style={{
+                  width: 5,
+                  height: 5,
+                  borderRadius: '50%',
+                  background: appColor,
+                  opacity: 0.85,
+                  boxShadow: `0 0 5px ${appColor}66`,
+                  animation: `dotPulse ${1.5 + i * 0.2}s infinite ease-in-out`,
+                  transition: 'transform 0.2s ease',
+                }} />
+              );
+            })}
             {occupants.length > 4 && (
               <div style={{
                 fontSize: 7,
-                color: 'rgba(255,255,255,0.4)',
+                color: 'var(--fz-text-muted)',
                 fontWeight: 800,
                 lineHeight: '5px',
+                opacity: 0.6
               }}>+{occupants.length - 4}</div>
             )}
           </div>
@@ -285,7 +299,7 @@ function ZonePreviewCell({ zoneId, isSelected, occupants, hasOccupants, onClick,
         }
         @keyframes dotPulse {
           0% { transform: scale(1); opacity: 0.85; }
-          50% { transform: scale(1.3); opacity: 1; box-shadow: 0 0 8px ${OCCUPANT_COLORS[0]}aa; }
+          50% { transform: scale(1.3); opacity: 1; }
           100% { transform: scale(1); opacity: 0.85; }
         }
       `}</style>

@@ -23,8 +23,8 @@
 .sync-warnings-list {
   max-height: 400px;
   overflow-y: auto;
-  border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--fz-border);
+  background: var(--fz-bg-alt);
   border-radius: 8px;
   margin-bottom: 16px;
 }
@@ -39,9 +39,9 @@
   font-size: 0.8rem;
   font-weight: 700;
   text-transform: uppercase;
-  color: var(--text-dim);
-  background: rgba(255, 255, 255, 0.03);
-  border-bottom: 1px solid var(--border);
+  color: var(--fz-text-muted);
+  background: var(--fz-bg-alt);
+  border-bottom: 1px solid var(--fz-border);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -90,7 +90,7 @@
 }
 
 .sync-solution .sync-label {
-  color: var(--cat-url); /* A green-ish color for solution */
+  color: var(--success); /* A green-ish color for solution */
 }
 
 .sync-warning-msg {
@@ -100,9 +100,9 @@
 
 .sync-warning-app {
   font-size: 0.7rem;
-  color: var(--text-muted);
+  color: var(--fz-text-muted);
   margin-top: 2px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--fz-bg-alt);
   padding: 2px 6px;
   border-radius: 4px;
   align-self: flex-start;
@@ -171,8 +171,8 @@
 
 .sync-layout-details {
   margin-top: 10px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px dashed rgba(255, 255, 255, 0.1);
+  background: var(--fz-card);
+  border: 1px dashed var(--fz-border);
   border-radius: 6px;
   padding: 10px;
   animation: slideDown 0.2s ease-out;
@@ -199,7 +199,7 @@
 .sync-layout-preview-label {
   font-size: 0.65rem;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--fz-text-muted);
   letter-spacing: 0.05em;
   font-weight: 700;
 }
@@ -237,8 +237,8 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
+  background: var(--success-dim);
+  color: var(--success-text);
   font-size: 0.65rem;
   padding: 2px 6px;
   border-radius: 10px;
@@ -251,9 +251,9 @@
 .sync-portability-info {
   margin-top: 8px;
   padding: 8px;
-  background: rgba(16, 185, 129, 0.05);
-  border-left: 2px solid #10b981;
+  background: var(--success-dim);
+  border-left: 2px solid var(--success);
   font-size: 0.75rem;
-  color: var(--text-dim);
+  color: var(--fz-text);
   line-height: 1.4;
 }

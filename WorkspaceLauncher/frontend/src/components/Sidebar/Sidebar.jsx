@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { FolderOpen, Plus, Trash2, Settings, ChevronUp, ChevronDown, GripVertical, Check } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import logo from '../../assets/logo.ico'
 import './Sidebar.css'
 
@@ -15,6 +16,7 @@ export default function Sidebar({
   configActive,
   disabled
 }) {
+  const { t } = useTranslation()
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
   const [editing, setEditing] = useState(null) // cat name
@@ -89,7 +91,7 @@ export default function Sidebar({
         <div className="sidebar-logo-wrap">
           <img src={logo} className="sidebar-logo-img" alt="Logo" />
         </div>
-        <span className="sidebar-title">Workspace</span>
+        <span className="sidebar-title">{t('sidebar.workspaces')}</span>
       </div>
 
       {/* Category list */}
@@ -97,7 +99,7 @@ export default function Sidebar({
         className={`sidebar-list-wrap ${disabled ? 'sidebar-locked' : ''}`}
         onClick={disabled ? onOpenConfig : undefined}
       >
-        <div className="sidebar-label">WORKSPACES</div>
+        <div className="sidebar-label">{t('sidebar.workspaces')}</div>
         <nav className="sidebar-nav">
         {categories.map((cat, idx) => (
           <div
@@ -135,7 +137,7 @@ export default function Sidebar({
                     className="sidebar-item-move" 
                     onClick={(e) => { e.stopPropagation(); handleMove(idx, -1) }}
                     disabled={idx === 0}
-                    title="Subir"
+                    title={t('sidebar.up')}
                   >
                     <ChevronUp size={12} />
                   </button>
@@ -143,13 +145,13 @@ export default function Sidebar({
                     className="sidebar-item-move" 
                     onClick={(e) => { e.stopPropagation(); handleMove(idx, 1) }}
                     disabled={idx === categories.length - 1}
-                    title="Bajar"
+                    title={t('sidebar.down')}
                   >
                     <ChevronDown size={12} />
                   </button>
                   <button
                     className="sidebar-item-delete"
-                    title="Eliminar workspace"
+                    title={t('sidebar.delete_ws')}
                     onClick={e => { e.stopPropagation(); onDeleteCategory(cat) }}
                   >
                     <Trash2 size={13} />
@@ -167,13 +169,13 @@ export default function Sidebar({
               value={newName}
               onChange={e => setNewName(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Nombre del workspace"
+              placeholder={t('sidebar.ws_name')}
               onBlur={handleAdd}
             />
           </div>
         ) : (
           <button className="sidebar-add-btn" onClick={() => setAdding(true)}>
-            <Plus size={15} /> Nuevo workspace
+            <Plus size={15} /> {t('sidebar.new_workspace')}
           </button>
         )}
       </nav>
@@ -185,7 +187,7 @@ export default function Sidebar({
           className={`sidebar-config-btn ${configActive ? 'active' : ''}`}
           onClick={onOpenConfig}
         >
-          <Settings size={15} /> Configuración
+          <Settings size={15} /> {t('sidebar.config')}
         </button>
       </div>
     </aside>

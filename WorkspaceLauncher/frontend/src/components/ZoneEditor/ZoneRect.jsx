@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 export function ZoneRect({ zone, spacing, selected, onSelect, onSplit, onMouseMove, canvasW, canvasH, index, isDragging = false, occupancyApps = [] }) {
+  const { t } = useTranslation();
   const rectRef = useRef(null);
   const [isHovered, setIsHovered] = useState(false);
   const [showOccupancy, setShowOccupancy] = useState(false);
@@ -59,17 +61,17 @@ export function ZoneRect({ zone, spacing, selected, onSelect, onSplit, onMouseMo
   const borderColor = selected
     ? accentColor
     : isHovered
-      ? 'rgba(var(--accent-rgb, 0, 210, 255), 0.5)'
+      ? 'var(--fz-accent-dim)'
       : hasApps
-        ? 'rgba(0, 230, 118, 0.25)'
-        : 'rgba(255, 255, 255, 0.12)';
+        ? 'var(--fz-accent-low)'
+        : 'var(--fz-border)';
 
   const boxShadow = selected
-    ? '0 0 0 1px rgba(var(--accent-rgb, 0, 210, 255), 0.4), 0 0 30px rgba(var(--accent-rgb, 0, 210, 255), 0.15), inset 0 1px 0 rgba(255,255,255,0.08)'
+    ? '0 0 0 1px var(--fz-accent-dim), 0 0 30px var(--fz-accent-low), inset 0 1px 0 rgba(255,255,255,0.08)'
     : isHovered
-      ? '0 0 20px rgba(var(--accent-rgb, 0, 210, 255), 0.08), inset 0 1px 0 rgba(255,255,255,0.05)'
+      ? '0 0 20px rgba(var(--accent-rgb), 0.08)'
       : hasApps
-        ? '0 0 0 1px rgba(0,230,118,0.12), inset 0 1px 0 rgba(255,255,255,0.04)'
+        ? '0 0 0 1px var(--fz-accent-low)'
         : 'none';
 
   return (
@@ -118,7 +120,7 @@ export function ZoneRect({ zone, spacing, selected, onSelect, onSplit, onMouseMo
             left: '-60%',
             width: '40%',
             height: '100%',
-            background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent)',
+            background: 'linear-gradient(90deg, transparent, var(--fz-bg-alt), transparent)',
             animation: 'zoneShimmer 0.7s ease-out forwards',
             pointerEvents: 'none',
           }} />
@@ -130,7 +132,7 @@ export function ZoneRect({ zone, spacing, selected, onSelect, onSplit, onMouseMo
             position: 'absolute',
             inset: 0,
             borderRadius: 12,
-            background: 'radial-gradient(ellipse at center, rgba(var(--accent-rgb, 0, 210, 255), 0.06) 0%, transparent 70%)',
+            background: 'radial-gradient(ellipse at center, var(--fz-accent-low) 0%, transparent 70%)',
             pointerEvents: 'none',
           }} />
         )}
@@ -145,11 +147,11 @@ export function ZoneRect({ zone, spacing, selected, onSelect, onSplit, onMouseMo
             : isHovered
               ? accentColor
               : hasApps
-                ? 'rgba(0, 230, 118, 0.8)'
-                : 'rgba(255,255,255,0.5)',
+                ? 'var(--fz-accent)'
+                : 'var(--fz-text-muted)',
           letterSpacing: '-0.06em',
           lineHeight: 1,
-          textShadow: (selected || isHovered) ? `0 0 30px rgba(var(--accent-rgb, 0, 210, 255), 0.4), 0 2px 12px rgba(0,0,0,0.8)` : '0 2px 12px rgba(0,0,0,0.8)',
+          textShadow: (selected || isHovered) ? `0 0 30px var(--fz-accent-dim)` : 'none',
           transition: transitionStyle,
           pointerEvents: 'none',
           background: 'transparent',
@@ -163,18 +165,17 @@ export function ZoneRect({ zone, spacing, selected, onSelect, onSplit, onMouseMo
           <div style={{
             fontSize: 11,
             opacity: (selected || isHovered) ? 0.85 : 0.45,
-            color: '#fff',
+            color: 'var(--fz-text)',
             fontWeight: 700,
             marginTop: 8,
             letterSpacing: '0.04em',
-            textShadow: '0 1px 6px rgba(0,0,0,1)',
             transition: transitionStyle,
             pointerEvents: 'none',
-            background: 'rgba(0,0,0,0.45)',
+            background: 'var(--fz-bg-alt)',
             padding: '3px 8px',
             borderRadius: 6,
             backdropFilter: 'blur(4px)',
-            border: '1px solid rgba(255,255,255,0.06)',
+            border: '1px solid var(--fz-border)',
             zIndex: 2,
           }}>
             {pixelW} × {pixelH}
@@ -325,7 +326,7 @@ function OccupancyBadge({ apps, isExpanded }) {
           textAlign: 'center',
           animation: `occupancyPop ${0.2 + maxStack * 0.06}s cubic-bezier(0.34,1.56,0.64,1)`,
         }}>
-          +{extra} más
+          {t('zone_editor.more_apps', { count: extra })}
         </div>
       )}
     </div>

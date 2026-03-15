@@ -712,8 +712,10 @@ public sealed class WorkspaceOrchestrator
 
     internal static int ParseZoneIndex(string zoneName)
     {
-        int idx = zoneName.LastIndexOf("Zona ", StringComparison.OrdinalIgnoreCase);
-        if (idx >= 0 && int.TryParse(zoneName[(idx + 5)..].Trim(), out int n))
+        if (string.IsNullOrEmpty(zoneName)) return 0;
+        // Search for the last sequence of digits in the string (e.g. "Layout Name - Zone 5")
+        var match = System.Text.RegularExpressions.Regex.Match(zoneName, @"(\d+)\s*$");
+        if (match.Success && int.TryParse(match.Groups[1].Value, out int n))
             return n - 1;
         return 0;
     }

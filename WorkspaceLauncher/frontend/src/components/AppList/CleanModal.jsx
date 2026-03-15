@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { X, Trash2, CheckSquare, Square, AlertTriangle, Monitor } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { bridge } from '../../api/bridge.js'
 import './CleanModal.css'
 
 export default function CleanModal({ category, onClose }) {
+  const { t } = useTranslation()
   const [windows, setWindows] = useState([])
   const [selectedHwnds, setSelectedHwnds] = useState(new Set())
   const [loading, setLoading] = useState(true)
@@ -58,7 +60,7 @@ export default function CleanModal({ category, onClose }) {
         <div className="dialog-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--cat-exe)' }}>
             <Trash2 size={20} />
-            <h2>Limpiar Workspace: {category}</h2>
+            <h2>{t('clean_modal.title', { category })}</h2>
           </div>
           <button className="dialog-close" onClick={onClose}><X size={20} /></button>
         </div>
@@ -66,24 +68,24 @@ export default function CleanModal({ category, onClose }) {
         <div className="dialog-body">
           <div className="clean-warning">
             <AlertTriangle size={18} />
-            <p>Se han detectado las siguientes ventanas abiertas pertenecientes a este workspace. Selecciona las que desees cerrar.</p>
+            <p>{t('clean_modal.intro')}</p>
           </div>
 
           {loading ? (
             <div className="clean-loading">
               <div className="spinner-small" />
-              <span>Buscando ventanas activas...</span>
+              <span>{t('clean_modal.searching')}</span>
             </div>
           ) : windows.length === 0 ? (
             <div className="clean-empty">
               <Monitor size={32} opacity={0.3} />
-              <p>No se han detectado ventanas abiertas para este workspace.</p>
+              <p>{t('clean_modal.empty')}</p>
             </div>
           ) : (
             <div className="clean-list-container">
               <div className="clean-list-header" onClick={toggleAll}>
                 {selectedHwnds.size === windows.length ? <CheckSquare size={16} color="var(--accent)" /> : <Square size={16} />}
-                <span>Seleccionar todas ({windows.length})</span>
+                <span>{t('clean_modal.select_all', { count: windows.length })}</span>
               </div>
               <div className="clean-list">
                 {windows.map(win => (
@@ -96,11 +98,11 @@ export default function CleanModal({ category, onClose }) {
                       {selectedHwnds.has(win.hwnd) ? <CheckSquare size={16} color="var(--accent)" /> : <Square size={16} />}
                     </div>
                     <div className="clean-item-info">
-                      <div className="clean-item-title">{win.title || "Sin título"}</div>
+                      <div className="clean-item-title">{win.title || t('clean_modal.no_title')}</div>
                       <div className="clean-item-sub">
                         <span className="clean-process">{win.processName}.exe</span>
                         <span className="clean-sep">·</span>
-                        <span className="clean-app-ref">Referencia: {win.appName}</span>
+                        <span className="clean-app-ref">{t('clean_modal.reference', { name: win.appName })}</span>
                       </div>
                     </div>
                   </div>
@@ -112,14 +114,14 @@ export default function CleanModal({ category, onClose }) {
 
         <div className="dialog-footer">
           <button className="btn-secondary" onClick={onClose} style={{ border: 'none', background: 'transparent' }}>
-            Cancelar
+            {t('common.cancel')}
           </button>
           <button 
             className="btn-launch btn-danger-action" 
             onClick={handleConfirm}
             disabled={selectedHwnds.size === 0 || closing}
           >
-            {closing ? 'Cerrando...' : `Cerrar seleccionadas (${selectedHwnds.size})`}
+            {closing ? t('clean_modal.closing') : t('clean_modal.close_selected', { count: selectedHwnds.size })}
           </button>
         </div>
       </div>

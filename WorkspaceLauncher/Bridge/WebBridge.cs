@@ -365,7 +365,10 @@ public sealed class WebBridge
                     break;
 
                 case "cze_canvas_saved":
-                    WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: false);
+                    {
+                        string? layoutId = payload.TryGetProperty("layoutId", out var lid) ? lid.GetString() : null;
+                        WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: false, savedId: layoutId);
+                    }
                     break;
                 case "cze_canvas_discard":
                     WorkspaceLauncher.Core.CustomZoneEngine.UI.ZoneEditorLauncher.Instance.ReturnToAdmin(isDiscard: true);
@@ -491,7 +494,9 @@ public sealed class WebBridge
             configPath     = ConfigManager.Instance.ConfigPath,
             themeMode      = config.ThemeMode,
             accentColor    = config.AccentColor,
-            desktopAnimationsEnabled = config.DesktopAnimationsEnabled
+            desktopAnimationsEnabled = config.DesktopAnimationsEnabled,
+            runAtStartup   = config.RunAtStartup,
+            language       = config.Language
         });
     }
 
@@ -674,10 +679,23 @@ public sealed class WebBridge
         if (payload.TryGetProperty("accentColor", out var ac))
             config.AccentColor = ac.GetString() ?? "";
         
+        if (payload.TryGetProperty("language", out var lang))
+            config.Language = lang.GetString() ?? "auto";
+        
         if (payload.TryGetProperty("desktopAnimationsEnabled", out var dae))
         {
             config.DesktopAnimationsEnabled = dae.GetBoolean();
             User32.SetSystemAnimations(config.DesktopAnimationsEnabled);
+        }
+        
+        if (payload.TryGetProperty("runAtStartup", out var ras))
+        {
+            bool enabled = ras.GetBoolean();
+            if (config.RunAtStartup != enabled)
+            {
+                config.RunAtStartup = enabled;
+                StartupManager.SetRunAtStartup(enabled);
+            }
         }
 
         await ConfigManager.Instance.SaveAsync();
